@@ -232,6 +232,21 @@ func pageStep() int {
 	return step
 }
 
+// nameWidth is how much room the machine column gets, leaving space for the
+// marker, the number and the state that follows it.
+func nameWidth(cols int) int {
+	const chrome = 8 // marker, number and the spaces between columns
+	const state = 26 // the widest state text, "connected · NN mirrored"
+	width := cols - chrome - state
+	if width < 8 {
+		width = 8
+	}
+	if width > 40 {
+		width = 40
+	}
+	return width
+}
+
 // visibleWindow picks the slice of entries to show, keeping the selected one
 // on screen.
 //
@@ -260,7 +275,7 @@ func visibleWindow(count, selected, rows int) (first, last int) {
 }
 
 func draw(entries []Entry, selected int) {
-	_, rows := windowSize()
+	cols, rows := windowSize()
 	first, last := visibleWindow(len(entries), selected, rows)
 
 	var b strings.Builder
@@ -279,10 +294,13 @@ func draw(entries []Entry, selected int) {
 			number = fmt.Sprintf("%d.", i+1)
 		}
 
-		name := entry.Target
+		// Names come from ~/.ssh/config, so they are made safe to draw and cut
+		// to fit rather than trusted to be short and printable.
+		name := sanitizeName(entry.Target)
 		if entry.Label != "" && entry.Label != entry.Target {
-			name = fmt.Sprintf("%s (%s)", entry.Target, entry.Label)
+			name = fmt.Sprintf("%s (%s)", name, sanitizeName(entry.Label))
 		}
+		name = padToWidth(truncateToWidth(name, nameWidth(cols)), nameWidth(cols))
 
 		mode := "ssh"
 		if entry.Mirroring {
@@ -303,7 +321,7 @@ func draw(entries []Entry, selected int) {
 			line = dim + "from ~/.ssh/config · " + mode + reset
 		}
 
-		b.WriteString(fmt.Sprintf("%s %s %-24s %s\r\n", marker, number, name, line))
+		b.WriteString(marker + " " + number + " " + name + " " + line + "\r\n")
 	}
 
 	if last < len(entries) || first > 0 {
