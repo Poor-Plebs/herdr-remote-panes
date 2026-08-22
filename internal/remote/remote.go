@@ -114,6 +114,7 @@ func (c *Client) SSHArgs(tty bool) []string {
 		"-o", "ControlPersist=120",
 		"-o", "ServerAliveInterval=15",
 		"-o", "ServerAliveCountMax=3",
+		"-o", fmt.Sprintf("ConnectTimeout=%d", connectTimeout),
 	}
 	if tty {
 		// The pane already owns a pty; force one on the far side too.
