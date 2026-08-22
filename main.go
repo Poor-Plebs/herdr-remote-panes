@@ -51,6 +51,12 @@ func run(command string, args []string) error {
 			log.Print("continuing with defaults; fix the config and reconnect")
 			cfg = config.Defaults()
 		}
+		// Settings that are readable but will not do what they look like they
+		// say. Reporting them beats guessing silently, which is how a mode
+		// spelled wrong quietly turned mirroring on.
+		for _, problem := range cfg.Problems() {
+			log.Printf("config: %s", problem)
+		}
 		return syncd.NewWithConfigError(cfg, err).Run()
 
 	case "mirror":

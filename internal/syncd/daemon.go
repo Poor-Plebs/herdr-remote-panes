@@ -574,10 +574,13 @@ func (d *Daemon) openShellPane(state *hostSync) error {
 
 // configWarning describes an unreadable configuration, if there was one.
 func (d *Daemon) configWarning() string {
-	if d.configErr == nil {
-		return ""
+	if d.configErr != nil {
+		return fmt.Sprintf("the plugin config could not be read, so no machines are configured: %v", d.configErr)
 	}
-	return fmt.Sprintf("the plugin config could not be read, so no machines are configured: %v", d.configErr)
+	if problems := d.cfg.Problems(); len(problems) > 0 {
+		return "check the plugin config: " + strings.Join(problems, "; ")
+	}
+	return ""
 }
 
 // hostConfig finds a configured host by target or label.
@@ -598,7 +601,7 @@ func (d *Daemon) hostConfig(name string) (config.Host, bool) {
 func (d *Daemon) connect(host config.Host) error {
 	client := remote.NewWithBin(host.Target, d.cfg.SessionFor(host), d.cfg.BinFor(host))
 
-	sshOnly := d.cfg.ModeFor(host) == config.ModeSSH
+	sshOnly := !d.cfg.Mirrors(host)
 	var connectErr error
 	if sshOnly {
 		// Without this an unreachable machine reports "ok", because nothing
@@ -1375,7 +1378,7 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, ind
 		mirror.EnvTarget:   state.host.Target,
 		mirror.EnvSession:  d.cfg.SessionFor(state.host),
 		mirror.EnvTerminal: rp.TerminalID,
-		mirror.EnvMode:     string(d.cfg.ModeFor(state.host)),
+		mirror.EnvMode:     string(d.cfg.EffectiveMode(state.host)),
 		mirror.EnvName:     label,
 	}
 	if bin := d.cfg.BinFor(state.host); bin != "" {

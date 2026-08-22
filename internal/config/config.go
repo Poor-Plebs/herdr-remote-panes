@@ -257,6 +257,15 @@ func (c Config) normalized() Config {
 	if c.MaxMirrors <= 0 {
 		c.MaxMirrors = d.MaxMirrors
 	}
+	// A host with no target cannot be reached, and leaving it in produces a
+	// space named after nothing and an ssh command with no destination.
+	kept := c.Hosts[:0]
+	for _, host := range c.Hosts {
+		if host.Target != "" {
+			kept = append(kept, host)
+		}
+	}
+	c.Hosts = kept
 	if c.Hosts == nil {
 		c.Hosts = []Host{}
 	}
@@ -355,10 +364,25 @@ func (c Config) RemoteWorkspaceLabel() string {
 	return strings.ReplaceAll(c.RemoteWorkspaceFormat, "{hub}", hub)
 }
 
+// EffectiveMode is how a machine is actually reached.
+//
+// A mode that is not recognised falls back to a plain SSH terminal rather than
+// mirroring. Treating anything that is not "ssh" as mirroring meant a mode
+// spelled wrong silently turned on the experimental feature, which is the
+// opposite of what someone typing a typo wants.
+func (c Config) EffectiveMode(h Host) Mode {
+	switch mode := c.ModeFor(h); mode {
+	case ModeAttach, ModeObserve, ModeSSH:
+		return mode
+	default:
+		return ModeSSH
+	}
+}
+
 // Mirrors reports whether a host's terminals are kept in step with the
 // machine, rather than being a plain SSH session.
 func (c Config) Mirrors(h Host) bool {
-	return c.ModeFor(h) != ModeSSH
+	return c.EffectiveMode(h) != ModeSSH
 }
 
 // SetHostMode records a machine's mode on disk, adding the host when it is not

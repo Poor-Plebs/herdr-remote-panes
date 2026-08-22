@@ -135,6 +135,10 @@ func collect() ([]Entry, string) {
 	if err != nil {
 		cfg = config.Defaults()
 		warning = fmt.Sprintf("Could not read the plugin config, so only ~/.ssh/config machines are listed: %v", err)
+	} else if problems := cfg.Problems(); len(problems) > 0 {
+		// A setting that reads fine but means something else is worth saying
+		// once, where the machines are chosen.
+		warning = "Check the plugin config: " + strings.Join(problems, "; ")
 	}
 
 	byTarget := map[string]*Entry{}
