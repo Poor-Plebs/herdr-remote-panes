@@ -352,3 +352,23 @@ func TestPlanShellName(t *testing.T) {
 		t.Errorf("fourth terminal = %q, want %q", got, "shell 4")
 	}
 }
+
+func TestPlanGiveUp(t *testing.T) {
+	// A machine that answers is never given up on.
+	if planGiveUp(0) {
+		t.Error("a healthy machine should keep being polled")
+	}
+	// One failure can be a blip, so it is tried again.
+	if planGiveUp(1) {
+		t.Error("a single failure should be retried")
+	}
+	// Some failures never resolve on their own — a changed host key needs
+	// someone to look at it — and retrying every couple of seconds burns SSH
+	// connections and fills the log.
+	if !planGiveUp(2) {
+		t.Error("a machine that failed twice should be left alone")
+	}
+	if !planGiveUp(20) {
+		t.Error("a long-failing machine should stay left alone")
+	}
+}

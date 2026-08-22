@@ -44,7 +44,10 @@ func status() error {
 	summary := make([]string, 0, len(reply.Hosts))
 	for _, h := range reply.Hosts {
 		state := "ok"
-		if !h.Connected {
+		switch {
+		case h.GaveUp:
+			state = "unreachable, not retrying: " + h.LastError
+		case !h.Connected:
 			state = "error: " + h.LastError
 		}
 		kind := "mirrored"

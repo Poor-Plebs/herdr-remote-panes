@@ -86,7 +86,10 @@ type HostInfo struct {
 	SSHOnly bool `json:"ssh_only,omitempty"`
 	// Mirroring reports whether this machine's terminals are kept in step,
 	// rather than being a plain SSH session.
-	Mirroring bool   `json:"mirroring,omitempty"`
+	Mirroring bool `json:"mirroring,omitempty"`
+	// GaveUp marks a machine that could not be reached and is no longer being
+	// retried until it is connected to again.
+	GaveUp    bool   `json:"gave_up,omitempty"`
 	LastError string `json:"last_error,omitempty"`
 }
 

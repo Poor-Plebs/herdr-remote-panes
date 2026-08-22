@@ -117,6 +117,10 @@ type Config struct {
 	// tabs in the same order. "all" mirrors every pane on the machine, which
 	// also surfaces work started there but makes the two sides differ.
 	Scope string `json:"scope,omitempty"`
+	// ClosePropagates closes the terminal on the machine when its mirror is
+	// closed here. Mirroring is otherwise two-way for everything except
+	// closing, which is surprising: the tab goes but the work carries on.
+	ClosePropagates *bool `json:"close_propagates,omitempty"`
 	// CaptureNewPanes replaces a local pane opened inside a machine's space
 	// with a terminal on that machine. Herdr's new-tab keybinding and the plus
 	// icon in the tab bar both create a local shell, and neither can be
@@ -144,6 +148,7 @@ func Defaults() Config {
 		WorkspaceFormat:       "☁  {host}",
 		RemoteWorkspaceFormat: "☁  {hub}",
 		CaptureNewPanes:       boolPtr(true),
+		ClosePropagates:       boolPtr(true),
 		Takeover:              boolPtr(true),
 		AutoStart:             boolPtr(true),
 		MaxMirrors:            32,
@@ -231,6 +236,9 @@ func (c Config) normalized() Config {
 	if c.CaptureNewPanes == nil {
 		c.CaptureNewPanes = d.CaptureNewPanes
 	}
+	if c.ClosePropagates == nil {
+		c.ClosePropagates = d.ClosePropagates
+	}
 	if c.Takeover == nil {
 		c.Takeover = d.Takeover
 	}
@@ -277,6 +285,12 @@ func boolPtr(b bool) *bool { return &b }
 // SharedOnly reports whether only this machine's own space is mirrored.
 func (c Config) SharedOnly() bool {
 	return c.Scope != ScopeAll
+}
+
+// ShouldClosePropagate reports whether closing a mirror closes the terminal on
+// the machine too.
+func (c Config) ShouldClosePropagate() bool {
+	return c.ClosePropagates == nil || *c.ClosePropagates
 }
 
 // ShouldCaptureNewPanes reports whether a local pane opened in a machine's

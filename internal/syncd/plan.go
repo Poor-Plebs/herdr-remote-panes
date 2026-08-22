@@ -216,3 +216,17 @@ func planShellName(liveTerminals int) string {
 	}
 	return fmt.Sprintf("shell %d", liveTerminals+1)
 }
+
+// maxHostAttempts is how many times a machine is tried before it is left alone.
+const maxHostAttempts = 2
+
+// planGiveUp says whether to stop trying a machine.
+//
+// Some failures never resolve on their own — a changed host key needs someone
+// to look at it — and retrying those every couple of seconds burns SSH
+// connections, fills the log, and slows every other machine down. After a
+// couple of attempts the machine is left alone until it is connected to again,
+// which is an explicit "try now".
+func planGiveUp(consecutiveFailures int) bool {
+	return consecutiveFailures >= maxHostAttempts
+}

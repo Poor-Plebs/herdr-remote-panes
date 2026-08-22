@@ -102,6 +102,13 @@ type hostSync struct {
 	reportedAgents map[string]agentReport
 
 	lastErr error
+	// failCount and gaveUp stop a machine being retried forever when it cannot
+	// be reached at all.
+	failCount int
+	gaveUp    bool
+	// shellFailures counts terminals that died on this machine in a row, so an
+	// unreachable one is not reopened endlessly.
+	shellFailures int
 }
 
 // agentReport is the agent identity and state last pushed to a mirror pane.
@@ -399,6 +406,34 @@ func (d *Daemon) rememberPlacement(state *hostSync, result json.RawMessage, plac
 	}
 }
 
+// closeRemoteTerminals closes the machine's terminals behind mirrors that were
+// closed here, and forgets the dismissal: the terminal is gone, so there is
+// nothing left to avoid reopening.
+func (d *Daemon) closeRemoteTerminals(state *hostSync, terminalIDs []string, remotePanes []herdrcli.Pane) {
+	if len(terminalIDs) == 0 {
+		return
+	}
+	byTerminal := make(map[string]string, len(remotePanes))
+	for _, pane := range remotePanes {
+		byTerminal[pane.TerminalID] = pane.PaneID
+	}
+
+	for _, terminalID := range terminalIDs {
+		paneID, ok := byTerminal[terminalID]
+		if !ok {
+			// Already gone on the machine; nothing to close.
+			delete(state.dismissed, terminalID)
+			continue
+		}
+		if _, err := state.client.Run("pane", "close", paneID); err != nil {
+			log.Printf("close %s on %s: %v", paneID, state.host.Target, err)
+			continue
+		}
+		log.Printf("%s: closed terminal %s to match", state.host.Target, paneID)
+		delete(state.dismissed, terminalID)
+	}
+}
+
 // findRemoteWorkspace looks up this machine's space on the remote without
 // creating it, for the reconcile path, which should not open terminals.
 func (d *Daemon) findRemoteWorkspace(state *hostSync) (bool, error) {
@@ -565,7 +600,12 @@ func (d *Daemon) connect(host config.Host) error {
 
 	sshOnly := d.cfg.ModeFor(host) == config.ModeSSH
 	var connectErr error
-	if !sshOnly {
+	if sshOnly {
+		// Without this an unreachable machine reports "ok", because nothing
+		// else in the plain SSH path ever talks to it: the failure only shows
+		// up later as terminals that will not stay open.
+		connectErr = client.Reachable()
+	} else {
 		if err := d.prepareRemote(client, host); err != nil {
 			// A machine without Herdr is still perfectly usable over plain SSH,
 			// so fall back instead of refusing to connect. Anything else — an
@@ -613,6 +653,11 @@ func (d *Daemon) connect(host config.Host) error {
 		d.hosts[host.Target] = state
 	}
 	state.lastErr = connectErr
+	// An explicit connect is a request to try now, so a machine that was given
+	// up on is tried again.
+	state.failCount = 0
+	state.shellFailures = 0
+	state.gaveUp = false
 	return connectErr
 }
 
@@ -804,6 +849,7 @@ func (d *Daemon) status() []HostInfo {
 			Mirrors:   len(state.mirrors),
 			SSHOnly:   state.sshOnly,
 			Mirroring: d.cfg.Mirrors(state.host),
+			GaveUp:    state.gaveUp,
 		}
 		if state.lastErr != nil {
 			info.LastError = state.lastErr.Error()
@@ -841,13 +887,23 @@ func (d *Daemon) reconcileAll() {
 			defer wg.Done()
 			d.mu.Lock()
 			defer d.mu.Unlock()
+			if state.gaveUp {
+				return
+			}
 			if err := d.reconcileHost(state, index); err != nil {
 				if state.lastErr == nil || state.lastErr.Error() != err.Error() {
 					log.Printf("reconcile %s: %v", state.host.Target, err)
 				}
 				state.lastErr = err
+				state.failCount++
+				if planGiveUp(state.failCount) {
+					state.gaveUp = true
+					log.Printf("%s: giving up after %d attempts; connect again to retry",
+						state.host.Target, state.failCount)
+				}
 			} else {
 				state.lastErr = nil
+				state.failCount = 0
 			}
 			d.markWorkspaceState(state, state.lastErr == nil)
 		}(state)
@@ -946,15 +1002,32 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 
 		for paneID := range state.shellPanes {
 			if index.alive[paneID] {
+				// A terminal that is up means the machine is fine again.
+				state.shellFailures = 0
 				continue
 			}
 			delete(state.shellPanes, paneID)
 			if planLostPane(mirror.Failed(paneID)) {
-				log.Printf("%s: terminal %s dropped, reopening", state.host.Target, paneID)
-				state.reopenShell = true
+				state.shellFailures++
+				if planGiveUp(state.shellFailures) {
+					state.gaveUp = true
+					state.lastErr = fmt.Errorf("terminals keep dropping on %s", state.host.Target)
+					log.Printf("%s: giving up after %d dropped terminals; connect again to retry",
+						state.host.Target, state.shellFailures)
+				} else {
+					log.Printf("%s: terminal %s dropped, reopening", state.host.Target, paneID)
+					state.reopenShell = true
+				}
 			}
 			mirror.ClearFailed(paneID)
 			mirror.ClearLive(paneID)
+		}
+
+		// With no terminal up, nothing else here ever talks to the machine, so
+		// a failure would look like "ok" forever. Checking costs one SSH call
+		// and only happens while the machine has nothing running.
+		if len(state.shellPanes) == 0 {
+			return state.client.Reachable()
 		}
 		return nil
 	}
@@ -962,6 +1035,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	// Drop mirrors the user closed by hand and do not reopen them. On the first
 	// pass after a restart, a missing pane is stale bookkeeping from a previous
 	// daemon rather than a deliberate close, so it is dropped silently.
+	var closedHere []string
 	for terminalID, paneID := range state.mirrors {
 		switch planTrackedMirror(state.adopted, index.alive[paneID], mirror.IsLive(paneID)) {
 		case mirrorKeep:
@@ -970,6 +1044,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		case mirrorDismiss:
 			delete(state.mirrors, terminalID)
 			state.dismissed[terminalID] = true
+			closedHere = append(closedHere, terminalID)
 		case mirrorReplace:
 			log.Printf("%s: replacing pane %s, its mirror is not running", state.host.Target, paneID)
 			if err := herdrcli.ClosePaneByID(paneID); err != nil {
@@ -1013,6 +1088,13 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		return err
 	}
 	remotePanes = planSharedPanes(remotePanes, sharedWorkspace, tabOrder, d.cfg.SharedOnly())
+
+	// Closing a mirrored tab closes the terminal on the machine too. Without
+	// this, mirroring is two-way for everything except closing: the tab goes
+	// and the work quietly carries on over there.
+	if d.cfg.ShouldClosePropagate() {
+		d.closeRemoteTerminals(state, closedHere, remotePanes)
+	}
 
 	labels := d.labelsFor(state.host, remotePanes)
 

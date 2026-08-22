@@ -29,6 +29,9 @@ type Entry struct {
 	// Mirroring reports whether this machine's terminals are kept in step,
 	// rather than being a plain SSH session.
 	Mirroring bool
+	// GaveUp marks a machine that could not be reached and is no longer being
+	// retried until it is connected to again.
+	GaveUp bool
 }
 
 // Connect asks the daemon to connect to a machine.
@@ -162,6 +165,7 @@ func collect() ([]Entry, string) {
 			entry.Mirrors = info.Mirrors
 			entry.SSHOnly = info.SSHOnly
 			entry.Mirroring = info.Mirroring
+			entry.GaveUp = info.GaveUp
 		}
 	}
 
@@ -193,6 +197,7 @@ const (
 	bold    = esc + "[1m"
 	green   = esc + "[32m"
 	yellow  = esc + "[33m"
+	red     = esc + "[31m"
 	reverse = esc + "[7m"
 )
 
@@ -280,6 +285,8 @@ func draw(entries []Entry, selected int) {
 			mode = "mirrored"
 		}
 		switch {
+		case entry.GaveUp:
+			line = red + "unreachable" + reset + dim + " · enter to retry" + reset
 		case entry.Connected && entry.Mirroring:
 			line = green + fmt.Sprintf("connected · %d mirrored", entry.Mirrors) + reset
 		case entry.Connected:

@@ -103,12 +103,17 @@ space it opens a terminal there, anywhere else it opens a normal local one.
 
 ## Things worth knowing
 
-**Closing a space closes those terminals here, not on the machine.** Your work
-keeps running over there. Run `connect` to bring the space back.
+**Closing a mirrored tab closes it on the machine too.** Mirroring is two-way,
+so a tab you close is gone on both ends. Set `"close_propagates": false` to keep
+the machine's terminal running. A plain SSH terminal only ever closes here.
 
 **A dropped connection comes back on its own.** A terminal whose SSH link fails
 is reopened; one you close stays closed. Restarting Herdr restores the machines
 you had connected rather than leaving an empty sidebar.
+
+**A machine that cannot be reached is left alone after two tries.** It shows as
+`unreachable` in the menu and in `status`, rather than being retried every
+couple of seconds forever. Connecting to it is an explicit "try now".
 
 **Closing one terminal keeps it closed.** It will not reappear behind your back
 until that terminal goes away on the machine and comes back.
@@ -176,6 +181,7 @@ All optional, in `config.json`:
 | `remote_workspace_format` | `☁  {hub}` | How the space is named *on the machine*, `{hub}` being this machine |
 | `auto_start` | `true` | Start that session over SSH when it is not running |
 | `capture_new_panes` | `true` | Move a local pane opened in a machine's space onto that machine |
+| `close_propagates` | `true` | Closing a mirrored tab closes it on the machine too |
 | `takeover` | `true` | Take over a stale connection left by a closed terminal |
 | `herdr_bin` | found automatically | Where `herdr` lives on the machine |
 
