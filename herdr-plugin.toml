@@ -61,6 +61,13 @@ description = "Show connected hosts and how many panes each one is mirroring."
 contexts = ["global"]
 command = ["./bin/herdr-remote-panes", "status"]
 
+# React to a pane appearing instead of waiting for the next poll. Herdr's own
+# new-tab paths open a local shell that has to be moved onto the machine, and
+# doing that a couple of seconds later is very visible.
+[[events]]
+on = "pane.created"
+command = ["./bin/herdr-remote-panes", "refresh"]
+
 # One mirror pane per remote terminal. The daemon supplies the target through
 # HRP_* environment variables and overrides the placement per host.
 # The machine menu. A popup is session-modal and gets every key, including

@@ -214,6 +214,29 @@ func (c *Client) PaneList() ([]herdrcli.Pane, error) {
 	return herdrcli.ParsePaneList(result)
 }
 
+// TabOrder returns each tab id on the remote host with its display number, so
+// panes can be mirrored in the order they appear there.
+func (c *Client) TabOrder() (map[string]int, error) {
+	result, err := c.Run("tab", "list")
+	if err != nil {
+		return nil, err
+	}
+	var body struct {
+		Tabs []struct {
+			TabID  string `json:"tab_id"`
+			Number int    `json:"number"`
+		} `json:"tabs"`
+	}
+	if err := json.Unmarshal(result, &body); err != nil {
+		return nil, fmt.Errorf("parse remote tab list: %w", err)
+	}
+	order := make(map[string]int, len(body.Tabs))
+	for _, tab := range body.Tabs {
+		order[tab.TabID] = tab.Number
+	}
+	return order, nil
+}
+
 // Ping verifies the host is reachable and its Herdr session is answering.
 func (c *Client) Ping() error {
 	_, err := c.PaneList()

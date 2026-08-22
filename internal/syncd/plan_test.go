@@ -243,3 +243,54 @@ func TestPlanStrayPlacement(t *testing.T) {
 		t.Errorf("a pane sharing a tab = %q, want %q", got, placementSplit)
 	}
 }
+
+func TestPlanSharedPanes(t *testing.T) {
+	// A machine's panes, deliberately out of order and spread across two of its
+	// spaces: "wC" is the space this plugin owns, "w7" is the machine's own.
+	panes := []herdrcli.Pane{
+		{PaneID: "wC:p3", TabID: "wC:t3", WorkspaceID: "wC"},
+		{PaneID: "w7:p1", TabID: "w7:t1", WorkspaceID: "w7"},
+		{PaneID: "wC:p1", TabID: "wC:t1", WorkspaceID: "wC"},
+		{PaneID: "wC:p2", TabID: "wC:t2", WorkspaceID: "wC"},
+	}
+	order := map[string]int{"wC:t1": 1, "wC:t2": 2, "wC:t3": 3, "w7:t1": 1}
+
+	t.Run("shared scope mirrors only this machine's space, in tab order", func(t *testing.T) {
+		// Mirroring the machine's other spaces made the two ends differ by a
+		// constant, which reads as being permanently out of sync.
+		got := planSharedPanes(panes, "wC", order, true)
+		want := []string{"wC:p1", "wC:p2", "wC:p3"}
+		if len(got) != len(want) {
+			t.Fatalf("got %d panes, want %d: %+v", len(got), len(want), got)
+		}
+		for i := range want {
+			if got[i].PaneID != want[i] {
+				t.Errorf("pane %d = %s, want %s", i, got[i].PaneID, want[i])
+			}
+		}
+	})
+
+	t.Run("all scope keeps every pane but still orders them", func(t *testing.T) {
+		got := planSharedPanes(panes, "wC", order, false)
+		if len(got) != 4 {
+			t.Fatalf("got %d panes, want 4", len(got))
+		}
+		// Tab numbers repeat across spaces, so the pane id breaks the tie
+		// deterministically rather than leaving the order to chance.
+		for i := 1; i < len(got); i++ {
+			a, b := got[i-1], got[i]
+			na, nb := order[a.TabID], order[b.TabID]
+			if na > nb || (na == nb && a.PaneID > b.PaneID) {
+				t.Errorf("panes out of order at %d: %s then %s", i, a.PaneID, b.PaneID)
+			}
+		}
+	})
+
+	t.Run("an unknown shared space mirrors nothing", func(t *testing.T) {
+		// Before the space exists there is nothing shared yet; mirroring the
+		// machine's own work instead would be a surprise.
+		if got := planSharedPanes(panes, "", order, true); len(got) != 0 {
+			t.Errorf("got %d panes, want none: %+v", len(got), got)
+		}
+	})
+}

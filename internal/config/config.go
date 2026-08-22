@@ -16,6 +16,13 @@ import (
 type Mode string
 
 const (
+	// ScopeShared mirrors only this machine's own space on the remote, keeping
+	// both ends identical. ScopeAll mirrors every pane the machine has.
+	ScopeShared = "shared"
+	ScopeAll    = "all"
+)
+
+const (
 	// DefaultSessionName means the machine's own default session: the one
 	// plain `herdr` opens there. Mirroring into it is the default, because a
 	// dedicated session is invisible unless you know to ask for it by name.
@@ -104,6 +111,11 @@ type Config struct {
 	// remote machine. {hub} is this machine's hostname, so that sitting on the
 	// remote you can tell which machine those panes are shared with.
 	RemoteWorkspaceFormat string `json:"remote_workspace_format,omitempty"`
+	// Scope decides which of a machine's terminals are shared. "shared" mirrors
+	// only the space this plugin owns there, so both ends always show the same
+	// tabs in the same order. "all" mirrors every pane on the machine, which
+	// also surfaces work started there but makes the two sides differ.
+	Scope string `json:"scope,omitempty"`
 	// CaptureNewPanes replaces a local pane opened inside a machine's space
 	// with a terminal on that machine. Herdr's new-tab keybinding and the plus
 	// icon in the tab bar both create a local shell, and neither can be
@@ -210,6 +222,9 @@ func (c Config) normalized() Config {
 	if c.RemoteWorkspaceFormat == "" {
 		c.RemoteWorkspaceFormat = d.RemoteWorkspaceFormat
 	}
+	if c.Scope == "" {
+		c.Scope = d.Scope
+	}
 	if c.CaptureNewPanes == nil {
 		c.CaptureNewPanes = d.CaptureNewPanes
 	}
@@ -255,6 +270,11 @@ func (c Config) SessionFor(h Host) string {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// SharedOnly reports whether only this machine's own space is mirrored.
+func (c Config) SharedOnly() bool {
+	return c.Scope != ScopeAll
+}
 
 // ShouldCaptureNewPanes reports whether a local pane opened in a machine's
 // space should be replaced with a terminal on that machine.

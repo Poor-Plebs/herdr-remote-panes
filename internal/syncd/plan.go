@@ -1,6 +1,10 @@
 package syncd
 
-import "github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
+import (
+	"sort"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
+)
 
 // This file holds the decisions the reconciler makes, separated from the calls
 // that carry them out so they can be tested directly. Nearly every regression
@@ -141,4 +145,30 @@ func planStrayPlacement(panesInSameTab int) string {
 		return placementTab
 	}
 	return placementSplit
+}
+
+// planSharedPanes selects and orders the remote panes to mirror.
+//
+// With scope "shared" only this machine's own space on the remote is mirrored,
+// so both ends show exactly the same terminals: the machine's other work stays
+// where it is. Panes are ordered by the tab order on the remote, so the first
+// tab here is the first tab there. Herdr does not promise an order in a pane
+// listing, and without sorting the two sides drift apart as panes come and go.
+func planSharedPanes(panes []herdrcli.Pane, sharedWorkspace string, tabOrder map[string]int, sharedOnly bool) []herdrcli.Pane {
+	selected := make([]herdrcli.Pane, 0, len(panes))
+	for _, pane := range panes {
+		if sharedOnly && pane.WorkspaceID != sharedWorkspace {
+			continue
+		}
+		selected = append(selected, pane)
+	}
+
+	sort.SliceStable(selected, func(i, j int) bool {
+		a, b := selected[i], selected[j]
+		if na, nb := tabOrder[a.TabID], tabOrder[b.TabID]; na != nb {
+			return na < nb
+		}
+		return a.PaneID < b.PaneID
+	})
+	return selected
 }

@@ -124,9 +124,13 @@ herdr
 ```
 
 Connecting creates a space there named after *your* machine — `☁  L14` rather
-than `☁  workbox` — so from that side it is obvious the connection is live and
-where terminals opened from here will land. Terminals that were already running
-keep whatever space they were in; nothing gets rearranged.
+than `☁  workbox`. That space is the shared one: both ends show exactly the same
+terminals, in the same order, so tab 1 here is tab 1 there. Whatever else the
+machine has running stays in its own spaces, private and untouched.
+
+To see everything the machine has instead, including work started there, set
+`"scope": "all"`. The two sides will then differ by whatever lives in the
+machine's other spaces.
 
 Because it is the machine's normal session, starting Herdr here will start it
 there too when it is not running. Set `"auto_start": false` if you would rather
@@ -153,6 +157,7 @@ All optional, in `config.json`:
 | `label_format` | `{name}@{host}` | How its terminals are named |
 | `placement` | `split` | How mirrors are placed here: `split`, `tab` or `zoomed` |
 | `poll_interval` | `2s` | How often machines are checked |
+| `scope` | `shared` | `shared` mirrors only the machine's `☁ …` space, tab for tab; `all` mirrors every pane it has |
 | `max_mirrors` | `32` | Most terminals to show per machine |
 | `session` | `default` | Which Herdr session on the machine to share; a name keeps it separate from the machine's own |
 | `remote_workspace_format` | `☁  {hub}` | How the space is named *on the machine*, `{hub}` being this machine |

@@ -68,6 +68,10 @@ type hostSync struct {
 	// pendingPlacement overrides, per remote terminal, how its mirror is placed
 	// here, so a "new tab" key gives a tab even when the host normally splits.
 	pendingPlacement map[string]string
+	// pendingFocus marks mirrors that should take focus when they open, so
+	// replacing a pane someone just created leaves them in the new terminal
+	// rather than back where they started.
+	pendingFocus map[string]bool
 	// seenStray records local panes in this host's space that were noticed and
 	// left alone, so a pane is only considered for capture once.
 	seenStray map[string]bool
@@ -286,7 +290,7 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		if err := d.connect(host); err != nil {
 			return Reply{Message: err.Error()}
 		}
-		if err := d.openRemotePane(host, cmd.Placement); err != nil {
+		if err := d.openRemotePane(host, cmd.Placement, true); err != nil {
 			return Reply{Message: err.Error()}
 		}
 		d.reconcileAll()
@@ -306,7 +310,7 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 
 // openRemotePane creates a new pane on the remote host. The reconcile that
 // follows mirrors it back, so opening a pane "on a machine" is one action.
-func (d *Daemon) openRemotePane(host config.Host, placement string) error {
+func (d *Daemon) openRemotePane(host config.Host, placement string, focus bool) error {
 	d.mu.Lock()
 	state, ok := d.hosts[host.Target]
 	d.mu.Unlock()
@@ -331,15 +335,15 @@ func (d *Daemon) openRemotePane(host config.Host, placement string) error {
 	if err != nil {
 		return err
 	}
-	d.rememberPlacement(state, result, placement)
+	d.rememberPlacement(state, result, placement, focus)
 	return nil
 }
 
 // rememberPlacement records how the mirror of a just-created remote terminal
 // should be placed here. The remote reply carries the terminal id, so the
 // mirror opened by the next pass can be matched back to this request.
-func (d *Daemon) rememberPlacement(state *hostSync, result json.RawMessage, placement string) {
-	if placement == "" {
+func (d *Daemon) rememberPlacement(state *hostSync, result json.RawMessage, placement string, focus bool) {
+	if placement == "" && !focus {
 		return
 	}
 	var body struct {
@@ -352,7 +356,38 @@ func (d *Daemon) rememberPlacement(state *hostSync, result json.RawMessage, plac
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	state.pendingPlacement[body.RootPane.TerminalID] = placement
+	if placement != "" {
+		state.pendingPlacement[body.RootPane.TerminalID] = placement
+	}
+	if focus {
+		state.pendingFocus[body.RootPane.TerminalID] = true
+	}
+}
+
+// findRemoteWorkspace looks up this machine's space on the remote without
+// creating it, for the reconcile path, which should not open terminals.
+func (d *Daemon) findRemoteWorkspace(state *hostSync) (bool, error) {
+	label := d.cfg.RemoteWorkspaceLabel()
+	result, err := state.client.Run("workspace", "list")
+	if err != nil {
+		return false, err
+	}
+	var body struct {
+		Workspaces []struct {
+			WorkspaceID string `json:"workspace_id"`
+			Label       string `json:"label"`
+		} `json:"workspaces"`
+	}
+	if err := json.Unmarshal(result, &body); err != nil {
+		return false, fmt.Errorf("parse remote workspace list: %w", err)
+	}
+	for _, ws := range body.Workspaces {
+		if ws.Label == label {
+			state.remoteWorkspaceID = ws.WorkspaceID
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ensureRemoteWorkspace finds or creates the workspace on the remote machine
@@ -533,6 +568,7 @@ func (d *Daemon) connect(host config.Host) error {
 
 			reportedAgents:   map[string]agentReport{},
 			pendingPlacement: map[string]string{},
+			pendingFocus:     map[string]bool{},
 			seenStray:        map[string]bool{},
 		}
 		if saved, ok := d.snapshot.Hosts[host.Target]; ok {
@@ -840,6 +876,22 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		return err
 	}
 
+	// Restrict to this machine's own space on the remote, and put the panes in
+	// the order they appear there so the tabs line up on both ends.
+	sharedWorkspace := state.remoteWorkspaceID
+	if d.cfg.SharedOnly() && sharedWorkspace == "" {
+		if found, lookupErr := d.findRemoteWorkspace(state); lookupErr != nil {
+			return lookupErr
+		} else if found {
+			sharedWorkspace = state.remoteWorkspaceID
+		}
+	}
+	tabOrder, err := state.client.TabOrder()
+	if err != nil {
+		return err
+	}
+	remotePanes = planSharedPanes(remotePanes, sharedWorkspace, tabOrder, d.cfg.SharedOnly())
+
 	labels := d.labelsFor(state.host, remotePanes)
 
 	seen := map[string]bool{}
@@ -955,7 +1007,7 @@ func (d *Daemon) captureStrayPanes(state *hostSync, strays []strayPane) {
 	for _, stray := range strays {
 		log.Printf("%s: moving pane %s onto the machine as a %s",
 			state.host.Target, stray.PaneID, stray.Placement)
-		if err := d.openRemotePane(state.host, stray.Placement); err != nil {
+		if err := d.openRemotePane(state.host, stray.Placement, true); err != nil {
 			log.Printf("open terminal on %s: %v", state.host.Target, err)
 			continue
 		}
@@ -1088,6 +1140,9 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, ind
 		placement = requested
 		delete(state.pendingPlacement, rp.TerminalID)
 	}
+	focus := state.pendingFocus[rp.TerminalID]
+	delete(state.pendingFocus, rp.TerminalID)
+
 	target := planPaneTarget(placement, workspaceID, index.anyInWorkspace[workspaceID])
 	opts := herdrcli.OpenOptions{
 		PluginID:   PluginID,
@@ -1095,6 +1150,7 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, ind
 		Placement:  target.Placement,
 		Workspace:  target.Workspace,
 		TargetPane: target.TargetPane,
+		Focus:      focus,
 		Env:        env,
 	}
 
