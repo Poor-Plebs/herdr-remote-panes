@@ -85,6 +85,7 @@ herdr server stop && herdr
 | `placement` | `split` | `tab`, `split`, `zoomed` or `overlay` |
 | `label_format` | `{name}@{host}` | Supports `{name}`, `{host}`, `{agent}`, `{pane}` |
 | `workspace` | per host | Shared workspace label; default is one per machine |
+| `workspace_format` | `☁ {host}` | Names and marks a host's workspace as remote |
 | `auto_start` | `true` | Start the remote session over SSH when it is not running |
 | `herdr_bin` | probed | Remote `herdr` path (see below) |
 | `max_mirrors` | `32` | Per-host cap, so a busy remote cannot flood the session |
@@ -175,13 +176,19 @@ under `hosts`:
 }
 ```
 
-By default each machine gets its own workspace, named after it:
+By default each machine gets its own workspace, marked so it is obvious at a
+glance which spaces are remote:
 
 ```
-workspace: bot          workspace: prod         workspace: staging
+workspace: ☁ bot        workspace: ☁ prod       workspace: ☁ staging
   build@bot               deploy@prod             tail@staging   (read-only)
   claude@bot              psql@prod
 ```
+
+Change the marker with `workspace_format` (`{host}` is the host's label), for
+example `"[remote] {host}"` or just `"{host}"` for none. The workspace is also
+tagged with a `remote` metadata token, which shows wherever your sidebar
+template renders workspace tokens.
 
 Set a top-level `workspace` to put every machine in **one** layout instead:
 

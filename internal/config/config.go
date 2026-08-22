@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -85,8 +86,12 @@ type Config struct {
 	// because `ssh host <command>` does not run a login shell.
 	HerdrBin string `json:"herdr_bin,omitempty"`
 	// Workspace is the local workspace label every host's mirrors share. Empty
-	// gives each host its own workspace named after it.
+	// gives each host its own workspace named by WorkspaceFormat.
 	Workspace string `json:"workspace,omitempty"`
+	// WorkspaceFormat names a host's own workspace and marks it as remote, so
+	// it is distinguishable from local workspaces in the sidebar. {host} is the
+	// host's display label. A shared Workspace is used verbatim instead.
+	WorkspaceFormat string `json:"workspace_format,omitempty"`
 	// Takeover evicts a stale remote attach when mirroring in attach mode. A
 	// direct attach is exclusive and can outlive the pane that started it, so
 	// without this a killed mirror blocks its terminal until that process dies.
@@ -104,15 +109,16 @@ type Config struct {
 // Defaults returns a configuration with every optional field populated.
 func Defaults() Config {
 	return Config{
-		PollInterval: "2s",
-		Session:      DefaultSession,
-		Mode:         ModeAttach,
-		Placement:    "split",
-		LabelFormat:  "{name}@{host}",
-		Takeover:     boolPtr(true),
-		AutoStart:    boolPtr(true),
-		MaxMirrors:   32,
-		Hosts:        []Host{},
+		PollInterval:    "2s",
+		Session:         DefaultSession,
+		Mode:            ModeAttach,
+		Placement:       "split",
+		LabelFormat:     "{name}@{host}",
+		WorkspaceFormat: "☁ {host}",
+		Takeover:        boolPtr(true),
+		AutoStart:       boolPtr(true),
+		MaxMirrors:      32,
+		Hosts:           []Host{},
 	}
 }
 
@@ -184,6 +190,9 @@ func (c Config) normalized() Config {
 	if c.LabelFormat == "" {
 		c.LabelFormat = d.LabelFormat
 	}
+	if c.WorkspaceFormat == "" {
+		c.WorkspaceFormat = d.WorkspaceFormat
+	}
 	if c.Takeover == nil {
 		c.Takeover = d.Takeover
 	}
@@ -249,7 +258,7 @@ func (c Config) WorkspaceFor(h Host) string {
 	if c.Workspace != "" {
 		return c.Workspace
 	}
-	return h.DisplayLabel()
+	return strings.ReplaceAll(c.WorkspaceFormat, "{host}", h.DisplayLabel())
 }
 
 // BinFor resolves the remote Herdr binary for a host. An empty result means

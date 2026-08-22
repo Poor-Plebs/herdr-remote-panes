@@ -37,6 +37,9 @@ type Daemon struct {
 	// host connects so its panes are adopted rather than reopened.
 	snapshot snapshot
 
+	// markedWorkspaces avoids re-reporting the same workspace metadata.
+	markedWorkspaces map[string]bool
+
 	// rootPanes maps a workspace this daemon created to the shell Herdr opened
 	// with it, so that placeholder can be closed once a mirror replaces it.
 	rootPanes map[string]string
@@ -107,10 +110,11 @@ func (p *paneIndex) add(pane herdrcli.Pane) {
 // New builds a daemon from the on-disk configuration.
 func New(cfg config.Config) *Daemon {
 	return &Daemon{
-		cfg:       cfg,
-		hosts:     map[string]*hostSync{},
-		rootPanes: map[string]string{},
-		snapshot:  loadSnapshot(),
+		cfg:              cfg,
+		hosts:            map[string]*hostSync{},
+		rootPanes:        map[string]string{},
+		markedWorkspaces: map[string]bool{},
+		snapshot:         loadSnapshot(),
 	}
 }
 
@@ -324,7 +328,10 @@ func (d *Daemon) connect(host config.Host) error {
 		if startErr := client.Start(); startErr != nil {
 			return startErr
 		}
-		if retryErr := client.Ping(); retryErr != nil {
+		// The server is launched in the background and needs a moment to bind
+		// its socket, so an immediate ping would fail and leave the host
+		// disconnected until the next manual connect.
+		if retryErr := waitForRemote(client); retryErr != nil {
 			return retryErr
 		}
 	}
@@ -356,6 +363,27 @@ func (d *Daemon) connect(host config.Host) error {
 	}
 	d.hosts[host.Target] = state
 	return nil
+}
+
+// remoteStartTimeout bounds how long a freshly launched remote session is
+// given to come up.
+const remoteStartTimeout = 10 * time.Second
+
+// waitForRemote polls a just-started remote session until it answers. The
+// server is launched detached over SSH, so it is not listening yet when Start
+// returns.
+func waitForRemote(client *remote.Client) error {
+	deadline := time.Now().Add(remoteStartTimeout)
+	var err error
+	for attempt := 0; ; attempt++ {
+		if err = client.Ping(); err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(time.Duration(attempt+1) * 250 * time.Millisecond)
+	}
 }
 
 func (d *Daemon) disconnect(target string) error {
@@ -751,6 +779,7 @@ func (d *Daemon) ensureWorkspace(state *hostSync, index *paneIndex) (string, err
 	}
 	for _, ws := range body.Workspaces {
 		if ws.Label == label {
+			d.markWorkspaceRemote(ws.WorkspaceID, state.host)
 			return ws.WorkspaceID, nil
 		}
 	}
@@ -776,6 +805,8 @@ func (d *Daemon) ensureWorkspace(state *hostSync, index *paneIndex) (string, err
 	// exists only to hold mirrors that is a stray local terminal, so remember
 	// it and close it once a mirror has taken its place. It cannot be closed
 	// now: a workspace with no panes at all closes itself.
+	d.markWorkspaceRemote(workspaceID, state.host)
+
 	if root := createdBody.RootPane.PaneID; root != "" {
 		d.rootPanes[workspaceID] = root
 		// The index was captured before this workspace existed. Register the
@@ -784,6 +815,19 @@ func (d *Daemon) ensureWorkspace(state *hostSync, index *paneIndex) (string, err
 		index.add(herdrcli.Pane{PaneID: root, WorkspaceID: workspaceID})
 	}
 	return workspaceID, nil
+}
+
+// markWorkspaceRemote tags a workspace with the machine it mirrors. Herdr shows
+// workspace metadata tokens only where the sidebar template asks for them, so
+// this supplements the marker carried in the workspace name itself.
+func (d *Daemon) markWorkspaceRemote(workspaceID string, host config.Host) {
+	if workspaceID == "" || d.markedWorkspaces[workspaceID] {
+		return
+	}
+	d.markedWorkspaces[workspaceID] = true
+	if err := herdrcli.ReportWorkspaceToken(workspaceID, agentSource, "remote", host.DisplayLabel()); err != nil {
+		log.Printf("mark workspace %s: %v", workspaceID, err)
+	}
 }
 
 // retireRootPane closes the placeholder shell Herdr created with a workspace,
