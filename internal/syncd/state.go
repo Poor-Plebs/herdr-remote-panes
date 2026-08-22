@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // StateDir is where Herdr lets a plugin keep runtime state.
@@ -19,12 +20,37 @@ func StateDir() (string, error) {
 }
 
 // ControlSocket is the address actions use to reach a running daemon.
+//
+// Herdr's plugin state directory is shared by every session, but each session
+// runs its own daemon, so the socket is named per session. Without this a
+// second session's daemon would find the first one's socket and exit.
 func ControlSocket() (string, error) {
 	dir, err := StateDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "control.sock"), nil
+	session := os.Getenv("HERDR_SESSION")
+	if session == "" {
+		session = "default"
+	}
+	return filepath.Join(dir, "control-"+sanitize(session)+".sock"), nil
+}
+
+// sanitize keeps a session name usable as a filename.
+func sanitize(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	if b.Len() == 0 {
+		return "default"
+	}
+	return b.String()
 }
 
 // Command is a request from a plugin action to the daemon.
