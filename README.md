@@ -1,49 +1,21 @@
 # herdr-remote-panes
 
-A [Herdr](https://herdr.dev) plugin that mirrors panes from remote Herdr servers
-into your local session, each one named `<pane>@<host>`.
+Work on several machines from one [Herdr](https://herdr.dev).
 
-Run Herdr on a hub machine, point the plugin at the machines you work on, and
-the panes running over there show up here — created, renamed and closed in step
-with the originals.
+Point it at the machines you use. Their terminals show up in your local Herdr,
+grouped per machine and named `<pane>@<host>`, and you type in them as if they
+were local. Agents running over there appear in your sidebar with the right
+name and status.
 
 ```
-hub (your laptop)                    workbox (over SSH)
+your laptop                          workbox (over SSH)
 ┌───────────────────────────┐        ┌──────────────────────────┐
-│ workspace: workbox        │        │ session: remote          │
-│  ├── build@workbox    ◄───┼────────┤  ├── build               │
-│  ├── tests@workbox    ◄───┼────────┤  ├── tests               │
-│  └── claude@workbox   ◄───┼────────┤  └── claude              │
+│ ☁ workbox                 │        │  build                   │
+│   build@workbox       ◄───┼────────┤  tests                   │
+│   tests@workbox       ◄───┼────────┤  claude                  │
+│   claude@workbox      ◄───┤        │                          │
 └───────────────────────────┘        └──────────────────────────┘
 ```
-
-## How it works
-
-Herdr has no inbound pane federation: nothing on the remote machine can push a
-pane into your session. So this plugin pulls instead. A daemon on the hub polls
-each host over a multiplexed SSH connection, and for every remote pane it opens
-a local plugin pane bridged to that pane's terminal.
-
-The bridge is Herdr's own direct terminal attach, so a mirror is a real live
-terminal, not a screen scrape.
-
-| Piece | What it does |
-| --- | --- |
-| `[[startup]]` daemon | Polls each host, reconciles mirrors, names them |
-| `herdr pane list` over SSH | Discovers remote panes |
-| `plugin.pane.open` | Creates the local mirror pane |
-| `herdr terminal attach` | Bridges the remote terminal (interactive) |
-| `herdr terminal session observe` | Bridges it read-only (`observe` mode) |
-| `pane.rename` | Applies the `<pane>@<host>` name |
-
-## Requirements
-
-- Herdr 0.8.0 or newer on the hub
-- Passwordless SSH to each host (`ssh workbox` must work on its own)
-- SSH access to each machine. Herdr on the far side is optional: with it you
-  get mirrored panes, without it you get plain SSH panes (see below)
-- Linux or macOS — Herdr's direct terminal attach is Unix-only
-- Go 1.22+ on the hub, to build the plugin
 
 ## Install
 
@@ -51,270 +23,178 @@ terminal, not a screen scrape.
 herdr plugin install Poor-Plebs/herdr-remote-panes
 ```
 
-Then edit the config and restart Herdr so the daemon picks it up:
+Then list your machines:
 
 ```bash
 $EDITOR "$(herdr plugin config-dir poorplebs.remote-panes)/config.json"
-herdr server stop && herdr
 ```
-
-## Configuration
-
-`config.json` in the plugin config directory:
 
 ```json
 {
-  "poll_interval": "2s",
-  "session": "remote",
-  "mode": "attach",
-  "placement": "tab",
-  "label_format": "{name}@{host}",
-  "max_mirrors": 32,
   "hosts": [
     { "target": "workbox" },
-    { "target": "ci.example.com", "label": "ci", "mode": "observe" },
-    { "target": "devbox", "session": "agents", "placement": "split" }
+    { "target": "ci.example.com", "label": "ci" }
   ]
 }
 ```
 
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `poll_interval` | `2s` | How often each host is polled. Minimum 500ms |
-| `session` | `remote` | Which remote Herdr session to mirror (see below) |
-| `mode` | `attach` | `attach` interactive, `observe` read-only, `ssh` plain SSH panes |
-| `placement` | `split` | `tab`, `split`, `zoomed` or `overlay` |
-| `label_format` | `{name}@{host}` | Supports `{name}`, `{host}`, `{agent}`, `{pane}` |
-| `workspace` | per host | Shared workspace label; default is one per machine |
-| `workspace_format` | `☁ {host}` | Names and marks a host's workspace as remote |
-| `auto_start` | `true` | Start the remote session over SSH when it is not running |
-| `herdr_bin` | probed | Remote `herdr` path (see below) |
-| `max_mirrors` | `32` | Per-host cap, so a busy remote cannot flood the session |
+`target` is whatever you type after `ssh`. Restart Herdr and the spaces appear.
 
-Per host: `target` (SSH destination), `label` (name suffix, defaults to the
-target), `session` (remote `HERDR_SESSION`), `mode`, `placement`, `workspace`
-(pin mirrors to a local workspace id), `herdr_bin`, `disabled`.
+You need: Go on this machine (to build the plugin), and SSH access to each
+machine. That is all — see [Machines without Herdr](#machines-without-herdr).
 
-Mirrors from a host land in a workspace named after it, created on demand.
+## Everyday use
 
-### Which remote session gets mirrored
-
-By default this plugin mirrors the remote session named **`remote`**, not the
-remote's default session. Sessions are fully independent — separate panes,
-tabs, workspaces and sockets — so mirroring a dedicated one keeps the hub well
-clear of whatever you are already doing on that machine.
-
-With `auto_start` on (the default) the hub starts that session over SSH itself,
-so a host only needs the `herdr` binary and working SSH. To drive it by hand
-instead, run this on the remote host:
-
-```bash
-herdr --session remote
-```
-
-Panes you open there show up on the hub. Panes in the remote's default session
-do not.
-
-Override it globally with the top-level `session` key, or per host:
-
-```json
-{ "target": "devbox", "session": "agents" }
-```
-
-To mirror the remote's unnamed default session after all, name it `default`:
-
-```json
-{ "target": "devbox", "session": "default" }
-```
-
-### Machines without Herdr
-
-Herdr on the remote is not a requirement. A host that has no Herdr — or one you
-simply do not want to run it on — is used through plain SSH panes instead: the
-`open` action gives you an interactive login shell in a pane, in that machine's
-workspace, named `shell@host`. Run an agent in it like any other terminal.
-
-This is detected automatically. If Herdr cannot be found or run on a host, the
-plugin says so in its log and switches that host to SSH panes rather than
-refusing to connect. Force it with `mode`:
-
-```json
-{ "target": "buildbox", "mode": "ssh" }
-```
-
-The trade-off is that nothing is discovered or synced for such a host: panes
-exist because you opened them, and closing one closes it. Mirroring is what
-needs Herdr on both ends.
-
-### `attach` vs `observe`
-
-`attach` runs `herdr terminal attach` on the far side. The mirror is fully
-interactive — you type into it and the remote pane responds.
-
-`observe` streams `herdr terminal session observe` and renders it read-only.
-It takes no ownership of the remote terminal and does not pin its size, so any
-number of machines can watch the same pane at once.
-
-The difference matters because **direct attach is exclusive**: one attached
-client per remote terminal. Two hubs mirroring the same terminal in `attach`
-mode will fight over it, and an attach also locks that terminal's size for as
-long as it lasts. Someone working in the remote machine's own Herdr UI is not
-affected — a full UI client is not an attach owner.
-
-## Actions
-
-| Action | Effect |
+| You want | Do this |
 | --- | --- |
-| `poorplebs.remote-panes.connect` | Mirror a machine again after closing its space; with no target, every configured host |
-| `poorplebs.remote-panes.open` | New terminal on the machine whose workspace you are in; a local pane elsewhere |
-| `poorplebs.remote-panes.disconnect` | Stop mirroring a host and close its mirrors |
-| `poorplebs.remote-panes.refresh` | Reconcile every host now |
-| `poorplebs.remote-panes.status` | Report connected hosts and mirror counts |
+| See a machine's terminals | They appear on their own, in a space named after the machine |
+| A new terminal on a machine | Run the `open` action while in that machine's space |
+| Bring a space back after closing it | Run the `connect` action |
+| Check what is connected | Run the `status` action |
 
-Bind one in `config.toml`:
-
-```toml
-[[keys.command]]
-key = "prefix+r"
-type = "plugin_action"
-command = "poorplebs.remote-panes.refresh"
-description = "refresh remote panes"
-```
-
-## Several machines at once
-
-One local Herdr, as many machines as you like, as many panes each. List them
-under `hosts`:
-
-```json
-{
-  "hosts": [
-    { "target": "bot" },
-    { "target": "prod" },
-    { "target": "staging", "mode": "observe" }
-  ]
-}
-```
-
-By default each machine gets its own workspace, marked so it is obvious at a
-glance which spaces are remote:
-
-```
-workspace: ☁ bot        workspace: ☁ prod       workspace: ☁ staging
-  build@bot               deploy@prod             tail@staging   (read-only)
-  claude@bot              psql@prod
-```
-
-Change the marker with `workspace_format` (`{host}` is the host's label), for
-example `"[remote] {host}"` or just `"{host}"` for none. The workspace is also
-tagged with a `remote` metadata token, which shows wherever your sidebar
-template renders workspace tokens.
-
-Set a top-level `workspace` to put every machine in **one** layout instead:
-
-```json
-{
-  "workspace": "remote",
-  "placement": "split",
-  "hosts": [{ "target": "bot" }, { "target": "prod" }]
-}
-```
-
-```
-workspace: remote
-  build@bot │ claude@bot │ deploy@prod │ psql@prod
-```
-
-`workspace` is a label, created when missing, and a host may override it — so
-you can group some machines together and keep others apart. Pair it with
-`placement`: `split` tiles the mirrors side by side, `tab` gives each its own
-tab.
-
-### Creating a terminal on a machine
-
-Herdr's own new-pane binding always opens a *local* shell, even while you are
-looking at a machine's workspace. The `open` action is workspace-aware instead:
-invoked from a mirrored workspace it creates the pane on that machine and lets
-it mirror back, and anywhere else it opens an ordinary local pane. That makes it
-safe to bind over your usual key:
+Actions are easier on a key. Add to `~/.config/herdr/config.toml`:
 
 ```toml
 [[keys.command]]
-key = "prefix+c"
+key = "prefix+shift+c"
 type = "plugin_action"
 command = "poorplebs.remote-panes.open"
-description = "new terminal, on the machine you are looking at"
-```
+description = "new terminal on this machine"
 
-Pass a host explicitly to target a specific machine regardless of where you are.
-
-### Finding the remote binary
-
-`ssh host <command>` does not run a login shell, so an install under
-`~/.local/bin` — where Herdr's installer puts it for a non-root user — is not on
-`PATH` even though an interactive login finds it fine. The plugin probes the
-usual locations (`$PATH`, `~/.local/bin`, `/usr/local/bin`, Homebrew, Nix,
-mise). Set `herdr_bin` if yours lives somewhere else:
-
-```json
-{ "target": "bot", "herdr_bin": "/opt/herdr/bin/herdr" }
-```
-
-### Closing and reopening a space
-
-Closing a machine's workspace closes its mirrors, and the daemon takes that at
-face value: it will not reopen them behind your back. To bring the machine back,
-invoke the `connect` action. With no target it reconnects every configured host,
-so it works as a plain keybinding with nothing to select:
-
-```toml
 [[keys.command]]
-key = "prefix+shift+r"
+key = "prefix+shift+m"
 type = "plugin_action"
 command = "poorplebs.remote-panes.connect"
 description = "reconnect remote spaces"
 ```
 
-Connecting is treated as a deliberate request for that machine's panes, so it
-clears earlier dismissals. Restarting Herdr has the same effect.
+Pick keys Herdr does not already use — it will not warn you about a clash, the
+built-in binding simply wins. `prefix+shift+r`, for instance, is already
+`reload_config`.
 
-## Behaviour worth knowing
+The `open` action is safe to bind over your usual new-pane key: in a machine's
+space it opens a terminal there, anywhere else it opens a normal local one.
 
-- **Closing a mirror keeps it closed.** The daemon will not reopen a mirror you
-  closed by hand until that remote pane goes away and comes back. This survives
-  a restart: the daemon records what it opened under the plugin state directory
-  and adopts those panes next time rather than opening a second set. Restarting
-  Herdr itself restores a plugin pane as a plain shell without re-running its
-  command, so each mirror records its pid and a pane whose mirror is not running
-  is replaced rather than adopted.
-- **A mirror workspace holds only mirrors.** Herdr opens a shell with every new
-  workspace; once a mirror replaces it, that placeholder is closed.
-- **A remote pane that closes closes its mirror**, on the next poll.
-- **A mirror that fails backs off** — five failed attempts and that terminal is
-  left alone. Failures are written to `mirror.log` in the plugin state
-  directory and printed into the pane before it closes.
-- **Size mismatch is the main rough edge.** A mirror pane and its remote pane
-  are rarely the same size; `attach` pins the remote to the mirror's size, and
-  `observe` reconnects at the new size when the mirror is resized.
+## Things worth knowing
 
-## Development
+**Closing a space closes those terminals here, not on the machine.** Your work
+keeps running over there. Run `connect` to bring the space back.
+
+**Closing one terminal keeps it closed.** It will not reappear behind your back
+until that terminal goes away on the machine and comes back.
+
+**Terminals come and go on their own.** Open one on the machine and it appears
+here; close it there and it disappears here.
+
+## Machines without Herdr
+
+Herdr on the far side is optional. Without it you get a plain SSH terminal in
+that machine's space — run an agent in it like any other terminal. This is
+detected automatically; force it with `"mode": "ssh"`.
+
+The difference is that nothing syncs for such a machine: terminals exist
+because you opened them. Terminals appearing and disappearing on their own is
+the part that needs Herdr on both ends.
+
+## Which session gets mirrored
+
+On each machine, the plugin uses a Herdr session called `remote`, started for
+you over SSH, so it never disturbs whatever you already have running there. To
+watch it on the machine itself:
 
 ```bash
-git clone https://github.com/Poor-Plebs/herdr-remote-panes
-cd herdr-remote-panes
-go build -o bin/herdr-remote-panes .
-herdr plugin link "$PWD"
-go test ./...
+ssh workbox
+herdr --session remote
 ```
 
-`herdr plugin link` does not run build commands, so rebuild by hand while
-iterating. Logs: `herdr plugin log list --plugin poorplebs.remote-panes`.
+You will see the same terminals. Plain `herdr` there shows that machine's own
+default session instead, which is not what gets mirrored.
+
+## Settings
+
+All optional, in `config.json`:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `hosts` | – | The machines. Each takes `target`, and optionally `label`, `mode`, `session`, `workspace`, `placement`, `herdr_bin`, `disabled` |
+| `mode` | `attach` | `attach` to type in them, `observe` to only watch, `ssh` for a plain SSH terminal |
+| `workspace` | one per machine | Put every machine in one space instead |
+| `workspace_format` | `☁  {host}` | How a machine's space is named |
+| `label_format` | `{name}@{host}` | How its terminals are named |
+| `placement` | `split` | `split`, `tab` or `zoomed` |
+| `poll_interval` | `2s` | How often machines are checked |
+| `max_mirrors` | `32` | Most terminals to show per machine |
+| `session` | `remote` | Which Herdr session to mirror |
+| `auto_start` | `true` | Start that session over SSH when it is not running |
+| `takeover` | `true` | Take over a stale connection left by a closed terminal |
+| `herdr_bin` | found automatically | Where `herdr` lives on the machine |
+
+### Everything in one space
+
+```json
+{
+  "workspace": "remote",
+  "placement": "split",
+  "hosts": [{ "target": "workbox" }, { "target": "ci" }]
+}
+```
+
+### A green or red cloud on remote spaces
+
+Spaces are named `☁  workbox` by default. For a cloud that turns green while
+the machine is reachable and red when it is not, add this to
+`~/.config/herdr/config.toml` and set `"workspace_format": "{host}"`:
+
+```toml
+[ui.sidebar.spaces]
+rows = [
+  [ { token = "$remote_up", fg = "#3fb950" }, { token = "$remote_down", fg = "#f85149" }, "state_icon", "workspace" ],
+  [ "branch", "git_status" ],
+]
+```
+
+### Watching instead of typing
+
+`"mode": "observe"` shows a machine's terminals read-only. Any number of people
+can watch the same terminal that way. `attach` is exclusive — two machines
+mirroring the same terminal in `attach` mode will fight over it.
+
+## When something looks wrong
+
+**A space is empty or missing.** Usually the machine has no terminals to show.
+Check with:
+
+```bash
+ssh workbox 'HERDR_SESSION=remote herdr pane list'
+```
+
+**A terminal will not open.** Failures are written to `mirror.log` in the
+plugin's state directory, and printed into the pane before it closes:
+
+```bash
+herdr plugin log list --plugin poorplebs.remote-panes
+cat ~/.local/state/herdr/plugins/poorplebs.remote-panes/mirror.log
+```
+
+**A keybinding does nothing.** It probably clashes with a built-in one. These
+are taken: `b c e g h j k l n o p q r s v w x z tab minus alt+g shift+d shift+g
+shift+n shift+p shift+r shift+t shift+w shift+x shift+tab`.
+
+## How it works
+
+Herdr cannot push panes between machines, so this pulls instead: a small daemon
+polls each machine over one reused SSH connection, and for every terminal it
+finds it opens a local pane bridged to that terminal with Herdr's own direct
+terminal attach. A mirrored terminal is a real live terminal, not a copy of the
+screen.
+
+Requires Herdr 0.8.0+, Go 1.22+ on this machine, and Linux or macOS — Herdr's
+direct terminal attach is Unix-only.
 
 ## Trust
 
-A Herdr plugin is ordinary code running with your privileges, and this one runs
-`ssh` to machines you name. Read the source before installing it — the same
-advice Herdr's own [plugin docs](https://herdr.dev/docs/plugins/) give.
+This runs with your privileges and connects by SSH to machines you name. Read
+the source before installing it, the same as any Herdr plugin.
 
 ## License
 

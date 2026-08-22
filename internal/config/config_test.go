@@ -40,8 +40,10 @@ func TestWorkspaceFor(t *testing.T) {
 
 	// Default: one workspace per machine, marked as remote so it is
 	// distinguishable from a local workspace in the sidebar.
-	if got := cfg.WorkspaceFor(bot); got != "☁ bot" {
-		t.Errorf("default workspace = %q, want %q", got, "☁ bot")
+	// Two spaces: a cloud is ambiguous-width and crowds the name in terminals
+	// that draw it in two cells.
+	if got := cfg.WorkspaceFor(bot); got != "☁  bot" {
+		t.Errorf("default workspace = %q, want %q", got, "☁  bot")
 	}
 	if cfg.WorkspaceFor(bot) == cfg.WorkspaceFor(prod) {
 		t.Error("hosts should not share a workspace by default")
@@ -61,8 +63,8 @@ func TestWorkspaceFor(t *testing.T) {
 
 	// A host label, not the target, names the workspace.
 	cfg.Workspace = ""
-	if got := cfg.WorkspaceFor(Host{Target: "165.227.153.104", Label: "droplet"}); got != "☁ droplet" {
-		t.Errorf("workspace = %q, want %q", got, "☁ droplet")
+	if got := cfg.WorkspaceFor(Host{Target: "165.227.153.104", Label: "droplet"}); got != "☁  droplet" {
+		t.Errorf("workspace = %q, want %q", got, "☁  droplet")
 	}
 
 	// The marker is configurable, and a shared workspace name is used verbatim

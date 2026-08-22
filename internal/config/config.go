@@ -95,6 +95,9 @@ type Config struct {
 	// WorkspaceFormat names a host's own workspace and marks it as remote, so
 	// it is distinguishable from local workspaces in the sidebar. {host} is the
 	// host's display label. A shared Workspace is used verbatim instead.
+	//
+	// Two spaces after the glyph: a cloud is ambiguous-width, so terminals that
+	// draw it in two cells would otherwise crowd the name.
 	WorkspaceFormat string `json:"workspace_format,omitempty"`
 	// Takeover evicts a stale remote attach when mirroring in attach mode. A
 	// direct attach is exclusive and can outlive the pane that started it, so
@@ -118,7 +121,7 @@ func Defaults() Config {
 		Mode:            ModeAttach,
 		Placement:       "split",
 		LabelFormat:     "{name}@{host}",
-		WorkspaceFormat: "☁ {host}",
+		WorkspaceFormat: "☁  {host}",
 		Takeover:        boolPtr(true),
 		AutoStart:       boolPtr(true),
 		MaxMirrors:      32,

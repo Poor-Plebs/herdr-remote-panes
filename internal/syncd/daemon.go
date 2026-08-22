@@ -38,7 +38,7 @@ type Daemon struct {
 	snapshot snapshot
 
 	// markedWorkspaces avoids re-reporting the same workspace metadata.
-	markedWorkspaces map[string]bool
+	markedWorkspaces map[string]string
 
 	// rootPanes maps a workspace this daemon created to the shell Herdr opened
 	// with it, so that placeholder can be closed once a mirror replaces it.
@@ -59,6 +59,10 @@ type hostSync struct {
 	// persistent error cannot spawn a new pane on every tick.
 	failures map[string]int
 	retryAt  map[string]time.Time
+
+	// workspaceID is the local workspace this host's panes live in, remembered
+	// so the remote marker can be updated without another lookup.
+	workspaceID string
 
 	// sshOnly marks a host used through plain SSH panes: it has no Herdr, so
 	// there is nothing to discover or mirror and reconcile leaves it alone.
@@ -93,12 +97,14 @@ const agentSource = PluginID
 type paneIndex struct {
 	alive          map[string]bool
 	anyInWorkspace map[string]string
+	workspaceOf    map[string]string
 }
 
 func newPaneIndex(panes []herdrcli.Pane) *paneIndex {
 	index := &paneIndex{
 		alive:          make(map[string]bool, len(panes)),
 		anyInWorkspace: map[string]string{},
+		workspaceOf:    map[string]string{},
 	}
 	for _, p := range panes {
 		index.add(p)
@@ -110,6 +116,7 @@ func (p *paneIndex) add(pane herdrcli.Pane) {
 	p.alive[pane.PaneID] = true
 	if pane.WorkspaceID != "" {
 		p.anyInWorkspace[pane.WorkspaceID] = pane.PaneID
+		p.workspaceOf[pane.PaneID] = pane.WorkspaceID
 	}
 }
 
@@ -119,7 +126,7 @@ func New(cfg config.Config) *Daemon {
 		cfg:              cfg,
 		hosts:            map[string]*hostSync{},
 		rootPanes:        map[string]string{},
-		markedWorkspaces: map[string]bool{},
+		markedWorkspaces: map[string]string{},
 		snapshot:         loadSnapshot(),
 	}
 }
@@ -395,45 +402,51 @@ func (d *Daemon) connect(host config.Host) error {
 	client := remote.NewWithBin(host.Target, d.cfg.SessionFor(host), d.cfg.BinFor(host))
 
 	sshOnly := d.cfg.ModeFor(host) == config.ModeSSH
+	var connectErr error
 	if !sshOnly {
 		if err := d.prepareRemote(client, host); err != nil {
 			// A machine without Herdr is still perfectly usable over plain SSH,
 			// so fall back instead of refusing to connect. Anything else — an
-			// unreachable host, a broken login — is a real failure.
-			if !errors.Is(err, remote.ErrNoHerdr) {
-				return err
+			// unreachable host, a broken login — is a real failure, but the
+			// host is still registered so it keeps being retried and shows up
+			// as unreachable rather than vanishing from status entirely.
+			if errors.Is(err, remote.ErrNoHerdr) {
+				log.Printf("%s has no herdr; using plain ssh panes", host.Target)
+				sshOnly = true
+			} else {
+				connectErr = err
 			}
-			log.Printf("%s has no herdr; using plain ssh panes", host.Target)
-			sshOnly = true
 		}
 	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if existing, ok := d.hosts[host.Target]; ok {
-		existing.host = host
-		existing.sshOnly = sshOnly
-		clear(existing.dismissed)
-		return nil
-	}
-	state := &hostSync{
-		host:      host,
-		client:    client,
-		sshOnly:   sshOnly,
-		mirrors:   map[string]string{},
-		dismissed: map[string]bool{},
-		failures:  map[string]int{},
-		retryAt:   map[string]time.Time{},
+	state, ok := d.hosts[host.Target]
+	if ok {
+		state.host = host
+		state.sshOnly = sshOnly
+		clear(state.dismissed)
+	} else {
+		state = &hostSync{
+			host:      host,
+			client:    client,
+			sshOnly:   sshOnly,
+			mirrors:   map[string]string{},
+			dismissed: map[string]bool{},
+			failures:  map[string]int{},
+			retryAt:   map[string]time.Time{},
 
-		reportedAgents: map[string]agentReport{},
-	}
-	if saved, ok := d.snapshot.Hosts[host.Target]; ok {
-		for terminalID, paneID := range saved.Mirrors {
-			state.mirrors[terminalID] = paneID
+			reportedAgents: map[string]agentReport{},
 		}
+		if saved, ok := d.snapshot.Hosts[host.Target]; ok {
+			for terminalID, paneID := range saved.Mirrors {
+				state.mirrors[terminalID] = paneID
+			}
+		}
+		d.hosts[host.Target] = state
 	}
-	d.hosts[host.Target] = state
-	return nil
+	state.lastErr = connectErr
+	return connectErr
 }
 
 // prepareRemote makes sure the host has a Herdr session answering, starting one
@@ -590,6 +603,7 @@ func (d *Daemon) reconcileAll() {
 			} else {
 				state.lastErr = nil
 			}
+			d.markWorkspaceState(state, state.lastErr == nil)
 		}(state)
 	}
 	wg.Wait()
@@ -656,6 +670,17 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		}
 	}
 	state.adopted = true
+
+	// A host whose mirrors were adopted never went through ensureWorkspace, so
+	// learn its workspace from a mirror pane rather than looking it up again.
+	if state.workspaceID == "" {
+		for _, paneID := range state.mirrors {
+			if workspaceID, ok := index.workspaceOf[paneID]; ok {
+				state.workspaceID = workspaceID
+				break
+			}
+		}
+	}
 
 	remotePanes, err := state.client.PaneList()
 	if err != nil {
@@ -912,8 +937,8 @@ func (d *Daemon) ensureWorkspace(state *hostSync, index *paneIndex) (string, err
 		return "", fmt.Errorf("parse workspace list: %w", err)
 	}
 	for _, ws := range body.Workspaces {
-		if ws.Label == label {
-			d.markWorkspaceRemote(ws.WorkspaceID, state.host)
+		if ws.Label == label || sameWorkspace(ws.Label, state.host.DisplayLabel()) {
+			state.workspaceID = ws.WorkspaceID
 			return ws.WorkspaceID, nil
 		}
 	}
@@ -939,7 +964,7 @@ func (d *Daemon) ensureWorkspace(state *hostSync, index *paneIndex) (string, err
 	// exists only to hold mirrors that is a stray local terminal, so remember
 	// it and close it once a mirror has taken its place. It cannot be closed
 	// now: a workspace with no panes at all closes itself.
-	d.markWorkspaceRemote(workspaceID, state.host)
+	state.workspaceID = workspaceID
 
 	if root := createdBody.RootPane.PaneID; root != "" {
 		d.rootPanes[workspaceID] = root
@@ -951,17 +976,54 @@ func (d *Daemon) ensureWorkspace(state *hostSync, index *paneIndex) (string, err
 	return workspaceID, nil
 }
 
-// markWorkspaceRemote tags a workspace with the machine it mirrors. Herdr shows
-// workspace metadata tokens only where the sidebar template asks for them, so
-// this supplements the marker carried in the workspace name itself.
-func (d *Daemon) markWorkspaceRemote(workspaceID string, host config.Host) {
-	if workspaceID == "" || d.markedWorkspaces[workspaceID] {
+// markerRunes are the decorations a workspace label may carry in front of the
+// host name.
+const markerRunes = "☁⛅🔴🟢 \t"
+
+// sameWorkspace reports whether a workspace label names this host, ignoring any
+// leading marker. Without this, changing workspace_format would orphan the
+// workspace a host's panes already live in.
+func sameWorkspace(label, hostLabel string) bool {
+	return strings.TrimLeft(label, markerRunes) == hostLabel
+}
+
+// Sidebar token names carrying the remote marker. Two names rather than one
+// value because the sidebar styles a token by name, which is what lets the
+// marker be green while connected and red while not.
+const (
+	tokenRemoteUp   = "remote_up"
+	tokenRemoteDown = "remote_down"
+	remoteGlyph     = "☁"
+)
+
+// markWorkspaceState publishes the remote marker for a host's workspace,
+// reporting whichever token matches the connection state and clearing the
+// other. Herdr shows these only where the sidebar template asks for them, so
+// the workspace name carries a plain marker too.
+func (d *Daemon) markWorkspaceState(state *hostSync, connected bool) {
+	workspaceID := state.workspaceID
+	if workspaceID == "" {
 		return
 	}
-	d.markedWorkspaces[workspaceID] = true
-	if err := herdrcli.ReportWorkspaceToken(workspaceID, agentSource, "remote", host.DisplayLabel()); err != nil {
-		log.Printf("mark workspace %s: %v", workspaceID, err)
+
+	want, clear := tokenRemoteUp, tokenRemoteDown
+	if !connected {
+		want, clear = tokenRemoteDown, tokenRemoteUp
 	}
+	// Reported on every pass rather than once. It is a local socket call, and
+	// re-asserting means the marker comes back if anything else clears it.
+	if _, err := herdrcli.Run("workspace", "report-metadata", workspaceID,
+		"--source", agentSource,
+		"--token", want+"="+remoteGlyph,
+		"--clear-token", clear,
+		"--clear-token", "remote"); err != nil {
+		if d.markedWorkspaces[workspaceID] != "failed" {
+			log.Printf("mark workspace %s: %v", workspaceID, err)
+			d.markedWorkspaces[workspaceID] = "failed"
+		}
+		return
+	}
+	d.markedWorkspaces[workspaceID] = want
 }
 
 // retireRootPane closes the placeholder shell Herdr created with a workspace,
