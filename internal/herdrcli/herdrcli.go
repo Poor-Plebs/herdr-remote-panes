@@ -1,0 +1,232 @@
+// Package herdrcli wraps the local Herdr CLI, which is the supported plugin API.
+package herdrcli
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path"
+	"strings"
+)
+
+// Bin resolves the Herdr binary, preferring the path Herdr injects.
+func Bin() string {
+	if p := os.Getenv("HERDR_BIN_PATH"); p != "" {
+		return p
+	}
+	return "herdr"
+}
+
+// Pane is the subset of Herdr's pane_info shape this plugin needs.
+type Pane struct {
+	PaneID      string `json:"pane_id"`
+	TabID       string `json:"tab_id"`
+	WorkspaceID string `json:"workspace_id"`
+	TerminalID  string `json:"terminal_id"`
+	Label       string `json:"label"`
+	Title       string `json:"terminal_title_stripped"`
+	Agent       string `json:"agent"`
+	AgentStatus string `json:"agent_status"`
+	Cwd         string `json:"cwd"`
+}
+
+// DisplayName is the best human name for a pane: its explicit label, else the
+// detected agent, else the terminal title, else the working directory.
+//
+// Shell titles are usually of the form "user@host:~", which would produce a
+// second "@" once the host suffix is appended, so those are skipped in favour
+// of the directory name.
+func (p Pane) DisplayName() string {
+	if s := strings.TrimSpace(p.Label); s != "" {
+		return s
+	}
+	if s := strings.TrimSpace(p.Agent); s != "" {
+		return s
+	}
+	if s := strings.TrimSpace(p.Title); s != "" && !looksLikeShellTitle(s) {
+		return s
+	}
+	if s := strings.TrimSpace(p.Cwd); s != "" {
+		if base := path.Base(s); base != "" && base != "." && base != "/" {
+			return base
+		}
+	}
+	return p.PaneID
+}
+
+// looksLikeShellTitle reports whether a terminal title is just the shell's
+// default "user@host:dir" banner rather than a meaningful process name.
+func looksLikeShellTitle(title string) bool {
+	return strings.ContainsAny(title, "@:")
+}
+
+type envelope struct {
+	Result json.RawMessage `json:"result"`
+	Error  *struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// Run executes a Herdr CLI command and returns its decoded `result` object.
+func Run(args ...string) (json.RawMessage, error) {
+	return RunWith(nil, args...)
+}
+
+// RunWith executes a Herdr CLI command with extra environment variables,
+// which is how remote invocations select a non-default HERDR_SESSION.
+func RunWith(env []string, args ...string) (json.RawMessage, error) {
+	cmd := exec.Command(Bin(), args...)
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("herdr %s: %w: %s",
+			strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return Decode(stdout.Bytes(), args)
+}
+
+// Decode unwraps a Herdr CLI JSON envelope, surfacing API errors as errors.
+func Decode(out []byte, args []string) (json.RawMessage, error) {
+	out = bytes.TrimSpace(out)
+	if len(out) == 0 {
+		return nil, nil
+	}
+	var env envelope
+	if err := json.Unmarshal(out, &env); err != nil {
+		return nil, fmt.Errorf("herdr %s: unreadable response: %s",
+			strings.Join(args, " "), truncate(string(out)))
+	}
+	if env.Error != nil {
+		return nil, fmt.Errorf("herdr %s: %s: %s",
+			strings.Join(args, " "), env.Error.Code, env.Error.Message)
+	}
+	return env.Result, nil
+}
+
+func truncate(s string) string {
+	const max = 200
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
+// PaneList returns every pane in the local session.
+func PaneList() ([]Pane, error) {
+	result, err := Run("pane", "list")
+	if err != nil {
+		return nil, err
+	}
+	return ParsePaneList(result)
+}
+
+// ParsePaneList decodes the `pane_list` result payload.
+func ParsePaneList(result json.RawMessage) ([]Pane, error) {
+	var body struct {
+		Panes []Pane `json:"panes"`
+	}
+	if err := json.Unmarshal(result, &body); err != nil {
+		return nil, fmt.Errorf("parse pane list: %w", err)
+	}
+	return body.Panes, nil
+}
+
+// OpenOptions describes a plugin pane to open.
+type OpenOptions struct {
+	PluginID   string
+	Entrypoint string
+	Placement  string
+	Workspace  string
+	TargetPane string
+	Direction  string
+	Cwd        string
+	Env        map[string]string
+	Focus      bool
+}
+
+// OpenPane opens a plugin-owned pane and returns the pane Herdr created.
+func OpenPane(opts OpenOptions) (Pane, error) {
+	args := []string{"plugin", "pane", "open",
+		"--plugin", opts.PluginID,
+		"--entrypoint", opts.Entrypoint,
+	}
+	if opts.Placement != "" {
+		args = append(args, "--placement", opts.Placement)
+	}
+	if opts.Workspace != "" {
+		args = append(args, "--workspace", opts.Workspace)
+	}
+	if opts.TargetPane != "" {
+		args = append(args, "--target-pane", opts.TargetPane)
+	}
+	if opts.Direction != "" {
+		args = append(args, "--direction", opts.Direction)
+	}
+	if opts.Cwd != "" {
+		args = append(args, "--cwd", opts.Cwd)
+	}
+	for k, v := range opts.Env {
+		args = append(args, "--env", k+"="+v)
+	}
+	if opts.Focus {
+		args = append(args, "--focus")
+	} else {
+		args = append(args, "--no-focus")
+	}
+
+	result, err := Run(args...)
+	if err != nil {
+		return Pane{}, err
+	}
+	return parseOpenedPane(result)
+}
+
+// parseOpenedPane pulls the new pane out of a plugin.pane.open result.
+//
+// Herdr nests it under `plugin_pane`; a bare `pane` is accepted too so a future
+// response shape does not silently break mirroring. Returning an error here
+// matters: a caller that cannot learn the pane id cannot track the pane, and
+// would otherwise reopen it on every reconcile.
+func parseOpenedPane(result json.RawMessage) (Pane, error) {
+	var body struct {
+		PluginPane struct {
+			Pane Pane `json:"pane"`
+		} `json:"plugin_pane"`
+		Pane Pane `json:"pane"`
+	}
+	if err := json.Unmarshal(result, &body); err != nil {
+		return Pane{}, fmt.Errorf("parse plugin pane open: %w", err)
+	}
+	pane := body.PluginPane.Pane
+	if pane.PaneID == "" {
+		pane = body.Pane
+	}
+	if pane.PaneID == "" {
+		return Pane{}, fmt.Errorf("plugin pane open returned no pane id: %s", truncate(string(result)))
+	}
+	return pane, nil
+}
+
+// RenamePane sets a pane's display label.
+func RenamePane(paneID, label string) error {
+	_, err := Run("pane", "rename", paneID, label)
+	return err
+}
+
+// ClosePane closes a plugin-owned pane.
+func ClosePane(paneID string) error {
+	_, err := Run("plugin", "pane", "close", paneID)
+	return err
+}
+
+// Notify shows a Herdr notification.
+func Notify(message string) {
+	_, _ = Run("notification", "show", message)
+}

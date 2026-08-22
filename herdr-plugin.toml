@@ -1,0 +1,50 @@
+id = "poorplebs.remote-panes"
+name = "Remote Panes"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Mirror panes from remote Herdr servers into this session, named <pane>@<host>"
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["go", "build", "-trimpath", "-o", "bin/herdr-remote-panes", "."]
+
+# Reconciles remote panes into local mirror panes for the life of the session.
+[[startup]]
+command = ["./bin/herdr-remote-panes", "daemon"]
+
+[[actions]]
+id = "connect"
+title = "Remote panes: connect host"
+description = "Mirror the panes of an SSH target. Uses the current selection as the target."
+contexts = ["global", "selection"]
+command = ["./bin/herdr-remote-panes", "connect"]
+
+[[actions]]
+id = "disconnect"
+title = "Remote panes: disconnect host"
+description = "Stop mirroring an SSH target and close its mirror panes."
+contexts = ["global", "selection"]
+command = ["./bin/herdr-remote-panes", "disconnect"]
+
+[[actions]]
+id = "refresh"
+title = "Remote panes: refresh"
+description = "Reconcile every connected host right now."
+contexts = ["global"]
+command = ["./bin/herdr-remote-panes", "refresh"]
+
+[[actions]]
+id = "status"
+title = "Remote panes: status"
+description = "Show connected hosts and how many panes each one is mirroring."
+contexts = ["global"]
+command = ["./bin/herdr-remote-panes", "status"]
+
+# One mirror pane per remote terminal. The daemon supplies the target through
+# HRP_* environment variables and overrides the placement per host.
+[[panes]]
+id = "mirror"
+title = "Remote pane"
+description = "A pane bridged from a remote Herdr server."
+placement = "tab"
+command = ["./bin/herdr-remote-panes", "mirror"]
