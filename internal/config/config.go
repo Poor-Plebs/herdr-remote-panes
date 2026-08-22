@@ -104,6 +104,11 @@ type Config struct {
 	// remote machine. {hub} is this machine's hostname, so that sitting on the
 	// remote you can tell which machine those panes are shared with.
 	RemoteWorkspaceFormat string `json:"remote_workspace_format,omitempty"`
+	// CaptureNewPanes replaces a local pane opened inside a machine's space
+	// with a terminal on that machine. Herdr's new-tab keybinding and the plus
+	// icon in the tab bar both create a local shell, and neither can be
+	// intercepted by a plugin, so they are corrected after the fact.
+	CaptureNewPanes *bool `json:"capture_new_panes,omitempty"`
 	// AutoStart launches the remote Herdr session when it is not running, so
 	// a host only needs the herdr binary installed and reachable over SSH.
 	AutoStart *bool `json:"auto_start,omitempty"`
@@ -205,6 +210,9 @@ func (c Config) normalized() Config {
 	if c.RemoteWorkspaceFormat == "" {
 		c.RemoteWorkspaceFormat = d.RemoteWorkspaceFormat
 	}
+	if c.CaptureNewPanes == nil {
+		c.CaptureNewPanes = d.CaptureNewPanes
+	}
 	if c.Takeover == nil {
 		c.Takeover = d.Takeover
 	}
@@ -247,6 +255,12 @@ func (c Config) SessionFor(h Host) string {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// ShouldCaptureNewPanes reports whether a local pane opened in a machine's
+// space should be replaced with a terminal on that machine.
+func (c Config) ShouldCaptureNewPanes() bool {
+	return c.CaptureNewPanes == nil || *c.CaptureNewPanes
+}
 
 // ShouldTakeover reports whether a stale remote attach may be evicted.
 func (c Config) ShouldTakeover() bool {

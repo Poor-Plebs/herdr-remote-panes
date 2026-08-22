@@ -41,6 +41,13 @@ contexts = ["global"]
 command = ["./bin/herdr-remote-panes", "menu"]
 
 [[actions]]
+id = "open-tab"
+title = "Remote panes: new tab"
+description = "New terminal on the machine whose space you are in, as a tab; a local tab elsewhere."
+contexts = ["global", "workspace", "selection"]
+command = ["./bin/herdr-remote-panes", "open-tab"]
+
+[[actions]]
 id = "refresh"
 title = "Remote panes: refresh"
 description = "Reconcile every connected host right now."

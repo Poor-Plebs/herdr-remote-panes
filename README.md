@@ -157,6 +157,7 @@ All optional, in `config.json`:
 | `session` | `default` | Which Herdr session on the machine to share; a name keeps it separate from the machine's own |
 | `remote_workspace_format` | `☁  {hub}` | How the space is named *on the machine*, `{hub}` being this machine |
 | `auto_start` | `true` | Start that session over SSH when it is not running |
+| `capture_new_panes` | `true` | Move a local pane opened in a machine's space onto that machine |
 | `takeover` | `true` | Take over a stale connection left by a closed terminal |
 | `herdr_bin` | found automatically | Where `herdr` lives on the machine |
 

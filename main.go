@@ -90,16 +90,25 @@ func run(command string, args []string) error {
 		}
 		return call(syncd.Command{Cmd: command, Host: host})
 
-	case "open":
+	case "open", "open-tab":
 		// A host is optional here: with none, the workspace the action was
-		// invoked from decides which machine the pane opens on.
+		// invoked from decides which machine the terminal opens on.
 		host := ""
 		if len(args) > 0 {
 			host = args[0]
 		} else if env := strings.TrimSpace(os.Getenv("HRP_HOST")); env != "" {
 			host = env
 		}
-		return call(syncd.Command{Cmd: "open", Host: host, Workspace: contextWorkspace()})
+		placement := ""
+		if command == "open-tab" {
+			placement = "tab"
+		}
+		return call(syncd.Command{
+			Cmd:       "open",
+			Host:      host,
+			Workspace: contextWorkspace(),
+			Placement: placement,
+		})
 
 	case "refresh":
 		return call(syncd.Command{Cmd: "refresh"})
@@ -171,7 +180,8 @@ func usage() {
   daemon                     run the reconciler (Herdr [[startup]] hook)
   mirror                     bridge one remote terminal (Herdr pane entrypoint)
   connect [ssh-target]       start mirroring a host, or all configured hosts
-  open <ssh-target>          open a new pane on a host (it mirrors back)
+  open [ssh-target]          new terminal on the machine you are looking at
+  open-tab [ssh-target]      the same, placed as a tab
   disconnect <ssh-target>    stop mirroring a host and close its panes
   menu                       open the machine menu (Herdr popup)
   picker                     draw the machine menu (popup entrypoint)

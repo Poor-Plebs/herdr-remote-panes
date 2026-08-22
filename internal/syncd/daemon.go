@@ -65,6 +65,15 @@ type hostSync struct {
 	workspaceID string
 	// remoteWorkspaceID is this machine's space on the remote one.
 	remoteWorkspaceID string
+	// pendingPlacement overrides, per remote terminal, how its mirror is placed
+	// here, so a "new tab" key gives a tab even when the host normally splits.
+	pendingPlacement map[string]string
+	// seenStray records local panes in this host's space that were noticed and
+	// left alone, so a pane is only considered for capture once.
+	seenStray map[string]bool
+	// strays is what the last pass decided to move onto the machine. It is
+	// acted on after the host lock is released.
+	strays []string
 
 	// sshOnly marks a host used through plain SSH panes: it has no Herdr, so
 	// there is nothing to discover or mirror and reconcile leaves it alone.
@@ -100,6 +109,7 @@ type paneIndex struct {
 	alive          map[string]bool
 	anyInWorkspace map[string]string
 	workspaceOf    map[string]string
+	panesIn        map[string][]string
 }
 
 func newPaneIndex(panes []herdrcli.Pane) *paneIndex {
@@ -107,6 +117,7 @@ func newPaneIndex(panes []herdrcli.Pane) *paneIndex {
 		alive:          make(map[string]bool, len(panes)),
 		anyInWorkspace: map[string]string{},
 		workspaceOf:    map[string]string{},
+		panesIn:        map[string][]string{},
 	}
 	for _, p := range panes {
 		index.add(p)
@@ -119,6 +130,7 @@ func (p *paneIndex) add(pane herdrcli.Pane) {
 	if pane.WorkspaceID != "" {
 		p.anyInWorkspace[pane.WorkspaceID] = pane.PaneID
 		p.workspaceOf[pane.PaneID] = pane.WorkspaceID
+		p.panesIn[pane.WorkspaceID] = append(p.panesIn[pane.WorkspaceID], pane.PaneID)
 	}
 }
 
@@ -252,6 +264,12 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		if !ok {
 			// Not a mirrored workspace, so "new terminal" means what it
 			// normally means. This keeps one keybinding usable everywhere.
+			if cmd.Placement == "tab" {
+				if _, err := herdrcli.Run("tab", "create", "--focus"); err != nil {
+					return Reply{Message: err.Error()}
+				}
+				return Reply{OK: true, Message: "opened a local tab"}
+			}
 			if err := herdrcli.SplitPane("right"); err != nil {
 				return Reply{Message: err.Error()}
 			}
@@ -260,11 +278,11 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		if err := d.connect(host); err != nil {
 			return Reply{Message: err.Error()}
 		}
-		if err := d.openRemotePane(host); err != nil {
+		if err := d.openRemotePane(host, cmd.Placement); err != nil {
 			return Reply{Message: err.Error()}
 		}
 		d.reconcileAll()
-		return Reply{OK: true, Message: "opened a pane on " + host.Target}
+		return Reply{OK: true, Message: "opened a terminal on " + host.Target}
 
 	case "refresh":
 		d.reconcileAll()
@@ -280,7 +298,7 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 
 // openRemotePane creates a new pane on the remote host. The reconcile that
 // follows mirrors it back, so opening a pane "on a machine" is one action.
-func (d *Daemon) openRemotePane(host config.Host) error {
+func (d *Daemon) openRemotePane(host config.Host, placement string) error {
 	d.mu.Lock()
 	state, ok := d.hosts[host.Target]
 	d.mu.Unlock()
@@ -301,8 +319,32 @@ func (d *Daemon) openRemotePane(host config.Host) error {
 		// Adding a tab as well would open two for one request.
 		return nil
 	}
-	_, err = state.client.Run("tab", "create", "--workspace", workspaceID)
-	return err
+	result, err := state.client.Run("tab", "create", "--workspace", workspaceID)
+	if err != nil {
+		return err
+	}
+	d.rememberPlacement(state, result, placement)
+	return nil
+}
+
+// rememberPlacement records how the mirror of a just-created remote terminal
+// should be placed here. The remote reply carries the terminal id, so the
+// mirror opened by the next pass can be matched back to this request.
+func (d *Daemon) rememberPlacement(state *hostSync, result json.RawMessage, placement string) {
+	if placement == "" {
+		return
+	}
+	var body struct {
+		RootPane struct {
+			TerminalID string `json:"terminal_id"`
+		} `json:"root_pane"`
+	}
+	if err := json.Unmarshal(result, &body); err != nil || body.RootPane.TerminalID == "" {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	state.pendingPlacement[body.RootPane.TerminalID] = placement
 }
 
 // ensureRemoteWorkspace finds or creates the workspace on the remote machine
@@ -405,29 +447,19 @@ func (d *Daemon) openShellPane(state *hostSync) error {
 	}
 	d.mu.Unlock()
 
+	shellTarget := planPaneTarget(d.cfg.PlacementFor(state.host), workspaceID, index.anyInWorkspace[workspaceID])
 	opts := herdrcli.OpenOptions{
 		PluginID:   PluginID,
 		Entrypoint: paneEntrypoint,
-		Placement:  d.cfg.PlacementFor(state.host),
+		Placement:  shellTarget.Placement,
+		Workspace:  shellTarget.Workspace,
+		TargetPane: shellTarget.TargetPane,
 		Env: map[string]string{
 			mirror.EnvTarget: state.host.Target,
 			mirror.EnvMode:   string(config.ModeSSH),
 			mirror.EnvName:   name,
 		},
 	}
-	switch opts.Placement {
-	case "split", "zoomed":
-		if target := index.anyInWorkspace[workspaceID]; target != "" {
-			opts.TargetPane = target
-		} else {
-			opts.Placement = "tab"
-			opts.Workspace = workspaceID
-		}
-	case "overlay", "popup":
-	default:
-		opts.Workspace = workspaceID
-	}
-
 	pane, err := herdrcli.OpenPane(opts)
 	if err != nil {
 		return err
@@ -491,7 +523,9 @@ func (d *Daemon) connect(host config.Host) error {
 			failures:  map[string]int{},
 			retryAt:   map[string]time.Time{},
 
-			reportedAgents: map[string]agentReport{},
+			reportedAgents:   map[string]agentReport{},
+			pendingPlacement: map[string]string{},
+			seenStray:        map[string]bool{},
 		}
 		if saved, ok := d.snapshot.Hosts[host.Target]; ok {
 			for terminalID, paneID := range saved.Mirrors {
@@ -715,6 +749,16 @@ func (d *Daemon) reconcileAll() {
 		}(state)
 	}
 	wg.Wait()
+
+	// Outside the lock: capturing a stray opens a terminal on the machine,
+	// which takes the lock again.
+	for _, state := range states {
+		d.mu.Lock()
+		strays := state.strays
+		state.strays = nil
+		d.mu.Unlock()
+		d.captureStrayPanes(state, strays)
+	}
 }
 
 // persist records the current mirror bookkeeping for the next daemon.
@@ -753,21 +797,14 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	// pass after a restart, a missing pane is stale bookkeeping from a previous
 	// daemon rather than a deliberate close, so it is dropped silently.
 	for terminalID, paneID := range state.mirrors {
-		if !index.alive[paneID] {
+		switch planTrackedMirror(state.adopted, index.alive[paneID], mirror.IsLive(paneID)) {
+		case mirrorKeep:
+		case mirrorForget:
 			delete(state.mirrors, terminalID)
-			if state.adopted {
-				state.dismissed[terminalID] = true
-			}
-			continue
-		}
-		if state.adopted {
-			continue
-		}
-		// The pane exists, but a Herdr restart restores a plugin pane as a
-		// plain shell without re-running its command. Such a husk keeps its
-		// name@host label while mirroring nothing, so close it and mirror the
-		// terminal again rather than adopting it.
-		if !mirror.IsLive(paneID) {
+		case mirrorDismiss:
+			delete(state.mirrors, terminalID)
+			state.dismissed[terminalID] = true
+		case mirrorReplace:
 			log.Printf("%s: replacing pane %s, its mirror is not running", state.host.Target, paneID)
 			if err := herdrcli.ClosePaneByID(paneID); err != nil {
 				log.Printf("close stale mirror %s: %v", paneID, err)
@@ -855,7 +892,58 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 			delete(state.failures, terminalID)
 		}
 	}
+
+	state.strays = d.planStrayCapture(state, index)
 	return nil
+}
+
+// planStrayCapture lists local panes sitting in a machine's space that should
+// be moved onto that machine. Herdr's plus icon and new-tab key always open a
+// local shell and neither can be intercepted by a plugin, so they are corrected
+// a moment later instead.
+//
+// This only decides. Acting on the list needs the host lock released, because
+// opening a terminal on the machine takes that lock again.
+func (d *Daemon) planStrayCapture(state *hostSync, index *paneIndex) []string {
+	if state.sshOnly || state.workspaceID == "" {
+		return nil
+	}
+
+	mirrors := make(map[string]bool, len(state.mirrors))
+	for _, paneID := range state.mirrors {
+		mirrors[paneID] = true
+	}
+
+	var strays []string
+	for _, paneID := range index.panesIn[state.workspaceID] {
+		if planStrayPane(d.cfg.ShouldCaptureNewPanes(), mirrors[paneID], state.seenStray[paneID]) {
+			strays = append(strays, paneID)
+		}
+		state.seenStray[paneID] = true
+	}
+
+	// Forget panes that are gone, so ids reused later are judged afresh.
+	for paneID := range state.seenStray {
+		if !index.alive[paneID] {
+			delete(state.seenStray, paneID)
+		}
+	}
+	return strays
+}
+
+// captureStrayPanes carries out what planStrayCapture decided. It must run with
+// the host lock released.
+func (d *Daemon) captureStrayPanes(state *hostSync, strays []string) {
+	for _, paneID := range strays {
+		log.Printf("%s: moving pane %s onto the machine", state.host.Target, paneID)
+		if err := d.openRemotePane(state.host, ""); err != nil {
+			log.Printf("open terminal on %s: %v", state.host.Target, err)
+			continue
+		}
+		if err := herdrcli.ClosePaneByID(paneID); err != nil {
+			log.Printf("close local pane %s: %v", paneID, err)
+		}
+	}
 }
 
 // maxMirrorAttempts is how often one remote terminal may fail to mirror before
@@ -928,29 +1016,10 @@ func (d *Daemon) retitle(paneID, label string) {
 // in the same directory would all render as "deploy@bot". Where that happens
 // the remote pane id is appended, which is stable and short.
 func (d *Daemon) labelsFor(host config.Host, panes []herdrcli.Pane) map[string]string {
-	counts := map[string]int{}
-	for _, rp := range panes {
-		counts[rp.DisplayName()]++
-	}
-
-	// Short pane ids are nicer, but they repeat across workspaces: "w2:p1" and
-	// "w7:p1" both shorten to "p1". Fall back to the full id when that happens.
-	shortCounts := map[string]int{}
-	for _, rp := range panes {
-		shortCounts[shortPaneID(rp.PaneID)]++
-	}
-
+	names := planLabels(panes)
 	labels := make(map[string]string, len(panes))
 	for _, rp := range panes {
-		name := rp.DisplayName()
-		if counts[name] > 1 {
-			suffix := shortPaneID(rp.PaneID)
-			if shortCounts[suffix] > 1 {
-				suffix = rp.PaneID
-			}
-			name = name + " " + suffix
-		}
-		labels[rp.TerminalID] = d.label(host, rp, name)
+		labels[rp.TerminalID] = d.label(host, rp, names[rp.TerminalID])
 	}
 	return labels
 }
@@ -995,31 +1064,19 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, ind
 		env[mirror.EnvTakeover] = "false"
 	}
 
+	placement := d.cfg.PlacementFor(state.host)
+	if requested, ok := state.pendingPlacement[rp.TerminalID]; ok {
+		placement = requested
+		delete(state.pendingPlacement, rp.TerminalID)
+	}
+	target := planPaneTarget(placement, workspaceID, index.anyInWorkspace[workspaceID])
 	opts := herdrcli.OpenOptions{
 		PluginID:   PluginID,
 		Entrypoint: paneEntrypoint,
-		Placement:  d.cfg.PlacementFor(state.host),
+		Placement:  target.Placement,
+		Workspace:  target.Workspace,
+		TargetPane: target.TargetPane,
 		Env:        env,
-	}
-
-	// Herdr treats these targets as mutually exclusive. A split or zoomed pane
-	// takes only a target pane, which implies its workspace; a tab takes only a
-	// workspace; an overlay takes neither and lands on the active pane. Sending
-	// both is rejected outright.
-	switch opts.Placement {
-	case "split", "zoomed":
-		target := index.anyInWorkspace[workspaceID]
-		if target == "" {
-			// Nothing to split from, so fall back to a tab in that workspace.
-			opts.Placement = "tab"
-			opts.Workspace = workspaceID
-			break
-		}
-		opts.TargetPane = target
-	case "overlay", "popup":
-		// Targeting is not allowed; the pane opens over the active one.
-	default:
-		opts.Workspace = workspaceID
 	}
 
 	pane, err := herdrcli.OpenPane(opts)

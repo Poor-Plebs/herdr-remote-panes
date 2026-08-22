@@ -62,6 +62,9 @@ type Command struct {
 	// Workspace is the workspace the action was invoked from. When no host is
 	// named, it decides which machine a new pane belongs to.
 	Workspace string `json:"workspace,omitempty"`
+	// Placement overrides how this one new pane is placed locally, so a "new
+	// tab" key produces a tab even when the host normally splits.
+	Placement string `json:"placement,omitempty"`
 }
 
 // Reply is the daemon's answer to a Command.
