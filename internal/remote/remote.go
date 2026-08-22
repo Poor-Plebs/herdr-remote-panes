@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,11 @@ import (
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 )
+
+// ErrNoHerdr means the host is reachable over SSH but has no Herdr binary.
+// It is distinct from an unreachable host: a machine without Herdr can still
+// be used through plain SSH panes.
+var ErrNoHerdr = errors.New("no herdr on the remote host")
 
 // Client runs Herdr commands on a remote host.
 type Client struct {
@@ -80,9 +86,10 @@ func (c *Client) Bin() (string, error) {
 	argv = append(argv, probeScript)
 	out, err := runCommand(argv)
 	if err != nil {
-		return "", fmt.Errorf(
-			"%s: could not find herdr (install it, or set \"herdr_bin\" for this host): %w",
-			c.Target, err)
+		if reachErr := c.Reachable(); reachErr != nil {
+			return "", reachErr
+		}
+		return "", fmt.Errorf("%s: %w", c.Target, ErrNoHerdr)
 	}
 	path := strings.TrimSpace(string(out))
 	if i := strings.IndexByte(path, '\n'); i >= 0 {
@@ -157,6 +164,45 @@ func (c *Client) Run(args ...string) (json.RawMessage, error) {
 		return nil, fmt.Errorf("%s: %w", c.Target, err)
 	}
 	return herdrcli.Decode(out, args)
+}
+
+// CheckHerdr verifies the resolved binary actually runs. A configured
+// herdr_bin that does not exist, or a host without Herdr, both surface as
+// ErrNoHerdr so the caller can fall back to plain SSH panes rather than fail.
+func (c *Client) CheckHerdr() error {
+	bin, err := c.Bin()
+	if err != nil {
+		return err
+	}
+	argv := []string{"ssh"}
+	argv = append(argv, c.SSHArgs(false)...)
+	argv = append(argv, shellQuote(bin)+" --version")
+	if _, err := runCommand(argv); err != nil {
+		if reachErr := c.Reachable(); reachErr != nil {
+			return reachErr
+		}
+		return fmt.Errorf("%s: %s did not run: %w", c.Target, bin, ErrNoHerdr)
+	}
+	return nil
+}
+
+// Reachable reports whether plain SSH to the host works, independently of
+// whether Herdr is installed there.
+func (c *Client) Reachable() error {
+	argv := []string{"ssh"}
+	argv = append(argv, c.SSHArgs(false)...)
+	argv = append(argv, "true")
+	if _, err := runCommand(argv); err != nil {
+		return fmt.Errorf("%s is not reachable over ssh: %w", c.Target, err)
+	}
+	return nil
+}
+
+// ShellArgv builds an ssh argv that opens an interactive login shell. It needs
+// no Herdr on the far side.
+func (c *Client) ShellArgv() []string {
+	argv := []string{"ssh"}
+	return append(argv, c.SSHArgs(true)...)
 }
 
 // PaneList returns every pane on the remote host.

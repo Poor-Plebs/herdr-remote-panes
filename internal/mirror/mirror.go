@@ -76,11 +76,20 @@ func bridge() error {
 	defer markLive(os.Getenv("HERDR_PANE_ID"))()
 
 	target := os.Getenv(EnvTarget)
-	terminal := os.Getenv(EnvTerminal)
-	if target == "" || terminal == "" {
-		return fmt.Errorf("%s and %s must be set", EnvTarget, EnvTerminal)
+	if target == "" {
+		return fmt.Errorf("%s must be set", EnvTarget)
 	}
 	client := remote.NewWithBin(target, os.Getenv(EnvSession), os.Getenv(EnvBin))
+
+	// A plain SSH pane mirrors nothing, so it needs no remote terminal id.
+	if config.Mode(os.Getenv(EnvMode)) == config.ModeSSH {
+		return shell(client)
+	}
+
+	terminal := os.Getenv(EnvTerminal)
+	if terminal == "" {
+		return fmt.Errorf("%s must be set", EnvTerminal)
+	}
 
 	switch config.Mode(os.Getenv(EnvMode)) {
 	case config.ModeObserve:
@@ -88,6 +97,20 @@ func bridge() error {
 	default:
 		return attach(client, terminal)
 	}
+}
+
+// shell opens a plain interactive SSH session. Nothing about it needs Herdr on
+// the far side, so it works against any machine you can log in to.
+func shell(client *remote.Client) error {
+	argv := client.ShellArgv()
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%w running: %s", err, strings.Join(argv, " "))
+	}
+	return nil
 }
 
 // attach hands the pane straight to `herdr terminal attach` on the far side.

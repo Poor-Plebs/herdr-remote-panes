@@ -38,9 +38,10 @@ terminal, not a screen scrape.
 
 ## Requirements
 
-- Herdr 0.8.0 or newer on the hub **and** on every remote host
+- Herdr 0.8.0 or newer on the hub
 - Passwordless SSH to each host (`ssh workbox` must work on its own)
-- Herdr on each host too — the session is started for you over SSH
+- SSH access to each machine. Herdr on the far side is optional: with it you
+  get mirrored panes, without it you get plain SSH panes (see below)
 - Linux or macOS — Herdr's direct terminal attach is Unix-only
 - Go 1.22+ on the hub, to build the plugin
 
@@ -81,7 +82,7 @@ herdr server stop && herdr
 | --- | --- | --- |
 | `poll_interval` | `2s` | How often each host is polled. Minimum 500ms |
 | `session` | `remote` | Which remote Herdr session to mirror (see below) |
-| `mode` | `attach` | `attach` for interactive, `observe` for read-only |
+| `mode` | `attach` | `attach` interactive, `observe` read-only, `ssh` plain SSH panes |
 | `placement` | `split` | `tab`, `split`, `zoomed` or `overlay` |
 | `label_format` | `{name}@{host}` | Supports `{name}`, `{host}`, `{agent}`, `{pane}` |
 | `workspace` | per host | Shared workspace label; default is one per machine |
@@ -125,6 +126,25 @@ To mirror the remote's unnamed default session after all, name it `default`:
 ```json
 { "target": "devbox", "session": "default" }
 ```
+
+### Machines without Herdr
+
+Herdr on the remote is not a requirement. A host that has no Herdr — or one you
+simply do not want to run it on — is used through plain SSH panes instead: the
+`open` action gives you an interactive login shell in a pane, in that machine's
+workspace, named `shell@host`. Run an agent in it like any other terminal.
+
+This is detected automatically. If Herdr cannot be found or run on a host, the
+plugin says so in its log and switches that host to SSH panes rather than
+refusing to connect. Force it with `mode`:
+
+```json
+{ "target": "buildbox", "mode": "ssh" }
+```
+
+The trade-off is that nothing is discovered or synced for such a host: panes
+exist because you opened them, and closing one closes it. Mirroring is what
+needs Herdr on both ends.
 
 ### `attach` vs `observe`
 

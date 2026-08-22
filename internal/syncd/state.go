@@ -77,6 +77,8 @@ type HostInfo struct {
 	Label     string `json:"label"`
 	Connected bool   `json:"connected"`
 	Mirrors   int    `json:"mirrors"`
+	// SSHOnly marks a host used through plain SSH panes, with no Herdr on it.
+	SSHOnly   bool   `json:"ssh_only,omitempty"`
 	LastError string `json:"last_error,omitempty"`
 }
 

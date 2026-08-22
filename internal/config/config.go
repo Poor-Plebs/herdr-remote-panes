@@ -29,6 +29,10 @@ const (
 	// ModeAttach runs `herdr terminal attach` over SSH: fully interactive, but
 	// exclusive per remote terminal and it pins the remote terminal size.
 	ModeAttach Mode = "attach"
+	// ModeSSH opens plain SSH panes. The remote host needs nothing but an SSH
+	// login: no Herdr, no session, no panes to mirror. Use it to run an agent
+	// on a machine that is not running Herdr itself.
+	ModeSSH Mode = "ssh"
 	// ModeObserve decodes `herdr terminal session observe` frames: read-only,
 	// safe to run concurrently with other viewers, and it never locks resize.
 	ModeObserve Mode = "observe"

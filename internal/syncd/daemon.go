@@ -60,6 +60,12 @@ type hostSync struct {
 	failures map[string]int
 	retryAt  map[string]time.Time
 
+	// sshOnly marks a host used through plain SSH panes: it has no Herdr, so
+	// there is nothing to discover or mirror and reconcile leaves it alone.
+	sshOnly bool
+	// shells counts plain SSH panes opened for this host, to name them.
+	shells int
+
 	// adopted marks that the first reconcile after a restart has run. Until it
 	// does, mirrors restored from the snapshot whose panes are gone are stale
 	// bookkeeping rather than panes the user closed.
@@ -259,6 +265,10 @@ func (d *Daemon) openRemotePane(host config.Host) error {
 		return fmt.Errorf("%s is not connected", host.Target)
 	}
 
+	if state.sshOnly {
+		return d.openShellPane(state)
+	}
+
 	// A freshly started session has no workspace to put a tab in.
 	result, err := state.client.Run("workspace", "list")
 	if err != nil {
@@ -312,6 +322,60 @@ func (d *Daemon) resolveOpenTarget(cmd Command) (config.Host, bool) {
 	return config.Host{}, false
 }
 
+// openShellPane opens a plain SSH pane for a host that is not running Herdr.
+// There is no remote pane to mirror, so the pane is the session itself.
+func (d *Daemon) openShellPane(state *hostSync) error {
+	index := newPaneIndex(nil)
+	if local, err := herdrcli.PaneList(); err == nil {
+		index = newPaneIndex(local)
+	}
+
+	workspaceID, err := d.ensureWorkspace(state, index)
+	if err != nil {
+		return err
+	}
+
+	d.mu.Lock()
+	state.shells++
+	name := "shell"
+	if state.shells > 1 {
+		name = fmt.Sprintf("shell %d", state.shells)
+	}
+	d.mu.Unlock()
+
+	opts := herdrcli.OpenOptions{
+		PluginID:   PluginID,
+		Entrypoint: paneEntrypoint,
+		Placement:  d.cfg.PlacementFor(state.host),
+		Env: map[string]string{
+			mirror.EnvTarget: state.host.Target,
+			mirror.EnvMode:   string(config.ModeSSH),
+			mirror.EnvName:   name,
+		},
+	}
+	switch opts.Placement {
+	case "split", "zoomed":
+		if target := index.anyInWorkspace[workspaceID]; target != "" {
+			opts.TargetPane = target
+		} else {
+			opts.Placement = "tab"
+			opts.Workspace = workspaceID
+		}
+	case "overlay", "popup":
+	default:
+		opts.Workspace = workspaceID
+	}
+
+	pane, err := herdrcli.OpenPane(opts)
+	if err != nil {
+		return err
+	}
+	index.add(pane)
+	d.retitle(pane.PaneID, d.label(state.host, herdrcli.Pane{}, name))
+	d.retireRootPane(workspaceID, index)
+	return nil
+}
+
 // hostConfig finds a configured host by target or label.
 func (d *Daemon) hostConfig(name string) (config.Host, bool) {
 	for _, h := range d.cfg.Hosts {
@@ -329,6 +393,58 @@ func (d *Daemon) hostConfig(name string) (config.Host, bool) {
 
 func (d *Daemon) connect(host config.Host) error {
 	client := remote.NewWithBin(host.Target, d.cfg.SessionFor(host), d.cfg.BinFor(host))
+
+	sshOnly := d.cfg.ModeFor(host) == config.ModeSSH
+	if !sshOnly {
+		if err := d.prepareRemote(client, host); err != nil {
+			// A machine without Herdr is still perfectly usable over plain SSH,
+			// so fall back instead of refusing to connect. Anything else — an
+			// unreachable host, a broken login — is a real failure.
+			if !errors.Is(err, remote.ErrNoHerdr) {
+				return err
+			}
+			log.Printf("%s has no herdr; using plain ssh panes", host.Target)
+			sshOnly = true
+		}
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if existing, ok := d.hosts[host.Target]; ok {
+		existing.host = host
+		existing.sshOnly = sshOnly
+		clear(existing.dismissed)
+		return nil
+	}
+	state := &hostSync{
+		host:      host,
+		client:    client,
+		sshOnly:   sshOnly,
+		mirrors:   map[string]string{},
+		dismissed: map[string]bool{},
+		failures:  map[string]int{},
+		retryAt:   map[string]time.Time{},
+
+		reportedAgents: map[string]agentReport{},
+	}
+	if saved, ok := d.snapshot.Hosts[host.Target]; ok {
+		for terminalID, paneID := range saved.Mirrors {
+			state.mirrors[terminalID] = paneID
+		}
+	}
+	d.hosts[host.Target] = state
+	return nil
+}
+
+// prepareRemote makes sure the host has a Herdr session answering, starting one
+// when it is allowed to.
+func (d *Daemon) prepareRemote(client *remote.Client, host config.Host) error {
+	// Establish that Herdr is usable here before trying to start or talk to a
+	// session, so a host without it is recognised as such rather than looking
+	// like an unreachable one.
+	if err := client.CheckHerdr(); err != nil {
+		return err
+	}
 	if err := client.Ping(); err != nil {
 		// The host is reachable but its session is not up yet. Start one and
 		// retry before treating this as a failure.
@@ -345,36 +461,6 @@ func (d *Daemon) connect(host config.Host) error {
 			return retryErr
 		}
 	}
-
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if existing, ok := d.hosts[host.Target]; ok {
-		existing.host = host
-		// Connecting is a deliberate "give me this machine's panes", so it
-		// clears earlier dismissals. Without this, closing a remote workspace
-		// left every mirror marked as closed-by-hand and there was no way back.
-		clear(existing.dismissed)
-		return nil
-	}
-	state := &hostSync{
-		host:      host,
-		client:    client,
-		mirrors:   map[string]string{},
-		dismissed: map[string]bool{},
-		failures:  map[string]int{},
-		retryAt:   map[string]time.Time{},
-
-		reportedAgents: map[string]agentReport{},
-	}
-	// Adopt what a previous daemon opened so a restart does not duplicate it.
-	// Dismissals are deliberately not restored here: reaching connect means
-	// the user asked for this machine's panes back.
-	if saved, ok := d.snapshot.Hosts[host.Target]; ok {
-		for terminalID, paneID := range saved.Mirrors {
-			state.mirrors[terminalID] = paneID
-		}
-	}
-	d.hosts[host.Target] = state
 	return nil
 }
 
@@ -458,6 +544,7 @@ func (d *Daemon) status() []HostInfo {
 			Label:     state.host.DisplayLabel(),
 			Connected: state.lastErr == nil,
 			Mirrors:   len(state.mirrors),
+			SSHOnly:   state.sshOnly,
 		}
 		if state.lastErr != nil {
 			info.LastError = state.lastErr.Error()
@@ -534,6 +621,12 @@ func (d *Daemon) persist() {
 
 // reconcileHost brings one host's mirrors in line with its remote panes.
 func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
+	// A plain SSH host exposes no panes to discover, and its panes were opened
+	// deliberately, so there is nothing to add or retire here.
+	if state.sshOnly {
+		return nil
+	}
+
 	// Drop mirrors the user closed by hand and do not reopen them. On the first
 	// pass after a restart, a missing pane is stale bookkeeping from a previous
 	// daemon rather than a deliberate close, so it is dropped silently.
