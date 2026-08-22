@@ -80,3 +80,50 @@ func TestCollectPutsConfiguredMachinesFirst(t *testing.T) {
 		t.Errorf("bot listed %d times, want once", seen["bot"])
 	}
 }
+
+func TestVisibleWindow(t *testing.T) {
+	tests := []struct {
+		name                  string
+		count, selected, rows int
+		wantFirst, wantLast   int
+	}{
+		{
+			name:  "everything fits",
+			count: 6, selected: 0, rows: 20, wantFirst: 0, wantLast: 6,
+		},
+		{
+			// Writing more lines than the popup has scrolls the top away,
+			// taking the first machine and the heading with it. This is what
+			// made the menu appear to start at "2.".
+			name:  "a short popup shows a window, not an overflowing list",
+			count: 6, selected: 0, rows: 8, wantFirst: 0, wantLast: 4,
+		},
+		{
+			name:  "the window follows the selection",
+			count: 10, selected: 8, rows: 8, wantFirst: 6, wantLast: 10,
+		},
+		{
+			name:  "the window never runs past the end",
+			count: 10, selected: 9, rows: 8, wantFirst: 6, wantLast: 10,
+		},
+		{
+			// Even absurdly small popups must show the selected machine
+			// rather than nothing at all.
+			name:  "a tiny popup still shows one machine",
+			count: 6, selected: 3, rows: 2, wantFirst: 3, wantLast: 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			first, last := visibleWindow(tt.count, tt.selected, tt.rows)
+			if first != tt.wantFirst || last != tt.wantLast {
+				t.Errorf("visibleWindow(%d, %d, %d) = %d..%d, want %d..%d",
+					tt.count, tt.selected, tt.rows, first, last, tt.wantFirst, tt.wantLast)
+			}
+			if tt.selected < tt.count && (tt.selected < first || tt.selected >= last) {
+				t.Errorf("selected %d is outside the window %d..%d", tt.selected, first, last)
+			}
+		})
+	}
+}

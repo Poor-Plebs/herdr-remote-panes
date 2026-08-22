@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
@@ -190,12 +191,43 @@ func clear() {
 	fmt.Print(esc + "[2J" + esc + "[H")
 }
 
+// visibleWindow picks the slice of entries to show, keeping the selected one
+// on screen.
+//
+// The menu runs in a popup whose height it does not control, and writing more
+// lines than fit scrolls the top away — taking the first machine, and the
+// heading, with it. So the list is windowed rather than assumed to fit.
+func visibleWindow(count, selected, rows int) (first, last int) {
+	// Heading, the blank line under it, and the two footer lines.
+	const chrome = 4
+	visible := rows - chrome
+	if visible < 1 {
+		visible = 1
+	}
+	if visible >= count {
+		return 0, count
+	}
+
+	first = selected - visible/2
+	if first < 0 {
+		first = 0
+	}
+	if first+visible > count {
+		first = count - visible
+	}
+	return first, first + visible
+}
+
 func draw(entries []Entry, selected int) {
+	_, rows := windowSize()
+	first, last := visibleWindow(len(entries), selected, rows)
+
 	var b strings.Builder
 	b.WriteString(esc + "[2J" + esc + "[H")
-	b.WriteString("\r\n  " + bold + "Connect to a machine" + reset + "\r\n\r\n")
+	b.WriteString("  " + bold + "Connect to a machine" + reset + "\r\n\r\n")
 
-	for i, entry := range entries {
+	for i := first; i < last; i++ {
+		entry := entries[i]
 		marker := "  "
 		line := ""
 		if i == selected {
@@ -229,9 +261,33 @@ func draw(entries []Entry, selected int) {
 		b.WriteString(fmt.Sprintf("%s %s %-24s %s\r\n", marker, number, name, line))
 	}
 
-	b.WriteString("\r\n  " + dim + "↑↓ or j/k move · 1-9 jump · enter connect" + reset + "\r\n")
-	b.WriteString("  " + dim + "m toggle mirroring (experimental) · q cancel" + reset + "\r\n")
+	if last < len(entries) || first > 0 {
+		b.WriteString("  " + dim + fmt.Sprintf("showing %d-%d of %d", first+1, last, len(entries)) + reset + "\r\n")
+	}
+	b.WriteString("  " + dim + "↑↓ move · 1-9 jump · enter connect" + reset + "\r\n")
+	b.WriteString("  " + dim + "m toggle mirroring (experimental) · q cancel" + reset)
 	fmt.Print(b.String())
+}
+
+// windowSize reports the popup's size, falling back to something sensible when
+// the terminal cannot be queried.
+func windowSize() (cols, rows int) {
+	cols, rows = 80, 20
+	out, err := sttyOutput("size")
+	if err != nil {
+		return cols, rows
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) != 2 {
+		return cols, rows
+	}
+	if r, err := strconv.Atoi(fields[0]); err == nil && r > 0 {
+		rows = r
+	}
+	if c, err := strconv.Atoi(fields[1]); err == nil && c > 0 {
+		cols = c
+	}
+	return cols, rows
 }
 
 type key rune
@@ -289,14 +345,15 @@ func waitForKey() {
 // rawMode puts the popup's terminal into raw mode so keys arrive unbuffered
 // and are not echoed. stty keeps this dependency-free.
 func rawMode() func() {
-	if err := stty("raw", "-echo"); err != nil {
+	if _, err := sttyOutput("raw", "-echo"); err != nil {
 		return func() {}
 	}
-	return func() { _ = stty("sane") }
+	return func() { _, _ = sttyOutput("sane") }
 }
 
-func stty(args ...string) error {
+func sttyOutput(args ...string) ([]byte, error) {
 	cmd := exec.Command("stty", args...)
 	cmd.Stdin = os.Stdin
-	return cmd.Run()
+	cmd.Stderr = nil
+	return cmd.Output()
 }

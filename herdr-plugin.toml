@@ -78,7 +78,7 @@ title = "Connect to a machine"
 description = "Menu of machines to connect to."
 placement = "popup"
 width = "60%"
-height = 18
+height = "60%"
 command = ["./bin/herdr-remote-panes", "picker"]
 
 [[panes]]
