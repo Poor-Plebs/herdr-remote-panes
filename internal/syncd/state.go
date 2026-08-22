@@ -56,8 +56,12 @@ func sanitize(name string) string {
 
 // Command is a request from a plugin action to the daemon.
 type Command struct {
-	Cmd  string `json:"cmd"`
+	Cmd string `json:"cmd"`
+	// Host names an SSH target explicitly.
 	Host string `json:"host,omitempty"`
+	// Workspace is the workspace the action was invoked from. When no host is
+	// named, it decides which machine a new pane belongs to.
+	Workspace string `json:"workspace,omitempty"`
 }
 
 // Reply is the daemon's answer to a Command.

@@ -49,12 +49,23 @@ func run(command string, args []string) error {
 	case "mirror":
 		return mirror.Run()
 
-	case "connect", "disconnect", "open":
+	case "connect", "disconnect":
 		host, err := hostArg(command, args)
 		if err != nil {
 			return err
 		}
 		return call(syncd.Command{Cmd: command, Host: host})
+
+	case "open":
+		// A host is optional here: with none, the workspace the action was
+		// invoked from decides which machine the pane opens on.
+		host := ""
+		if len(args) > 0 {
+			host = args[0]
+		} else if env := strings.TrimSpace(os.Getenv("HRP_HOST")); env != "" {
+			host = env
+		}
+		return call(syncd.Command{Cmd: "open", Host: host, Workspace: contextWorkspace()})
 
 	case "refresh":
 		return call(syncd.Command{Cmd: "refresh"})
@@ -88,6 +99,21 @@ func hostArg(command string, args []string) (string, error) {
 	return "", fmt.Errorf(
 		"usage: herdr-remote-panes %s <ssh-target> (or select the target and run the action)",
 		command)
+}
+
+// contextWorkspace reports the workspace an action was invoked from.
+func contextWorkspace() string {
+	raw := os.Getenv("HERDR_WORKSPACE_ID")
+	if raw != "" {
+		return raw
+	}
+	var ctx struct {
+		WorkspaceID string `json:"workspace_id"`
+	}
+	if err := json.Unmarshal([]byte(os.Getenv("HERDR_PLUGIN_CONTEXT_JSON")), &ctx); err != nil {
+		return ""
+	}
+	return ctx.WorkspaceID
 }
 
 // selectedText pulls the selection out of Herdr's invocation context.

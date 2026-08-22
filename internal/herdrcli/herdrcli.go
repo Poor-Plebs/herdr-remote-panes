@@ -271,3 +271,32 @@ func ClosePaneByID(paneID string) error {
 	_, err := Run("pane", "close", paneID)
 	return err
 }
+
+// WorkspaceLabel returns the label of a workspace, or "" when it is unknown.
+func WorkspaceLabel(workspaceID string) string {
+	result, err := Run("workspace", "list")
+	if err != nil {
+		return ""
+	}
+	var body struct {
+		Workspaces []struct {
+			WorkspaceID string `json:"workspace_id"`
+			Label       string `json:"label"`
+		} `json:"workspaces"`
+	}
+	if err := json.Unmarshal(result, &body); err != nil {
+		return ""
+	}
+	for _, ws := range body.Workspaces {
+		if ws.WorkspaceID == workspaceID {
+			return ws.Label
+		}
+	}
+	return ""
+}
+
+// SplitPane opens an ordinary local pane next to the focused one.
+func SplitPane(direction string) error {
+	_, err := Run("pane", "split", "--direction", direction, "--focus")
+	return err
+}

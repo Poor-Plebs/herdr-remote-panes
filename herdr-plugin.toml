@@ -28,9 +28,9 @@ command = ["./bin/herdr-remote-panes", "disconnect"]
 
 [[actions]]
 id = "open"
-title = "Remote panes: open pane on host"
-description = "Open a new pane on an SSH target; it mirrors back into this session."
-contexts = ["global", "selection"]
+title = "Remote panes: new terminal"
+description = "Open a terminal on the machine whose workspace you are in; opens a local pane elsewhere."
+contexts = ["global", "workspace", "selection"]
 command = ["./bin/herdr-remote-panes", "open"]
 
 [[actions]]

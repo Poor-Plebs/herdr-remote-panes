@@ -205,9 +205,14 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		return Reply{OK: true, Message: "disconnected from " + cmd.Host}
 
 	case "open":
-		host, ok := d.hostConfig(cmd.Host)
+		host, ok := d.resolveOpenTarget(cmd)
 		if !ok {
-			return Reply{Message: fmt.Sprintf("%s is not in the plugin config", cmd.Host)}
+			// Not a mirrored workspace, so "new terminal" means what it
+			// normally means. This keeps one keybinding usable everywhere.
+			if err := herdrcli.SplitPane("right"); err != nil {
+				return Reply{Message: err.Error()}
+			}
+			return Reply{OK: true, Message: "opened a local pane"}
 		}
 		if err := d.connect(host); err != nil {
 			return Reply{Message: err.Error()}
@@ -259,6 +264,38 @@ func (d *Daemon) openRemotePane(host config.Host) error {
 	}
 	_, err = state.client.Run("tab", "create")
 	return err
+}
+
+// resolveOpenTarget decides which machine a new pane belongs to: an explicitly
+// named host, otherwise the machine whose mirrors live in the workspace the
+// action was invoked from. Creating a terminal while looking at a machine's
+// workspace should create it on that machine.
+func (d *Daemon) resolveOpenTarget(cmd Command) (config.Host, bool) {
+	if cmd.Host != "" {
+		return d.hostConfig(cmd.Host)
+	}
+	if cmd.Workspace == "" {
+		return config.Host{}, false
+	}
+
+	label := herdrcli.WorkspaceLabel(cmd.Workspace)
+	if label == "" {
+		return config.Host{}, false
+	}
+	for _, h := range d.cfg.Hosts {
+		if d.cfg.WorkspaceFor(h) == label {
+			return h, true
+		}
+	}
+	// Also consider hosts connected ad hoc, which are not in the config file.
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, state := range d.hosts {
+		if d.cfg.WorkspaceFor(state.host) == label {
+			return state.host, true
+		}
+	}
+	return config.Host{}, false
 }
 
 // hostConfig finds a configured host by target or label.
@@ -463,6 +500,8 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		return err
 	}
 
+	labels := d.labelsFor(state.host, remotePanes)
+
 	seen := map[string]bool{}
 	for _, rp := range remotePanes {
 		if rp.TerminalID == "" {
@@ -470,7 +509,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		}
 		seen[rp.TerminalID] = true
 
-		label := d.label(state.host, rp)
+		label := labels[rp.TerminalID]
 		if paneID, ok := state.mirrors[rp.TerminalID]; ok {
 			d.retitle(paneID, label)
 			d.syncAgent(state, paneID, rp)
@@ -588,10 +627,40 @@ func (d *Daemon) retitle(paneID, label string) {
 	labels.Store(paneID, label)
 }
 
+// labelsFor names every mirror from one host, keeping them distinguishable.
+//
+// Unnamed remote panes fall back to their working directory, so several shells
+// in the same directory would all render as "deploy@bot". Where that happens
+// the remote pane id is appended, which is stable and short.
+func (d *Daemon) labelsFor(host config.Host, panes []herdrcli.Pane) map[string]string {
+	counts := map[string]int{}
+	for _, rp := range panes {
+		counts[rp.DisplayName()]++
+	}
+
+	labels := make(map[string]string, len(panes))
+	for _, rp := range panes {
+		name := rp.DisplayName()
+		if counts[name] > 1 {
+			name = name + " " + shortPaneID(rp.PaneID)
+		}
+		labels[rp.TerminalID] = d.label(host, rp, name)
+	}
+	return labels
+}
+
+// shortPaneID trims a remote pane id such as "w2:p6" down to "p6".
+func shortPaneID(paneID string) string {
+	if i := strings.LastIndex(paneID, ":"); i >= 0 && i+1 < len(paneID) {
+		return paneID[i+1:]
+	}
+	return paneID
+}
+
 // label renders the configured LabelFormat for a remote pane.
-func (d *Daemon) label(host config.Host, rp herdrcli.Pane) string {
+func (d *Daemon) label(host config.Host, rp herdrcli.Pane, name string) string {
 	replacer := strings.NewReplacer(
-		"{name}", rp.DisplayName(),
+		"{name}", name,
 		"{host}", host.DisplayLabel(),
 		"{agent}", rp.Agent,
 		"{pane}", rp.PaneID,

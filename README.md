@@ -145,7 +145,7 @@ affected — a full UI client is not an attach owner.
 | Action | Effect |
 | --- | --- |
 | `poorplebs.remote-panes.connect` | Start mirroring a host (uses the current selection as the target) |
-| `poorplebs.remote-panes.open` | Open a new pane on a host; it mirrors back automatically |
+| `poorplebs.remote-panes.open` | New terminal on the machine whose workspace you are in; a local pane elsewhere |
 | `poorplebs.remote-panes.disconnect` | Stop mirroring a host and close its mirrors |
 | `poorplebs.remote-panes.refresh` | Reconcile every host now |
 | `poorplebs.remote-panes.status` | Report connected hosts and mirror counts |
@@ -203,8 +203,23 @@ you can group some machines together and keep others apart. Pair it with
 `placement`: `split` tiles the mirrors side by side, `tab` gives each its own
 tab.
 
-To open a fresh pane on a particular machine, invoke the `open` action with
-that host — the pane is created over there and mirrored straight back.
+### Creating a terminal on a machine
+
+Herdr's own new-pane binding always opens a *local* shell, even while you are
+looking at a machine's workspace. The `open` action is workspace-aware instead:
+invoked from a mirrored workspace it creates the pane on that machine and lets
+it mirror back, and anywhere else it opens an ordinary local pane. That makes it
+safe to bind over your usual key:
+
+```toml
+[[keys.command]]
+key = "prefix+c"
+type = "plugin_action"
+command = "poorplebs.remote-panes.open"
+description = "new terminal, on the machine you are looking at"
+```
+
+Pass a host explicitly to target a specific machine regardless of where you are.
 
 ### Finding the remote binary
 
