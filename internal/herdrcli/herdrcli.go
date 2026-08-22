@@ -230,3 +230,36 @@ func ClosePane(paneID string) error {
 func Notify(message string) {
 	_, _ = Run("notification", "show", message)
 }
+
+// ReportAgent declares which agent a pane is running and what it is doing.
+//
+// Herdr detects agents from the local process and its output. A mirror pane
+// runs ssh, so nothing local looks like an agent and the pane shows up bare in
+// the sidebar. The remote Herdr has already done the detection, so the result
+// is reported here instead.
+func ReportAgent(paneID, source, agent, state string) error {
+	_, err := Run("pane", "report-agent", paneID,
+		"--source", source, "--agent", agent, "--state", state)
+	return err
+}
+
+// ReleaseAgent gives up agent authority for a pane, for when the remote pane
+// stops running an agent.
+func ReleaseAgent(paneID, source, agent string) error {
+	_, err := Run("pane", "release-agent", paneID, "--source", source, "--agent", agent)
+	return err
+}
+
+// AgentState maps a remote pane's agent status onto the states pane
+// report-agent accepts. Herdr reports "done" but only accepts idle, working,
+// blocked and unknown, so a finished agent is reported as idle.
+func AgentState(status string) string {
+	switch status {
+	case "idle", "working", "blocked", "unknown":
+		return status
+	case "done":
+		return "idle"
+	default:
+		return "unknown"
+	}
+}

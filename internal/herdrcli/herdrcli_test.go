@@ -68,3 +68,21 @@ func TestParseOpenedPane(t *testing.T) {
 		t.Error("a response without a pane id must be an error, not an empty pane")
 	}
 }
+
+func TestAgentState(t *testing.T) {
+	// pane report-agent accepts only these four states, but a remote pane can
+	// also report "done", which has to be mapped rather than rejected.
+	for status, want := range map[string]string{
+		"idle":    "idle",
+		"working": "working",
+		"blocked": "blocked",
+		"unknown": "unknown",
+		"done":    "idle",
+		"":        "unknown",
+		"weird":   "unknown",
+	} {
+		if got := AgentState(status); got != want {
+			t.Errorf("AgentState(%q) = %q, want %q", status, got, want)
+		}
+	}
+}

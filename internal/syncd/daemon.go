@@ -48,8 +48,21 @@ type hostSync struct {
 	failures map[string]int
 	retryAt  map[string]time.Time
 
+	// reportedAgents remembers what was last reported for each mirror pane, so
+	// an unchanged agent is not re-reported on every poll.
+	reportedAgents map[string]agentReport
+
 	lastErr error
 }
+
+// agentReport is the agent identity and state last pushed to a mirror pane.
+type agentReport struct {
+	agent string
+	state string
+}
+
+// agentSource identifies this plugin as the authority for reported agents.
+const agentSource = PluginID
 
 // paneIndex is the local pane snapshot used for one reconcile pass. It also
 // records panes created during the pass, so a split mirror can target a
@@ -273,6 +286,8 @@ func (d *Daemon) connect(host config.Host) error {
 		dismissed: map[string]bool{},
 		failures:  map[string]int{},
 		retryAt:   map[string]time.Time{},
+
+		reportedAgents: map[string]agentReport{},
 	}
 	return nil
 }
@@ -381,6 +396,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		label := d.label(state.host, rp)
 		if paneID, ok := state.mirrors[rp.TerminalID]; ok {
 			d.retitle(paneID, label)
+			d.syncAgent(state, paneID, rp)
 			continue
 		}
 		if state.dismissed[rp.TerminalID] {
@@ -400,6 +416,9 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		}
 		delete(state.failures, rp.TerminalID)
 		delete(state.retryAt, rp.TerminalID)
+		if paneID, ok := state.mirrors[rp.TerminalID]; ok {
+			d.syncAgent(state, paneID, rp)
+		}
 	}
 
 	// Close mirrors whose remote pane is gone, and forget dismissals for
@@ -410,6 +429,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 				log.Printf("close mirror %s: %v", paneID, err)
 			}
 			delete(state.mirrors, terminalID)
+			delete(state.reportedAgents, paneID)
 		}
 	}
 	for terminalID := range state.dismissed {
@@ -444,6 +464,35 @@ func (d *Daemon) backOff(state *hostSync, terminalID string, cause error) {
 	}
 	delay := time.Duration(1<<attempts) * time.Second
 	state.retryAt[terminalID] = time.Now().Add(delay)
+}
+
+// syncAgent mirrors the remote pane's agent identity and status onto the local
+// pane, so a remote agent appears in the sidebar with the right name and state
+// instead of showing up as a bare ssh pane.
+func (d *Daemon) syncAgent(state *hostSync, paneID string, rp herdrcli.Pane) {
+	agent := strings.TrimSpace(rp.Agent)
+	previous, reported := state.reportedAgents[paneID]
+
+	if agent == "" {
+		if reported {
+			if err := herdrcli.ReleaseAgent(paneID, agentSource, previous.agent); err != nil {
+				log.Printf("release agent %s: %v", paneID, err)
+				return
+			}
+			delete(state.reportedAgents, paneID)
+		}
+		return
+	}
+
+	want := agentReport{agent: agent, state: herdrcli.AgentState(rp.AgentStatus)}
+	if reported && previous == want {
+		return
+	}
+	if err := herdrcli.ReportAgent(paneID, agentSource, want.agent, want.state); err != nil {
+		log.Printf("report agent %s: %v", paneID, err)
+		return
+	}
+	state.reportedAgents[paneID] = want
 }
 
 // labels tracks the last label applied to each mirror so reconcile does not
