@@ -263,3 +263,11 @@ func AgentState(status string) string {
 		return "unknown"
 	}
 }
+
+// ClosePaneByID closes any pane, plugin-owned or not. Plugin panes are closed
+// through ClosePane; this is for ordinary panes such as the shell Herdr creates
+// alongside a new workspace.
+func ClosePaneByID(paneID string) error {
+	_, err := Run("pane", "close", paneID)
+	return err
+}

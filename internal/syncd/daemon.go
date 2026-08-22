@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,14 @@ type Daemon struct {
 
 	mu    sync.Mutex
 	hosts map[string]*hostSync
+
+	// snapshot is the bookkeeping left by a previous daemon, consulted when a
+	// host connects so its panes are adopted rather than reopened.
+	snapshot snapshot
+
+	// rootPanes maps a workspace this daemon created to the shell Herdr opened
+	// with it, so that placeholder can be closed once a mirror replaces it.
+	rootPanes map[string]string
 }
 
 // hostSync is the live state for one SSH target.
@@ -47,6 +56,11 @@ type hostSync struct {
 	// persistent error cannot spawn a new pane on every tick.
 	failures map[string]int
 	retryAt  map[string]time.Time
+
+	// adopted marks that the first reconcile after a restart has run. Until it
+	// does, mirrors restored from the snapshot whose panes are gone are stale
+	// bookkeeping rather than panes the user closed.
+	adopted bool
 
 	// reportedAgents remembers what was last reported for each mirror pane, so
 	// an unchanged agent is not re-reported on every poll.
@@ -92,7 +106,12 @@ func (p *paneIndex) add(pane herdrcli.Pane) {
 
 // New builds a daemon from the on-disk configuration.
 func New(cfg config.Config) *Daemon {
-	return &Daemon{cfg: cfg, hosts: map[string]*hostSync{}}
+	return &Daemon{
+		cfg:       cfg,
+		hosts:     map[string]*hostSync{},
+		rootPanes: map[string]string{},
+		snapshot:  loadSnapshot(),
+	}
 }
 
 // Run starts the control listener and blocks, polling every connected host.
@@ -279,7 +298,7 @@ func (d *Daemon) connect(host config.Host) error {
 		existing.host = host
 		return nil
 	}
-	d.hosts[host.Target] = &hostSync{
+	state := &hostSync{
 		host:      host,
 		client:    client,
 		mirrors:   map[string]string{},
@@ -289,6 +308,16 @@ func (d *Daemon) connect(host config.Host) error {
 
 		reportedAgents: map[string]agentReport{},
 	}
+	// Adopt what a previous daemon opened so a restart does not duplicate it.
+	if saved, ok := d.snapshot.Hosts[host.Target]; ok {
+		for terminalID, paneID := range saved.Mirrors {
+			state.mirrors[terminalID] = paneID
+		}
+		for _, terminalID := range saved.Dismissed {
+			state.dismissed[terminalID] = true
+		}
+	}
+	d.hosts[host.Target] = state
 	return nil
 }
 
@@ -351,6 +380,8 @@ func (d *Daemon) reconcileAll() {
 	}
 	index := newPaneIndex(local)
 
+	defer d.persist()
+
 	var wg sync.WaitGroup
 	for _, state := range states {
 		wg.Add(1)
@@ -371,15 +402,44 @@ func (d *Daemon) reconcileAll() {
 	wg.Wait()
 }
 
+// persist records the current mirror bookkeeping for the next daemon.
+func (d *Daemon) persist() {
+	d.mu.Lock()
+	current := snapshot{Hosts: make(map[string]hostSnapshot, len(d.hosts))}
+	for target, state := range d.hosts {
+		mirrors := make(map[string]string, len(state.mirrors))
+		for terminalID, paneID := range state.mirrors {
+			mirrors[terminalID] = paneID
+		}
+		dismissed := make([]string, 0, len(state.dismissed))
+		for terminalID := range state.dismissed {
+			dismissed = append(dismissed, terminalID)
+		}
+		sort.Strings(dismissed)
+		current.Hosts[target] = hostSnapshot{Mirrors: mirrors, Dismissed: dismissed}
+	}
+	d.snapshot = current
+	d.mu.Unlock()
+
+	if err := saveSnapshot(current); err != nil {
+		log.Printf("save mirror state: %v", err)
+	}
+}
+
 // reconcileHost brings one host's mirrors in line with its remote panes.
 func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
-	// Drop mirrors the user closed by hand and do not reopen them.
+	// Drop mirrors the user closed by hand and do not reopen them. On the first
+	// pass after a restart, a missing pane is stale bookkeeping from a previous
+	// daemon rather than a deliberate close, so it is dropped silently.
 	for terminalID, paneID := range state.mirrors {
 		if !index.alive[paneID] {
 			delete(state.mirrors, terminalID)
-			state.dismissed[terminalID] = true
+			if state.adopted {
+				state.dismissed[terminalID] = true
+			}
 		}
 	}
+	state.adopted = true
 
 	remotePanes, err := state.client.PaneList()
 	if err != nil {
@@ -523,7 +583,7 @@ func (d *Daemon) label(host config.Host, rp herdrcli.Pane) string {
 
 // openMirror creates the local pane that bridges one remote terminal.
 func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, index *paneIndex) error {
-	workspaceID, err := d.ensureWorkspace(state)
+	workspaceID, err := d.ensureWorkspace(state, index)
 	if err != nil {
 		return err
 	}
@@ -577,6 +637,7 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, ind
 	index.add(pane)
 	state.mirrors[rp.TerminalID] = pane.PaneID
 	d.retitle(pane.PaneID, label)
+	d.retireRootPane(workspaceID, index)
 	return nil
 }
 
@@ -585,7 +646,7 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, ind
 //
 // The id is looked up each time rather than cached: a workspace the user closed
 // must be recreated, not remembered.
-func (d *Daemon) ensureWorkspace(state *hostSync) (string, error) {
+func (d *Daemon) ensureWorkspace(state *hostSync, index *paneIndex) (string, error) {
 	label := d.cfg.WorkspaceFor(state.host)
 
 	result, err := herdrcli.Run("workspace", "list")
@@ -615,9 +676,44 @@ func (d *Daemon) ensureWorkspace(state *hostSync) (string, error) {
 		Workspace struct {
 			WorkspaceID string `json:"workspace_id"`
 		} `json:"workspace"`
+		RootPane struct {
+			PaneID string `json:"pane_id"`
+		} `json:"root_pane"`
 	}
 	if err := json.Unmarshal(created, &createdBody); err != nil {
 		return "", fmt.Errorf("parse workspace create: %w", err)
 	}
-	return createdBody.Workspace.WorkspaceID, nil
+
+	workspaceID := createdBody.Workspace.WorkspaceID
+	// Herdr opens a local shell with every new workspace. In a workspace that
+	// exists only to hold mirrors that is a stray local terminal, so remember
+	// it and close it once a mirror has taken its place. It cannot be closed
+	// now: a workspace with no panes at all closes itself.
+	if root := createdBody.RootPane.PaneID; root != "" {
+		d.rootPanes[workspaceID] = root
+		// The index was captured before this workspace existed. Register the
+		// new pane so a split has something to target and so the placeholder
+		// is recognised as live when it is retired.
+		index.add(herdrcli.Pane{PaneID: root, WorkspaceID: workspaceID})
+	}
+	return workspaceID, nil
+}
+
+// retireRootPane closes the placeholder shell Herdr created with a workspace,
+// once a mirror is there to keep the workspace alive.
+func (d *Daemon) retireRootPane(workspaceID string, index *paneIndex) {
+	root, ok := d.rootPanes[workspaceID]
+	if !ok {
+		return
+	}
+	delete(d.rootPanes, workspaceID)
+
+	if !index.alive[root] {
+		return
+	}
+	if err := herdrcli.ClosePaneByID(root); err != nil {
+		log.Printf("close placeholder pane %s: %v", root, err)
+		return
+	}
+	delete(index.alive, root)
 }

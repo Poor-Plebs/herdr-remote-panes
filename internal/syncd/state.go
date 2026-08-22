@@ -1,6 +1,7 @@
 package syncd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -73,4 +74,71 @@ type HostInfo struct {
 	Connected bool   `json:"connected"`
 	Mirrors   int    `json:"mirrors"`
 	LastError string `json:"last_error,omitempty"`
+}
+
+// snapshot is the daemon's mirror bookkeeping, persisted so a restarted daemon
+// adopts the panes it already opened instead of opening a second set.
+type snapshot struct {
+	Hosts map[string]hostSnapshot `json:"hosts"`
+}
+
+type hostSnapshot struct {
+	// Mirrors maps a remote terminal id to the local pane showing it.
+	Mirrors map[string]string `json:"mirrors"`
+	// Dismissed are mirrors the user closed by hand.
+	Dismissed []string `json:"dismissed,omitempty"`
+}
+
+// snapshotPath is per session, matching the control socket.
+func snapshotPath() (string, error) {
+	dir, err := StateDir()
+	if err != nil {
+		return "", err
+	}
+	session := os.Getenv("HERDR_SESSION")
+	if session == "" {
+		session = "default"
+	}
+	return filepath.Join(dir, "mirrors-"+sanitize(session)+".json"), nil
+}
+
+// loadSnapshot reads the previous bookkeeping. A missing or unreadable file is
+// not an error: the daemon simply starts with no adopted mirrors.
+func loadSnapshot() snapshot {
+	empty := snapshot{Hosts: map[string]hostSnapshot{}}
+
+	path, err := snapshotPath()
+	if err != nil {
+		return empty
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return empty
+	}
+	var loaded snapshot
+	if err := json.Unmarshal(raw, &loaded); err != nil {
+		return empty
+	}
+	if loaded.Hosts == nil {
+		loaded.Hosts = map[string]hostSnapshot{}
+	}
+	return loaded
+}
+
+// saveSnapshot writes the bookkeeping, replacing the file atomically so a
+// crash mid-write cannot leave a truncated snapshot behind.
+func saveSnapshot(s snapshot) error {
+	path, err := snapshotPath()
+	if err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	temp := path + ".tmp"
+	if err := os.WriteFile(temp, append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(temp, path)
 }
