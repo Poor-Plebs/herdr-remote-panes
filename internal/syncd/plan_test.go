@@ -609,3 +609,30 @@ func TestPlanOrphanedPane(t *testing.T) {
 		}
 	})
 }
+
+func TestPlanTrackedMirrorChecksIdentity(t *testing.T) {
+	// Herdr reuses pane ids. A record saying "terminal t1 is mirrored at
+	// w1:p2" can survive to meet a pane that is now mirroring something else,
+	// and adopting it would leave t1 unmirrored and the other terminal
+	// mirrored twice — two mirrors then fight over the exclusive attach.
+	if got := planTrackedMirrorFor(false, true, true, "t1", "t5"); got != mirrorReplace {
+		t.Errorf("a pane mirroring another terminal should be replaced, got %v", got)
+	}
+
+	// The same terminal is the mirror the record meant.
+	if got := planTrackedMirrorFor(false, true, true, "t1", "t1"); got != mirrorKeep {
+		t.Errorf("a matching mirror should be kept, got %v", got)
+	}
+
+	// A mark written before the terminal was recorded is taken at its word,
+	// or upgrading would replace every working mirror.
+	if got := planTrackedMirrorFor(false, true, true, "t1", ""); got != mirrorKeep {
+		t.Errorf("an older mark should be kept, got %v", got)
+	}
+
+	// Once running, the identity is not rechecked: a mirror can be between
+	// processes without being the wrong one.
+	if got := planTrackedMirrorFor(true, true, false, "t1", "t5"); got != mirrorKeep {
+		t.Errorf("after adoption the pane should be left alone, got %v", got)
+	}
+}

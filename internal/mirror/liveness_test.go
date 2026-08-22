@@ -14,7 +14,7 @@ func TestLivenessLifecycle(t *testing.T) {
 		t.Fatal("a pane with no mark must not read as live")
 	}
 
-	clear := markLive("w1:p2")
+	clear := markLive("w1:p2", "term_x")
 	if !IsLive("w1:p2") {
 		t.Error("a marked pane should read as live")
 	}
@@ -54,7 +54,7 @@ func TestLivenessRejectsDeadAndCorruptMarks(t *testing.T) {
 
 func TestClearLive(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
-	markLive("w1:p3")
+	markLive("w1:p3", "term_x")
 	ClearLive("w1:p3")
 	if IsLive("w1:p3") {
 		t.Error("ClearLive should remove the mark")
@@ -102,7 +102,7 @@ func TestFailureMarks(t *testing.T) {
 func TestFailureAndLivenessAreSeparate(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 
-	clear := markLive("w1:p3")
+	clear := markLive("w1:p3", "term_x")
 	MarkFailed("w1:p3")
 	clear()
 
@@ -121,7 +121,7 @@ func TestMarksArePerSession(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 
 	t.Setenv("HERDR_SESSION", "hub")
-	clearHub := markLive("w1:p2")
+	clearHub := markLive("w1:p2", "term_x")
 	defer clearHub()
 	if !IsLive("w1:p2") {
 		t.Fatal("the mark should be live in the session that made it")
@@ -148,7 +148,7 @@ func TestPruneRemovesMarksForPanesThatAreGone(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	t.Setenv("HERDR_SESSION", "hub")
 
-	markLive("w1:p2")()
+	markLive("w1:p2", "term_x")()
 	MarkFailed("w1:p9")
 	MarkFailed("w1:p2")
 
@@ -209,5 +209,52 @@ func TestPruneClearsTheOldSharedLayout(t *testing.T) {
 	}
 	if !Failed("w1:p2") {
 		t.Error("this session's claimed mark should have been kept")
+	}
+}
+
+func TestLiveTerminalIdentifiesWhatIsInThePane(t *testing.T) {
+	// A pane id alone does not identify a mirror: Herdr reuses them, so
+	// bookkeeping saying "terminal t1 is mirrored at w1:p2" can survive to meet
+	// a pane that is now mirroring something else entirely.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	clear := markLive("w1:p2", "term_a")
+	defer clear()
+
+	terminal, live := LiveTerminal("w1:p2")
+	if !live {
+		t.Fatal("a marked pane should read as live")
+	}
+	if terminal != "term_a" {
+		t.Errorf("terminal = %q, want term_a", terminal)
+	}
+
+	if _, live := LiveTerminal("w1:p9"); live {
+		t.Error("an unmarked pane should not read as live")
+	}
+}
+
+func TestLiveTerminalAcceptsMarksWithoutATerminal(t *testing.T) {
+	// A mark written before the terminal was recorded must not be read as a
+	// dead mirror, or upgrading would close every working pane.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("HERDR_SESSION", "hub")
+
+	path := livenessPath("w1:p2")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	terminal, live := LiveTerminal("w1:p2")
+	if !live {
+		t.Error("an older mark should still read as live")
+	}
+	if terminal != "" {
+		t.Errorf("terminal = %q, want empty for an older mark", terminal)
 	}
 }

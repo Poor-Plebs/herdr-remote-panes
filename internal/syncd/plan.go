@@ -74,6 +74,18 @@ const (
 // command, so the pane id survives while the mirror does not. Adopting such a
 // husk leaves a dead local shell wearing a remote pane's name.
 func planTrackedMirror(adopted, paneAlive, mirrorRunning bool) mirrorAction {
+	return planTrackedMirrorFor(adopted, paneAlive, mirrorRunning, "", "")
+}
+
+// planTrackedMirrorFor is planTrackedMirror with the identity check.
+//
+// wantTerminal is the terminal the bookkeeping says this pane mirrors, and
+// hasTerminal is what the running mirror says it is actually bridging. They
+// differ when a pane id has been reused: the record survives, the pane behind
+// it is now showing something else, and adopting it would leave one terminal
+// unmirrored and another mirrored twice. An empty hasTerminal means the mark
+// predates this being recorded and is taken at its word.
+func planTrackedMirrorFor(adopted, paneAlive, mirrorRunning bool, wantTerminal, hasTerminal string) mirrorAction {
 	if !paneAlive {
 		if adopted {
 			// It was live a moment ago and is not now: the user closed it.
@@ -81,7 +93,13 @@ func planTrackedMirror(adopted, paneAlive, mirrorRunning bool) mirrorAction {
 		}
 		return mirrorForget
 	}
-	if !adopted && !mirrorRunning {
+	if adopted {
+		return mirrorKeep
+	}
+	if !mirrorRunning {
+		return mirrorReplace
+	}
+	if wantTerminal != "" && hasTerminal != "" && wantTerminal != hasTerminal {
 		return mirrorReplace
 	}
 	return mirrorKeep

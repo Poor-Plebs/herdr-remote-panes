@@ -97,7 +97,14 @@ func livenessPath(paneID string) string {
 
 // markLive records that this process is mirroring into the given pane, and
 // returns a function that clears the mark.
-func markLive(paneID string) func() {
+// markLive records that this process is bridging the given terminal into the
+// given pane, and returns a function that clears the mark.
+//
+// The terminal is recorded alongside the pid because a pane id alone does not
+// identify a mirror: Herdr reuses pane ids, so bookkeeping that says "terminal
+// t1 is mirrored at w1:p2" can survive to meet a pane that is now mirroring
+// something else entirely.
+func markLive(paneID, terminalID string) func() {
 	path := livenessPath(paneID)
 	if path == "" {
 		return func() {}
@@ -105,7 +112,8 @@ func markLive(paneID string) func() {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return func() {}
 	}
-	if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	body := strconv.Itoa(os.Getpid()) + "\n" + terminalID
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		return func() {}
 	}
 	return func() { _ = os.Remove(path) }
@@ -113,20 +121,40 @@ func markLive(paneID string) func() {
 
 // IsLive reports whether a mirror process is currently running for a pane.
 func IsLive(paneID string) bool {
+	_, live := readMark(paneID)
+	return live
+}
+
+// LiveTerminal reports which terminal a running mirror is bridging, so
+// bookkeeping can be checked against what is actually in the pane rather than
+// trusted because the pane id matches.
+//
+// An empty terminal with live true means the mark predates this being recorded;
+// callers should accept it rather than discard a working mirror.
+func LiveTerminal(paneID string) (terminalID string, live bool) {
+	return readMark(paneID)
+}
+
+func readMark(paneID string) (terminalID string, live bool) {
 	path := livenessPath(paneID)
 	if path == "" {
-		return false
+		return "", false
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return false
+		return "", false
 	}
-	pid, err := strconv.Atoi(string(raw))
+
+	pidText, terminal, _ := strings.Cut(strings.TrimSpace(string(raw)), "\n")
+	pid, err := strconv.Atoi(strings.TrimSpace(pidText))
 	if err != nil || pid <= 0 {
-		return false
+		return "", false
 	}
 	// Signal 0 checks for existence without delivering anything.
-	return syscall.Kill(pid, 0) == nil
+	if syscall.Kill(pid, 0) != nil {
+		return "", false
+	}
+	return strings.TrimSpace(terminal), true
 }
 
 // failurePath marks a pane whose bridge exited with an error, as opposed to

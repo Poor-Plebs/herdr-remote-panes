@@ -114,7 +114,7 @@ func reportFailure(err error) {
 func bridge() error {
 	// Record liveness so the daemon can tell a running mirror from a pane that
 	// Herdr restored without its command.
-	defer markLive(os.Getenv("HERDR_PANE_ID"))()
+	defer markLive(os.Getenv("HERDR_PANE_ID"), os.Getenv(EnvTerminal))()
 
 	target := os.Getenv(EnvTarget)
 	if target == "" {

@@ -1081,7 +1081,8 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	// daemon rather than a deliberate close, so it is dropped silently.
 	var closedHere []string
 	for terminalID, paneID := range state.mirrors {
-		switch planTrackedMirror(state.adopted, index.alive[paneID], mirror.IsLive(paneID)) {
+		running, live := mirror.LiveTerminal(paneID)
+		switch planTrackedMirrorFor(state.adopted, index.alive[paneID], live, terminalID, running) {
 		case mirrorKeep:
 		case mirrorForget:
 			delete(state.mirrors, terminalID)
