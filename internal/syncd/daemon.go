@@ -1433,7 +1433,7 @@ func (d *Daemon) ensureWorkspace(state *hostSync, index *paneIndex) (string, err
 
 // markerRunes are the decorations a workspace label may carry in front of the
 // host name.
-const markerRunes = "☁⛅🔴🟢 \t"
+const markerRunes = "☁⛅⚠🔴🟢 \t"
 
 // sameWorkspace reports whether a workspace label names this host, ignoring any
 // leading marker. Without this, changing workspace_format would orphan the
@@ -1467,6 +1467,15 @@ func (d *Daemon) markWorkspaceState(state *hostSync, connected bool) {
 	}
 	// Reported on every pass rather than once. It is a local socket call, and
 	// re-asserting means the marker comes back if anything else clears it.
+	// The marker also lives in the space's name, because Herdr puts " · "
+	// between sidebar tokens and a name is the only place a marker can sit
+	// directly beside it.
+	if label := d.cfg.WorkspaceLabelFor(state.host, connected); label != "" {
+		if _, err := herdrcli.Run("workspace", "rename", workspaceID, label); err != nil {
+			log.Printf("rename workspace %s: %v", workspaceID, err)
+		}
+	}
+
 	if _, err := herdrcli.Run("workspace", "report-metadata", workspaceID,
 		"--source", agentSource,
 		"--token", want+"="+remoteGlyph,

@@ -172,6 +172,7 @@ All optional, in `config.json`:
 | `mode` | `attach` | `attach` to type in them, `observe` to only watch, `ssh` for a plain SSH terminal |
 | `workspace` | one per machine | Put every machine in one space instead |
 | `workspace_format` | `☁  {host}` | How a machine's space is named |
+| `workspace_format_down` | `⚠  {host}` | How it is named while unreachable |
 | `label_format` | `{name}@{host}` | How its terminals are named |
 | `placement` | `split` | How mirrors are placed here: `split`, `tab` or `zoomed` |
 | `poll_interval` | `2s` | How often machines are checked |
@@ -195,11 +196,19 @@ All optional, in `config.json`:
 }
 ```
 
-### A green or red cloud on remote spaces
+### Marking remote spaces
 
-Spaces are named `☁  workbox` by default. For a cloud that turns green while
-the machine is reachable and red when it is not, add this to
-`~/.config/herdr/config.toml` and set `"workspace_format": "{host}"`:
+A machine's space is named `☁  workbox`, and `⚠  workbox` while it cannot be
+reached. Change either with `workspace_format` and `workspace_format_down`.
+
+The marker is part of the name rather than a sidebar token because Herdr joins
+sidebar tokens with `·`, and the only place that separator becomes a plain space
+is directly after `state_icon`. A marker token therefore always sits a dot away
+from the machine's name.
+
+If you would rather have colour and can live with the dot, the plugin also
+reports `remote_up` and `remote_down` as workspace metadata tokens. Set
+`"workspace_format": "{host}"` and style them in the sidebar:
 
 ```toml
 [ui.sidebar.spaces]
@@ -208,9 +217,6 @@ rows = [
   [ "branch", "git_status" ],
 ]
 ```
-
-Keep the cloud next to `workspace`. Putting it before `state_icon` leaves the
-agent-status dots sitting between the icon and the machine's name.
 
 ### Watching instead of typing
 

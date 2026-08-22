@@ -164,7 +164,9 @@ func TestPlanLabels(t *testing.T) {
 func TestSameWorkspace(t *testing.T) {
 	// Changing workspace_format used to orphan the space a machine's panes
 	// already lived in, because lookup matched the label exactly.
-	for _, label := range []string{"bot", "☁ bot", "☁  bot", "🟢 bot"} {
+	// Renaming the space as reachability changes must not orphan it, so the
+	// lookup ignores whichever marker it currently carries.
+	for _, label := range []string{"bot", "☁ bot", "☁  bot", "⚠  bot", "🟢 bot"} {
 		if !sameWorkspace(label, "bot") {
 			t.Errorf("sameWorkspace(%q, \"bot\") = false, want true", label)
 		}

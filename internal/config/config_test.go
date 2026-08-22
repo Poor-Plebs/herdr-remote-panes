@@ -134,3 +134,29 @@ func TestSetHostMode(t *testing.T) {
 		t.Errorf("reloaded hosts = %+v, want the change persisted", reloaded.Hosts)
 	}
 }
+
+func TestWorkspaceLabelFor(t *testing.T) {
+	cfg := Defaults()
+	bot := Host{Target: "bot"}
+
+	// Herdr joins sidebar tokens with " · ", so a marker token always sits a
+	// dot away from the name. Carrying it in the name is the only way to have
+	// it directly beside the machine.
+	if got := cfg.WorkspaceLabelFor(bot, true); got != "☁  bot" {
+		t.Errorf("reachable = %q, want %q", got, "☁  bot")
+	}
+	// The state still shows, since colour is not available in a name.
+	if got := cfg.WorkspaceLabelFor(bot, false); got != "⚠  bot" {
+		t.Errorf("unreachable = %q, want %q", got, "⚠  bot")
+	}
+
+	// A name the user chose is theirs, marker and all.
+	cfg.Workspace = "remote"
+	if got := cfg.WorkspaceLabelFor(bot, false); got != "remote" {
+		t.Errorf("shared workspace = %q, want %q", got, "remote")
+	}
+	cfg.Workspace = ""
+	if got := cfg.WorkspaceLabelFor(Host{Target: "bot", Workspace: "mine"}, false); got != "mine" {
+		t.Errorf("per-host workspace = %q, want %q", got, "mine")
+	}
+}

@@ -108,6 +108,11 @@ type Config struct {
 	// direct attach is exclusive and can outlive the pane that started it, so
 	// without this a killed mirror blocks its terminal until that process dies.
 	Takeover *bool `json:"takeover,omitempty"`
+	// WorkspaceFormatDown names a machine's space while it cannot be reached.
+	// Herdr joins sidebar tokens with " · ", so a separate marker token always
+	// sits a dot away from the name; carrying the marker in the name itself is
+	// the only way to have it directly beside it.
+	WorkspaceFormatDown string `json:"workspace_format_down,omitempty"`
 	// RemoteWorkspaceFormat names the workspace this plugin creates on the
 	// remote machine. {hub} is this machine's hostname, so that sitting on the
 	// remote you can tell which machine those panes are shared with.
@@ -146,6 +151,7 @@ func Defaults() Config {
 		Placement:             "split",
 		LabelFormat:           "{name}@{host}",
 		WorkspaceFormat:       "☁  {host}",
+		WorkspaceFormatDown:   "⚠  {host}",
 		RemoteWorkspaceFormat: "☁  {hub}",
 		CaptureNewPanes:       boolPtr(true),
 		ClosePropagates:       boolPtr(true),
@@ -226,6 +232,9 @@ func (c Config) normalized() Config {
 	}
 	if c.WorkspaceFormat == "" {
 		c.WorkspaceFormat = d.WorkspaceFormat
+	}
+	if c.WorkspaceFormatDown == "" {
+		c.WorkspaceFormatDown = d.WorkspaceFormatDown
 	}
 	if c.RemoteWorkspaceFormat == "" {
 		c.RemoteWorkspaceFormat = d.RemoteWorkspaceFormat
@@ -322,6 +331,19 @@ func (c Config) WorkspaceFor(h Host) string {
 		return c.Workspace
 	}
 	return strings.ReplaceAll(c.WorkspaceFormat, "{host}", h.DisplayLabel())
+}
+
+// WorkspaceLabelFor names a host's space for its current reachability.
+func (c Config) WorkspaceLabelFor(h Host, reachable bool) string {
+	if h.Workspace != "" || c.Workspace != "" {
+		// An explicitly chosen name is used as given, marker and all.
+		return c.WorkspaceFor(h)
+	}
+	format := c.WorkspaceFormat
+	if !reachable {
+		format = c.WorkspaceFormatDown
+	}
+	return strings.ReplaceAll(format, "{host}", h.DisplayLabel())
 }
 
 // RemoteWorkspaceLabel is the workspace label used on the remote machine.
