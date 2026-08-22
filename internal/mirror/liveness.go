@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -17,12 +18,73 @@ import (
 // wearing a name@host label forever. Each mirror records its pid instead.
 
 // livenessDir holds one file per pane, named for the pane, containing the pid.
+//
+// It is per session: pane ids repeat across Herdr sessions, so two sessions
+// running this plugin would otherwise decide each other's panes were alive or
+// dead from marks that belong to the other.
 func livenessDir() string {
 	dir := os.Getenv("HERDR_PLUGIN_STATE_DIR")
 	if dir == "" {
 		return ""
 	}
-	return filepath.Join(dir, "panes")
+	session := os.Getenv("HERDR_SESSION")
+	if session == "" {
+		session = "default"
+	}
+	return filepath.Join(dir, "panes", sanitizePaneID(session))
+}
+
+// Prune removes marks for panes that no longer exist.
+//
+// A mark is left behind whenever a pane goes without the daemon noticing — a
+// crash, a session that never came back — and Herdr reuses pane ids, so a stale
+// failure mark would make the next pane on that id look like a dropped
+// connection and be reopened after someone deliberately closed it.
+func Prune(known map[string]bool) {
+	dir := livenessDir()
+	if dir == "" {
+		return
+	}
+	pruneDir(dir, known)
+
+	// Marks used to live directly in the parent, before they were separated by
+	// session. Nothing reads those any more, so an upgrade would leave them
+	// behind for good.
+	pruneDir(filepath.Dir(dir), nil)
+}
+
+// pruneDir removes mark files in one directory that no live pane claims. A nil
+// set means none of them are claimed.
+func pruneDir(dir string, known map[string]bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		base := strings.TrimSuffix(strings.TrimSuffix(name, ".pid"), ".failed")
+		if base == name {
+			// Not a mark; leave whatever it is alone.
+			continue
+		}
+		if knownPane(known, base) {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, name))
+	}
+}
+
+// knownPane reports whether a sanitised file name belongs to a live pane.
+func knownPane(known map[string]bool, sanitized string) bool {
+	for paneID := range known {
+		if sanitizePaneID(paneID) == sanitized {
+			return true
+		}
+	}
+	return false
 }
 
 func livenessPath(paneID string) string {

@@ -45,6 +45,10 @@ type Daemon struct {
 	// markedWorkspaces avoids re-reporting the same workspace metadata.
 	markedWorkspaces map[string]string
 
+	// pruneOnce clears marks left by earlier runs, once the first pane listing
+	// says which panes actually exist.
+	pruneOnce sync.Once
+
 	// rootPanes maps a workspace this daemon created to the shell Herdr opened
 	// with it, so that placeholder can be closed once a mirror replaces it.
 	rootPanes map[string]string
@@ -885,6 +889,11 @@ func (d *Daemon) reconcileAll() {
 		return
 	}
 	index := newPaneIndex(local)
+
+	// Marks are left behind whenever a pane goes without the daemon noticing,
+	// and Herdr reuses pane ids, so a stale one would be read as belonging to
+	// whatever lands on that id next.
+	d.pruneOnce.Do(func() { mirror.Prune(index.alive) })
 
 	defer d.persist()
 

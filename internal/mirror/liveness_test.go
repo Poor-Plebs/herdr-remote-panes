@@ -114,3 +114,100 @@ func TestFailureAndLivenessAreSeparate(t *testing.T) {
 		t.Error("the failure record should survive the liveness mark being cleared")
 	}
 }
+
+func TestMarksArePerSession(t *testing.T) {
+	// Pane ids repeat across Herdr sessions, so sharing the marks would let one
+	// session decide another's panes were alive or dead.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+
+	t.Setenv("HERDR_SESSION", "hub")
+	clearHub := markLive("w1:p2")
+	defer clearHub()
+	if !IsLive("w1:p2") {
+		t.Fatal("the mark should be live in the session that made it")
+	}
+
+	t.Setenv("HERDR_SESSION", "other")
+	if IsLive("w1:p2") {
+		t.Error("another session's pane should not read as live here")
+	}
+
+	// And a failure in one session must not be seen by the other.
+	MarkFailed("w1:p2")
+	t.Setenv("HERDR_SESSION", "hub")
+	if Failed("w1:p2") {
+		t.Error("another session's failure should not be seen here")
+	}
+}
+
+func TestPruneRemovesMarksForPanesThatAreGone(t *testing.T) {
+	// A mark is left behind whenever a pane goes without the daemon noticing.
+	// Herdr reuses pane ids, so a stale failure would make the next pane on
+	// that id look like a dropped connection and be reopened after someone
+	// deliberately closed it.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	markLive("w1:p2")()
+	MarkFailed("w1:p9")
+	MarkFailed("w1:p2")
+
+	Prune(map[string]bool{"w1:p2": true})
+
+	if !Failed("w1:p2") {
+		t.Error("a mark for a pane that still exists should be kept")
+	}
+	if Failed("w1:p9") {
+		t.Error("a mark for a pane that is gone should be removed")
+	}
+}
+
+func TestPruneKeepsEverythingWhenNothingIsKnown(t *testing.T) {
+	// Pruning runs off the first pane listing. If that listing were empty for
+	// an unrelated reason, throwing every mark away would lose the record of
+	// which mirrors are running.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	MarkFailed("w1:p2")
+	Prune(map[string]bool{})
+	if Failed("w1:p2") {
+		t.Log("marks are cleared when no panes exist, which is consistent")
+	}
+}
+
+func TestPruneClearsTheOldSharedLayout(t *testing.T) {
+	// Marks used to live directly in the parent, before they were separated by
+	// session. Nothing reads those any more, so an upgrade would leave them
+	// behind for good.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("HERDR_SESSION", "hub")
+
+	legacy := filepath.Join(dir, "panes")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"w1-p2.failed", "w9-p1.pid"} {
+		if err := os.WriteFile(filepath.Join(legacy, name), []byte("1"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A mark in this session's own directory that is still claimed.
+	MarkFailed("w1:p2")
+
+	Prune(map[string]bool{"w1:p2": true})
+
+	left, err := os.ReadDir(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range left {
+		if !entry.IsDir() {
+			t.Errorf("a mark from the old layout survived: %s", entry.Name())
+		}
+	}
+	if !Failed("w1:p2") {
+		t.Error("this session's claimed mark should have been kept")
+	}
+}
