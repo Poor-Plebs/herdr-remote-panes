@@ -489,6 +489,9 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, ind
 	if bin := d.cfg.BinFor(state.host); bin != "" {
 		env[mirror.EnvBin] = bin
 	}
+	if !d.cfg.ShouldTakeover() {
+		env[mirror.EnvTakeover] = "false"
+	}
 
 	opts := herdrcli.OpenOptions{
 		PluginID:   PluginID,

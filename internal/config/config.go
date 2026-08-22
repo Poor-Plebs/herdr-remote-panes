@@ -87,6 +87,10 @@ type Config struct {
 	// Workspace is the local workspace label every host's mirrors share. Empty
 	// gives each host its own workspace named after it.
 	Workspace string `json:"workspace,omitempty"`
+	// Takeover evicts a stale remote attach when mirroring in attach mode. A
+	// direct attach is exclusive and can outlive the pane that started it, so
+	// without this a killed mirror blocks its terminal until that process dies.
+	Takeover *bool `json:"takeover,omitempty"`
 	// AutoStart launches the remote Herdr session when it is not running, so
 	// a host only needs the herdr binary installed and reachable over SSH.
 	AutoStart *bool `json:"auto_start,omitempty"`
@@ -105,6 +109,7 @@ func Defaults() Config {
 		Mode:         ModeAttach,
 		Placement:    "split",
 		LabelFormat:  "{name}@{host}",
+		Takeover:     boolPtr(true),
 		AutoStart:    boolPtr(true),
 		MaxMirrors:   32,
 		Hosts:        []Host{},
@@ -179,6 +184,9 @@ func (c Config) normalized() Config {
 	if c.LabelFormat == "" {
 		c.LabelFormat = d.LabelFormat
 	}
+	if c.Takeover == nil {
+		c.Takeover = d.Takeover
+	}
 	if c.AutoStart == nil {
 		c.AutoStart = d.AutoStart
 	}
@@ -218,6 +226,11 @@ func (c Config) SessionFor(h Host) string {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// ShouldTakeover reports whether a stale remote attach may be evicted.
+func (c Config) ShouldTakeover() bool {
+	return c.Takeover == nil || *c.Takeover
+}
 
 // ShouldAutoStart reports whether a missing remote session may be started.
 func (c Config) ShouldAutoStart() bool {

@@ -32,6 +32,7 @@ const (
 	EnvTerminal = "HRP_TERMINAL"
 	EnvMode     = "HRP_MODE"
 	EnvBin      = "HRP_BIN"
+	EnvTakeover = "HRP_TAKEOVER"
 	EnvName     = "HRP_NAME"
 )
 
@@ -87,19 +88,57 @@ func bridge() error {
 
 // attach hands the pane straight to `herdr terminal attach` on the far side.
 // Herdr's own direct-attach client then owns input, resize and scrollback.
+//
+// --takeover is passed because a direct attach is exclusive and the remote
+// client does not always die with its SSH channel: a mirror pane that is killed
+// can leave `herdr terminal attach` running on the remote host, and every later
+// attempt to mirror that terminal then fails with "already has an attached
+// client". Taking over evicts that stale client. This assumes one hub per
+// remote terminal, which is the documented arrangement; use observe mode when
+// several machines need to watch the same pane.
 func attach(client *remote.Client, terminal string) error {
-	argv, err := client.Argv(true, "terminal", "attach", terminal)
+	args := []string{"terminal", "attach", terminal}
+	if takeoverEnabled() {
+		args = append(args, "--takeover")
+	}
+	argv, err := client.Argv(true, args...)
 	if err != nil {
 		return err
 	}
+
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("%w running: %s", err, strings.Join(argv, " "))
+	}
+
+	// Closing a pane signals its process; pass that on so the SSH client — and
+	// with it the remote attach — goes away instead of being orphaned.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
+	defer signal.Stop(stop)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-stop:
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+		case <-done:
+		}
+	}()
+
+	err = cmd.Wait()
+	close(done)
+	if err != nil {
 		return fmt.Errorf("%w running: %s", err, strings.Join(argv, " "))
 	}
 	return nil
+}
+
+// takeoverEnabled reports whether a stale remote attach may be evicted.
+func takeoverEnabled() bool {
+	return os.Getenv(EnvTakeover) != "false"
 }
 
 // observe renders a read-only copy of the remote terminal. Unlike attach it
