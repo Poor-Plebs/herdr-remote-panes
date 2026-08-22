@@ -296,6 +296,34 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		d.reconcileAll()
 		return Reply{OK: true, Message: "opened a terminal on " + host.Target}
 
+	case "set-mode":
+		if cmd.Host == "" {
+			return Reply{Message: "no machine given"}
+		}
+		cfg, err := config.SetHostMode(cmd.Host, config.Mode(cmd.Mode))
+		if err != nil {
+			return Reply{Message: err.Error()}
+		}
+		d.mu.Lock()
+		d.cfg = cfg
+		d.mu.Unlock()
+
+		// The mechanism changed, so the machine's panes here no longer match
+		// how it is reached. Drop them and connect again under the new mode.
+		_ = d.disconnect(cmd.Host)
+		host, _ := d.hostConfig(cmd.Host)
+		if err := d.connect(host); err != nil {
+			return Reply{Message: err.Error()}
+		}
+		if _, err := d.ensureRemotePresence(host); err != nil {
+			return Reply{Message: err.Error()}
+		}
+		d.reconcileAll()
+		if cmd.Mode == string(config.ModeSSH) {
+			return Reply{OK: true, Message: "mirroring off for " + cmd.Host}
+		}
+		return Reply{OK: true, Message: "mirroring on for " + cmd.Host}
+
 	case "refresh":
 		d.reconcileAll()
 		return Reply{OK: true, Message: "refreshed"}
@@ -744,6 +772,7 @@ func (d *Daemon) status() []HostInfo {
 			Connected: state.lastErr == nil,
 			Mirrors:   len(state.mirrors),
 			SSHOnly:   state.sshOnly,
+			Mirroring: d.cfg.Mirrors(state.host),
 		}
 		if state.lastErr != nil {
 			info.LastError = state.lastErr.Error()

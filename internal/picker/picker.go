@@ -24,14 +24,20 @@ type Entry struct {
 	Connected  bool
 	Mirrors    int
 	SSHOnly    bool
+	// Mirroring reports whether this machine's terminals are kept in step,
+	// rather than being a plain SSH session.
+	Mirroring bool
 }
 
-// Connect asks the daemon to mirror a machine.
+// Connect asks the daemon to connect to a machine.
 type Connect func(target string) (string, error)
+
+// SetMode asks the daemon to change how a machine is reached.
+type SetMode func(target, mode string) (string, error)
 
 // Run draws the menu and connects to whatever the user picks. It returns when
 // the user chooses or cancels; the pane closes as soon as it returns.
-func Run(connect Connect) error {
+func Run(connect Connect, setMode SetMode) error {
 	entries := collect()
 	if len(entries) == 0 {
 		fmt.Print("\r\nNo machines found.\r\n\r\nAdd hosts to ~/.ssh/config or to the plugin's config.json.\r\n")
@@ -57,6 +63,23 @@ func Run(connect Connect) error {
 			return nil
 		case keyEnter:
 			return choose(entries[selected], connect)
+		case keyToggle:
+			// Toggling in place, rather than closing the menu, so the change
+			// and its effect are visible together.
+			entry := entries[selected]
+			mode := "attach"
+			if entry.Mirroring {
+				mode = "ssh"
+			}
+			if _, err := setMode(entry.Target, mode); err != nil {
+				clear()
+				fmt.Printf("\r\n  Could not change %s: %v\r\n\r\n  Press any key.\r\n", entry.Target, err)
+				readKey()
+			}
+			entries = collect()
+			if selected >= len(entries) {
+				selected = 0
+			}
 		default:
 			// Digits jump straight to an entry.
 			if index := int(key - '1'); index >= 0 && index < len(entries) && index < 9 {
@@ -107,6 +130,7 @@ func collect() []Entry {
 		entry := add(host.Target)
 		entry.Configured = true
 		entry.Label = host.DisplayLabel()
+		entry.Mirroring = cfg.Mirrors(host)
 	}
 	for _, host := range sshconfig.Hosts() {
 		add(host)
@@ -117,6 +141,7 @@ func collect() []Entry {
 			entry.Connected = info.Connected
 			entry.Mirrors = info.Mirrors
 			entry.SSHOnly = info.SSHOnly
+			entry.Mirroring = info.Mirroring
 		}
 	}
 
@@ -176,32 +201,38 @@ func draw(entries []Entry, selected int) {
 			name = fmt.Sprintf("%s (%s)", entry.Target, entry.Label)
 		}
 
+		mode := "ssh"
+		if entry.Mirroring {
+			mode = "mirrored"
+		}
 		switch {
-		case entry.Connected && entry.SSHOnly:
-			line = green + "connected" + reset + dim + " · ssh panes" + reset
-		case entry.Connected:
+		case entry.Connected && entry.Mirroring:
 			line = green + fmt.Sprintf("connected · %d mirrored", entry.Mirrors) + reset
+		case entry.Connected:
+			line = green + "connected" + reset + dim + " · ssh" + reset
 		case entry.Configured:
-			line = yellow + "not connected" + reset
+			line = yellow + "not connected" + reset + dim + " · " + mode + reset
 		default:
-			line = dim + "from ~/.ssh/config" + reset
+			line = dim + "from ~/.ssh/config · " + mode + reset
 		}
 
 		b.WriteString(fmt.Sprintf("%s %s %-24s %s\r\n", marker, number, name, line))
 	}
 
-	b.WriteString("\r\n  " + dim + "↑↓ or j/k move · 1-9 jump · enter connect · q cancel" + reset + "\r\n")
+	b.WriteString("\r\n  " + dim + "↑↓ or j/k move · 1-9 jump · enter connect" + reset + "\r\n")
+	b.WriteString("  " + dim + "m toggle mirroring (experimental) · q cancel" + reset + "\r\n")
 	fmt.Print(b.String())
 }
 
 type key rune
 
 const (
-	keyUp    key = 0xE000
-	keyDown  key = 0xE001
-	keyEnter key = 0xE002
-	keyQuit  key = 0xE003
-	keyNone  key = 0xE004
+	keyUp     key = 0xE000
+	keyDown   key = 0xE001
+	keyEnter  key = 0xE002
+	keyQuit   key = 0xE003
+	keyNone   key = 0xE004
+	keyToggle key = 0xE005
 )
 
 // readKey reads one keypress, translating the arrow-key escape sequences.
@@ -217,6 +248,8 @@ func readKey() key {
 		return keyEnter
 	case 'q', 'Q', 3: // 3 is ctrl+c
 		return keyQuit
+	case 'm', 'M':
+		return keyToggle
 	case 'k':
 		return keyUp
 	case 'j':

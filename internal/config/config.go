@@ -30,12 +30,12 @@ const (
 )
 
 const (
-	// ModeAttach runs `herdr terminal attach` over SSH: fully interactive, but
-	// exclusive per remote terminal and it pins the remote terminal size.
+	// ModeAttach mirrors the machine's terminals with `herdr terminal attach`
+	// over SSH. Experimental: it needs Herdr on the machine, is exclusive per
+	// remote terminal, and pins that terminal's size.
 	ModeAttach Mode = "attach"
-	// ModeSSH opens plain SSH panes. The remote host needs nothing but an SSH
-	// login: no Herdr, no session, no panes to mirror. Use it to run an agent
-	// on a machine that is not running Herdr itself.
+	// ModeSSH opens plain SSH panes and is the default. The machine needs
+	// nothing but an SSH login: no Herdr, no session, nothing to keep in step.
 	ModeSSH Mode = "ssh"
 	// ModeObserve decodes `herdr terminal session observe` frames: read-only,
 	// safe to run concurrently with other viewers, and it never locks resize.
@@ -82,7 +82,8 @@ type Config struct {
 	// the machine's own default session, so plain `herdr` there shows the
 	// shared terminals. Name a session to keep them separate instead.
 	Session string `json:"session,omitempty"`
-	// Mode is the default bridge mode for hosts that do not override it.
+	// Mode is how a machine's terminals are reached, for hosts that do not
+	// override it. Defaults to plain SSH panes; mirroring is opt-in.
 	Mode Mode `json:"mode,omitempty"`
 	// Placement is the default plugin pane placement: split, tab or zoomed.
 	Placement string `json:"placement,omitempty"`
@@ -136,11 +137,13 @@ func Defaults() Config {
 	return Config{
 		PollInterval:          "2s",
 		Session:               DefaultSessionName,
-		Mode:                  ModeAttach,
+		Mode:                  ModeSSH,
+		Scope:                 ScopeShared,
 		Placement:             "split",
 		LabelFormat:           "{name}@{host}",
 		WorkspaceFormat:       "☁  {host}",
 		RemoteWorkspaceFormat: "☁  {hub}",
+		CaptureNewPanes:       boolPtr(true),
 		Takeover:              boolPtr(true),
 		AutoStart:             boolPtr(true),
 		MaxMirrors:            32,
@@ -314,6 +317,29 @@ func (c Config) RemoteWorkspaceLabel() string {
 		hub = "herdr"
 	}
 	return strings.ReplaceAll(c.RemoteWorkspaceFormat, "{hub}", hub)
+}
+
+// Mirrors reports whether a host's terminals are kept in step with the
+// machine, rather than being a plain SSH session.
+func (c Config) Mirrors(h Host) bool {
+	return c.ModeFor(h) != ModeSSH
+}
+
+// SetHostMode records a machine's mode on disk, adding the host when it is not
+// configured yet, and returns the updated configuration.
+func SetHostMode(target string, mode Mode) (Config, error) {
+	cfg, err := Load()
+	if err != nil {
+		return cfg, err
+	}
+	for i := range cfg.Hosts {
+		if cfg.Hosts[i].Target == target {
+			cfg.Hosts[i].Mode = mode
+			return cfg, Save(cfg)
+		}
+	}
+	cfg.Hosts = append(cfg.Hosts, Host{Target: target, Mode: mode})
+	return cfg, Save(cfg)
 }
 
 // BinFor resolves the remote Herdr binary for a host. An empty result means

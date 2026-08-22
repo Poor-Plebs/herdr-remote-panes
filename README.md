@@ -2,10 +2,13 @@
 
 Work on several machines from one [Herdr](https://herdr.dev).
 
-Point it at the machines you use. Their terminals show up in your local Herdr,
-grouped per machine and named `<pane>@<host>`, and you type in them as if they
-were local. Agents running over there appear in your sidebar with the right
-name and status.
+Point it at the machines you use and get a terminal on each, in its own space,
+without leaving Herdr. Pick a machine from a menu and you are on it.
+
+Machines running Herdr can go further: turn on **mirroring** and their terminals
+are kept in step with yours, named `<pane>@<host>`, with agents over there
+showing in your sidebar with the right name and status. That part is
+experimental and off by default.
 
 ```
 your laptop                          workbox (over SSH)
@@ -48,6 +51,7 @@ machine. That is all — see [Machines without Herdr](#machines-without-herdr).
 | You want | Do this |
 | --- | --- |
 | Connect to a machine | Open the menu and pick one |
+| Mirror a machine's terminals | Highlight it in the menu and press `m` (experimental) |
 | See a machine's terminals | They appear on their own, in a space named after the machine |
 | A new terminal on a machine | Run the `open` action while in that machine's space |
 | Bring a space back after closing it | Run the `connect` action, or pick it from the menu |
@@ -59,6 +63,9 @@ The `menu` action opens a popup listing every machine from your `~/.ssh/config`
 and from this plugin's config, showing which are connected. Move with the arrow
 keys or `j`/`k`, jump with `1`-`9`, `enter` to connect, `q` to cancel. Machines
 picked from the menu do not have to be in `config.json` first.
+
+`m` toggles mirroring for the highlighted machine and remembers it. Without it
+you get a plain SSH terminal, which needs nothing on the far side.
 
 If the machine has nothing running, connecting opens a terminal on it, so you
 always land somewhere. Machines that are already busy just show what is there.
@@ -185,10 +192,13 @@ the machine is reachable and red when it is not, add this to
 ```toml
 [ui.sidebar.spaces]
 rows = [
-  [ { token = "$remote_up", fg = "#3fb950" }, { token = "$remote_down", fg = "#f85149" }, "state_icon", "workspace" ],
+  [ "state_icon", { token = "$remote_up", fg = "#3fb950" }, { token = "$remote_down", fg = "#f85149" }, "workspace" ],
   [ "branch", "git_status" ],
 ]
 ```
+
+Keep the cloud next to `workspace`. Putting it before `state_icon` leaves the
+agent-status dots sitting between the icon and the machine's name.
 
 ### Watching instead of typing
 

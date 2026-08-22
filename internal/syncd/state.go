@@ -65,6 +65,8 @@ type Command struct {
 	// Placement overrides how this one new pane is placed locally, so a "new
 	// tab" key produces a tab even when the host normally splits.
 	Placement string `json:"placement,omitempty"`
+	// Mode sets how a machine is reached, for the set-mode command.
+	Mode string `json:"mode,omitempty"`
 }
 
 // Reply is the daemon's answer to a Command.
@@ -80,8 +82,11 @@ type HostInfo struct {
 	Label     string `json:"label"`
 	Connected bool   `json:"connected"`
 	Mirrors   int    `json:"mirrors"`
-	// SSHOnly marks a host used through plain SSH panes, with no Herdr on it.
-	SSHOnly   bool   `json:"ssh_only,omitempty"`
+	// SSHOnly marks a host reached through plain SSH panes.
+	SSHOnly bool `json:"ssh_only,omitempty"`
+	// Mirroring reports whether this machine's terminals are kept in step,
+	// rather than being a plain SSH session.
+	Mirroring bool   `json:"mirroring,omitempty"`
 	LastError string `json:"last_error,omitempty"`
 }
 

@@ -25,7 +25,7 @@ func TestSessionFor(t *testing.T) {
 
 func TestNormalizedFillsDefaults(t *testing.T) {
 	cfg := Config{Hosts: []Host{{Target: "workbox"}}}.normalized()
-	if cfg.Session != DefaultSessionName || cfg.Mode != ModeAttach || cfg.MaxMirrors != 32 {
+	if cfg.Session != DefaultSessionName || cfg.Mode != ModeSSH || cfg.MaxMirrors != 32 {
 		t.Fatalf("defaults not applied: %+v", cfg)
 	}
 	if cfg.Interval().String() != "2s" {
@@ -76,5 +76,61 @@ func TestWorkspaceFor(t *testing.T) {
 	cfg.Workspace = "shared"
 	if got := cfg.WorkspaceFor(bot); got != "shared" {
 		t.Errorf("shared workspace = %q, want %q", got, "shared")
+	}
+}
+
+func TestMirroringIsOptIn(t *testing.T) {
+	// Mirroring needs Herdr on the machine and has a lot of moving parts, so a
+	// plain SSH session is what an unconfigured host gets.
+	cfg := Defaults()
+	if cfg.Mode != ModeSSH {
+		t.Errorf("default mode = %q, want %q", cfg.Mode, ModeSSH)
+	}
+	if cfg.Mirrors(Host{Target: "workbox"}) {
+		t.Error("an unconfigured host should not be mirrored")
+	}
+	if !cfg.Mirrors(Host{Target: "workbox", Mode: ModeAttach}) {
+		t.Error("a host set to attach should be mirrored")
+	}
+	if !cfg.Mirrors(Host{Target: "workbox", Mode: ModeObserve}) {
+		t.Error("a host set to observe should be mirrored")
+	}
+
+	// A global mode still applies to hosts that do not override it.
+	cfg.Mode = ModeAttach
+	if !cfg.Mirrors(Host{Target: "workbox"}) {
+		t.Error("a global attach mode should apply")
+	}
+	if cfg.Mirrors(Host{Target: "workbox", Mode: ModeSSH}) {
+		t.Error("a per-host ssh mode should win over the global one")
+	}
+}
+
+func TestSetHostMode(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", t.TempDir())
+
+	// Toggling from the menu must work for a machine that is not configured
+	// yet, since the menu offers everything in ~/.ssh/config.
+	cfg, err := SetHostMode("newbox", ModeAttach)
+	if err != nil {
+		t.Fatalf("SetHostMode: %v", err)
+	}
+	if len(cfg.Hosts) != 1 || cfg.Hosts[0].Target != "newbox" || cfg.Hosts[0].Mode != ModeAttach {
+		t.Fatalf("hosts = %+v, want newbox in attach mode", cfg.Hosts)
+	}
+
+	// And it must survive a reload rather than living only in memory.
+	if cfg, err = SetHostMode("newbox", ModeSSH); err != nil {
+		t.Fatalf("SetHostMode: %v", err)
+	}
+	if len(cfg.Hosts) != 1 || cfg.Hosts[0].Mode != ModeSSH {
+		t.Fatalf("hosts = %+v, want a single newbox back in ssh mode", cfg.Hosts)
+	}
+	reloaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(reloaded.Hosts) != 1 || reloaded.Hosts[0].Mode != ModeSSH {
+		t.Errorf("reloaded hosts = %+v, want the change persisted", reloaded.Hosts)
 	}
 }

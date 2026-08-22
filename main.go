@@ -69,6 +69,15 @@ func run(command string, args []string) error {
 				return "", fmt.Errorf("%s", reply.Message)
 			}
 			return reply.Message, nil
+		}, func(target, mode string) (string, error) {
+			reply, err := syncd.Ask(syncd.Command{Cmd: "set-mode", Host: target, Mode: mode})
+			if err != nil {
+				return "", err
+			}
+			if !reply.OK {
+				return "", fmt.Errorf("%s", reply.Message)
+			}
+			return reply.Message, nil
 		})
 
 	case "connect":
