@@ -1101,31 +1101,33 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 
 	labels := d.labelsFor(state.host, remotePanes)
 
-	seen := map[string]bool{}
-	for _, rp := range remotePanes {
-		if rp.TerminalID == "" {
-			continue
+	backedOff := make(map[string]bool, len(state.retryAt))
+	now := time.Now()
+	for terminalID, until := range state.retryAt {
+		if now.Before(until) {
+			backedOff[terminalID] = true
 		}
-		seen[rp.TerminalID] = true
+	}
 
-		label := labels[rp.TerminalID]
-		if paneID, ok := state.mirrors[rp.TerminalID]; ok {
-			d.retitle(state, paneID, label)
-			d.syncAgent(state, paneID, rp)
-			continue
-		}
-		if state.dismissed[rp.TerminalID] {
-			continue
-		}
-		if until, ok := state.retryAt[rp.TerminalID]; ok && time.Now().Before(until) {
-			continue
-		}
-		if len(state.mirrors) >= d.cfg.MaxMirrors {
-			log.Printf("%s: mirror limit of %d reached, skipping the rest",
-				state.host.Target, d.cfg.MaxMirrors)
-			break
-		}
-		if err := d.openMirror(state, rp, label, index); err != nil {
+	plan := planMirrors(remotePanes, mirrorState{
+		Mirrored:  state.mirrors,
+		Dismissed: state.dismissed,
+		BackedOff: backedOff,
+		Max:       d.cfg.MaxMirrors,
+	})
+	if plan.AtCapacity {
+		log.Printf("%s: mirror limit of %d reached, skipping the rest",
+			state.host.Target, d.cfg.MaxMirrors)
+	}
+
+	for _, rp := range plan.Existing {
+		paneID := state.mirrors[rp.TerminalID]
+		d.retitle(state, paneID, labels[rp.TerminalID])
+		d.syncAgent(state, paneID, rp)
+	}
+
+	for _, rp := range plan.Open {
+		if err := d.openMirror(state, rp, labels[rp.TerminalID], index); err != nil {
 			d.backOff(state, rp.TerminalID, err)
 			continue
 		}
@@ -1136,16 +1138,21 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		}
 	}
 
-	// Close mirrors whose remote pane is gone, and forget dismissals for
-	// terminals that no longer exist so a reused id starts clean.
-	for terminalID, paneID := range state.mirrors {
-		if !seen[terminalID] {
-			if err := herdrcli.ClosePane(paneID); err != nil {
-				log.Printf("close mirror %s: %v", paneID, err)
-			}
-			d.forgetPane(state, paneID)
-			delete(state.mirrors, terminalID)
+	// Close mirrors whose terminal is gone on the machine.
+	for _, terminalID := range plan.Gone {
+		paneID := state.mirrors[terminalID]
+		if err := herdrcli.ClosePane(paneID); err != nil {
+			log.Printf("close mirror %s: %v", paneID, err)
 		}
+		d.forgetPane(state, paneID)
+		delete(state.mirrors, terminalID)
+	}
+
+	// Forget bookkeeping for terminals that no longer exist, so a reused id
+	// starts clean.
+	seen := make(map[string]bool, len(remotePanes))
+	for _, rp := range remotePanes {
+		seen[rp.TerminalID] = true
 	}
 	for terminalID := range state.dismissed {
 		if !seen[terminalID] {

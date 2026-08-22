@@ -436,3 +436,115 @@ Host key verification failed.`)
 		t.Error("no error should summarize to nothing")
 	}
 }
+
+func TestPlanMirrors(t *testing.T) {
+	pane := func(term, id string) herdrcli.Pane {
+		return herdrcli.Pane{TerminalID: term, PaneID: id, WorkspaceID: "wA"}
+	}
+	remote := []herdrcli.Pane{pane("t1", "wA:p1"), pane("t2", "wA:p2"), pane("t3", "wA:p3")}
+
+	t.Run("nothing mirrored yet opens everything, in order", func(t *testing.T) {
+		// Order is the machine's tab order, and mirrors must line up with it.
+		plan := planMirrors(remote, mirrorState{Mirrored: map[string]string{}})
+		if len(plan.Open) != 3 {
+			t.Fatalf("opening %d, want 3", len(plan.Open))
+		}
+		for i, want := range []string{"t1", "t2", "t3"} {
+			if plan.Open[i].TerminalID != want {
+				t.Errorf("open[%d] = %s, want %s", i, plan.Open[i].TerminalID, want)
+			}
+		}
+	})
+
+	t.Run("terminals already mirrored are refreshed, not reopened", func(t *testing.T) {
+		// Reopening one would give the machine a second pane for the same
+		// terminal, and the two would fight over the exclusive attach.
+		plan := planMirrors(remote, mirrorState{
+			Mirrored: map[string]string{"t1": "w1:p1", "t2": "w1:p2"},
+		})
+		if len(plan.Existing) != 2 || len(plan.Open) != 1 || plan.Open[0].TerminalID != "t3" {
+			t.Errorf("existing=%d open=%v", len(plan.Existing), plan.Open)
+		}
+	})
+
+	t.Run("a terminal closed by hand is left closed", func(t *testing.T) {
+		// Reopening it would fight the user every couple of seconds.
+		plan := planMirrors(remote, mirrorState{
+			Mirrored:  map[string]string{},
+			Dismissed: map[string]bool{"t2": true},
+		})
+		for _, p := range plan.Open {
+			if p.TerminalID == "t2" {
+				t.Error("a dismissed terminal was reopened")
+			}
+		}
+		if len(plan.Open) != 2 {
+			t.Errorf("opening %d, want 2", len(plan.Open))
+		}
+	})
+
+	t.Run("a terminal waiting out a failure is skipped", func(t *testing.T) {
+		plan := planMirrors(remote, mirrorState{
+			Mirrored:  map[string]string{},
+			BackedOff: map[string]bool{"t1": true},
+		})
+		if len(plan.Open) != 2 || plan.Open[0].TerminalID != "t2" {
+			t.Errorf("open = %v, want t2 and t3", plan.Open)
+		}
+	})
+
+	t.Run("a terminal that has gone is closed here", func(t *testing.T) {
+		plan := planMirrors([]herdrcli.Pane{pane("t1", "wA:p1")}, mirrorState{
+			Mirrored: map[string]string{"t1": "w1:p1", "t9": "w1:p9"},
+		})
+		if len(plan.Gone) != 1 || plan.Gone[0] != "t9" {
+			t.Errorf("gone = %v, want [t9]", plan.Gone)
+		}
+	})
+
+	t.Run("the per-machine limit stops the rest", func(t *testing.T) {
+		// A machine with a runaway number of terminals must not flood the
+		// session, and the limit counts what is already mirrored.
+		plan := planMirrors(remote, mirrorState{Mirrored: map[string]string{}, Max: 2})
+		if len(plan.Open) != 2 || !plan.AtCapacity {
+			t.Errorf("open=%d atCapacity=%v, want 2 and true", len(plan.Open), plan.AtCapacity)
+		}
+
+		plan = planMirrors(remote, mirrorState{
+			Mirrored: map[string]string{"t1": "w1:p1", "t2": "w1:p2"},
+			Max:      2,
+		})
+		if len(plan.Open) != 0 || !plan.AtCapacity {
+			t.Errorf("open=%d atCapacity=%v, want 0 and true", len(plan.Open), plan.AtCapacity)
+		}
+	})
+
+	t.Run("no limit means no cap", func(t *testing.T) {
+		plan := planMirrors(remote, mirrorState{Mirrored: map[string]string{}, Max: 0})
+		if len(plan.Open) != 3 || plan.AtCapacity {
+			t.Errorf("open=%d atCapacity=%v", len(plan.Open), plan.AtCapacity)
+		}
+	})
+
+	t.Run("a pane with no terminal is ignored", func(t *testing.T) {
+		// A pane without a terminal id cannot be bridged to anything.
+		plan := planMirrors([]herdrcli.Pane{{PaneID: "wA:p1"}}, mirrorState{
+			Mirrored: map[string]string{},
+		})
+		if len(plan.Open) != 0 {
+			t.Errorf("open = %v, want nothing", plan.Open)
+		}
+	})
+
+	t.Run("a machine with nothing running closes every mirror", func(t *testing.T) {
+		plan := planMirrors(nil, mirrorState{
+			Mirrored: map[string]string{"t1": "w1:p1", "t2": "w1:p2"},
+		})
+		if len(plan.Gone) != 2 {
+			t.Errorf("gone = %v, want both", plan.Gone)
+		}
+		if len(plan.Open) != 0 {
+			t.Errorf("open = %v, want nothing", plan.Open)
+		}
+	})
+}

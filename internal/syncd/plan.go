@@ -280,3 +280,68 @@ func truncateRunes(s string, max int) string {
 	}
 	return string(runes[:max-1]) + "…"
 }
+
+// mirrorPlan is what one reconcile pass should do about a machine's terminals.
+type mirrorPlan struct {
+	// Existing are terminals already mirrored, to be renamed and have their
+	// agent state refreshed.
+	Existing []herdrcli.Pane
+	// Open are terminals that need a mirror.
+	Open []herdrcli.Pane
+	// Gone are terminal ids whose remote terminal has disappeared, so their
+	// mirror should be closed here.
+	Gone []string
+	// AtCapacity reports that the per-machine limit stopped further mirrors.
+	AtCapacity bool
+}
+
+// mirrorState is what the planner needs to know about a machine, kept as plain
+// values so the decision can be exercised without a daemon or a network.
+type mirrorState struct {
+	Mirrored  map[string]string
+	Dismissed map[string]bool
+	// BackedOff are terminals whose mirror failed recently and should be left
+	// until their retry is due.
+	BackedOff map[string]bool
+	Max       int
+}
+
+// planMirrors decides what to do about each of a machine's terminals.
+//
+// The order of the checks is the behaviour: a terminal already mirrored is only
+// refreshed, one the user closed is left alone, one that keeps failing waits its
+// turn, and the per-machine limit stops the rest rather than flooding the
+// session. Terminals arrive in the order they appear on the machine, and that
+// order is preserved so mirrors line up with the tabs there.
+func planMirrors(remote []herdrcli.Pane, state mirrorState) mirrorPlan {
+	var plan mirrorPlan
+	seen := make(map[string]bool, len(remote))
+
+	for _, pane := range remote {
+		if pane.TerminalID == "" {
+			continue
+		}
+		seen[pane.TerminalID] = true
+
+		if _, ok := state.Mirrored[pane.TerminalID]; ok {
+			plan.Existing = append(plan.Existing, pane)
+			continue
+		}
+		if state.Dismissed[pane.TerminalID] || state.BackedOff[pane.TerminalID] {
+			continue
+		}
+		if state.Max > 0 && len(state.Mirrored)+len(plan.Open) >= state.Max {
+			plan.AtCapacity = true
+			break
+		}
+		plan.Open = append(plan.Open, pane)
+	}
+
+	for terminalID := range state.Mirrored {
+		if !seen[terminalID] {
+			plan.Gone = append(plan.Gone, terminalID)
+		}
+	}
+	sort.Strings(plan.Gone)
+	return plan
+}
