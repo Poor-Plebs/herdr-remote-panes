@@ -22,8 +22,10 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
-          check-latest: true
+          # go.mod pins the language floor at 1.22; CI builds with a current
+          # toolchain. Go 1.22 on current macOS runners fails to link -race
+          # test binaries ("missing LC_UUID load command").
+          go-version: stable
 
       - name: gofmt
         run: |
