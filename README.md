@@ -40,7 +40,7 @@ terminal, not a screen scrape.
 
 - Herdr 0.8.0 or newer on the hub **and** on every remote host
 - Passwordless SSH to each host (`ssh workbox` must work on its own)
-- A Herdr session named `remote` on each host (`herdr --session remote`)
+- Herdr on each host too — the session is started for you over SSH
 - Linux or macOS — Herdr's direct terminal attach is Unix-only
 - Go 1.22+ on the hub, to build the plugin
 
@@ -84,11 +84,13 @@ herdr server stop && herdr
 | `mode` | `attach` | `attach` for interactive, `observe` for read-only |
 | `placement` | `split` | `tab`, `split`, `zoomed` or `overlay` |
 | `label_format` | `{name}@{host}` | Supports `{name}`, `{host}`, `{agent}`, `{pane}` |
+| `auto_start` | `true` | Start the remote session over SSH when it is not running |
+| `herdr_bin` | probed | Remote `herdr` path (see below) |
 | `max_mirrors` | `32` | Per-host cap, so a busy remote cannot flood the session |
 
 Per host: `target` (SSH destination), `label` (name suffix, defaults to the
 target), `session` (remote `HERDR_SESSION`), `mode`, `placement`, `workspace`
-(pin mirrors to a local workspace id), `disabled`.
+(pin mirrors to a local workspace id), `herdr_bin`, `disabled`.
 
 Mirrors from a host land in a workspace named after it, created on demand.
 
@@ -99,7 +101,9 @@ remote's default session. Sessions are fully independent — separate panes,
 tabs, workspaces and sockets — so mirroring a dedicated one keeps the hub well
 clear of whatever you are already doing on that machine.
 
-So on the remote host, start the session the hub will mirror:
+With `auto_start` on (the default) the hub starts that session over SSH itself,
+so a host only needs the `herdr` binary and working SSH. To drive it by hand
+instead, run this on the remote host:
 
 ```bash
 herdr --session remote
@@ -140,6 +144,7 @@ affected — a full UI client is not an attach owner.
 | Action | Effect |
 | --- | --- |
 | `poorplebs.remote-panes.connect` | Start mirroring a host (uses the current selection as the target) |
+| `poorplebs.remote-panes.open` | Open a new pane on a host; it mirrors back automatically |
 | `poorplebs.remote-panes.disconnect` | Stop mirroring a host and close its mirrors |
 | `poorplebs.remote-panes.refresh` | Reconcile every host now |
 | `poorplebs.remote-panes.status` | Report connected hosts and mirror counts |
@@ -152,6 +157,42 @@ key = "prefix+r"
 type = "plugin_action"
 command = "poorplebs.remote-panes.refresh"
 description = "refresh remote panes"
+```
+
+## Several machines at once
+
+List every machine under `hosts`. Each one gets its own local workspace named
+after it, so panes stay grouped per machine rather than piling into one layout:
+
+```json
+{
+  "hosts": [
+    { "target": "bot" },
+    { "target": "prod" },
+    { "target": "staging", "mode": "observe" }
+  ]
+}
+```
+
+```
+workspace: bot          workspace: prod         workspace: staging
+  build@bot               deploy@prod             tail@staging   (read-only)
+  claude@bot              psql@prod
+```
+
+To open a fresh pane on a particular machine, invoke the `open` action with
+that host — the pane is created over there and mirrored straight back.
+
+### Finding the remote binary
+
+`ssh host <command>` does not run a login shell, so an install under
+`~/.local/bin` — where Herdr's installer puts it for a non-root user — is not on
+`PATH` even though an interactive login finds it fine. The plugin probes the
+usual locations (`$PATH`, `~/.local/bin`, `/usr/local/bin`, Homebrew, Nix,
+mise). Set `herdr_bin` if yours lives somewhere else:
+
+```json
+{ "target": "bot", "herdr_bin": "/opt/herdr/bin/herdr" }
 ```
 
 ## Behaviour worth knowing

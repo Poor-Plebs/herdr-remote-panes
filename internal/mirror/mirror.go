@@ -31,6 +31,7 @@ const (
 	EnvSession  = "HRP_SESSION"
 	EnvTerminal = "HRP_TERMINAL"
 	EnvMode     = "HRP_MODE"
+	EnvBin      = "HRP_BIN"
 	EnvName     = "HRP_NAME"
 )
 
@@ -74,7 +75,7 @@ func bridge() error {
 	if target == "" || terminal == "" {
 		return fmt.Errorf("%s and %s must be set", EnvTarget, EnvTerminal)
 	}
-	client := remote.New(target, os.Getenv(EnvSession))
+	client := remote.NewWithBin(target, os.Getenv(EnvSession), os.Getenv(EnvBin))
 
 	switch config.Mode(os.Getenv(EnvMode)) {
 	case config.ModeObserve:
@@ -87,7 +88,10 @@ func bridge() error {
 // attach hands the pane straight to `herdr terminal attach` on the far side.
 // Herdr's own direct-attach client then owns input, resize and scrollback.
 func attach(client *remote.Client, terminal string) error {
-	argv := client.Argv(true, "terminal", "attach", terminal)
+	argv, err := client.Argv(true, "terminal", "attach", terminal)
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -135,8 +139,11 @@ func observe(client *remote.Client, terminal string) error {
 // is gone and an error when the stream should be retried. A resize ends the
 // stream so the next one can negotiate the new size.
 func streamOnce(client *remote.Client, terminal string, cols, rows int, winch <-chan os.Signal) error {
-	argv := client.Argv(false, "terminal", "session", "observe", terminal,
+	argv, err := client.Argv(false, "terminal", "session", "observe", terminal,
 		"--cols", strconv.Itoa(cols), "--rows", strconv.Itoa(rows))
+	if err != nil {
+		return err
+	}
 
 	cmd := exec.Command(argv[0], argv[1:]...)
 	stdout, err := cmd.StdoutPipe()

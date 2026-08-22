@@ -50,6 +50,8 @@ type Host struct {
 	Placement string `json:"placement,omitempty"`
 	// Workspace pins mirrors from this host to a local workspace id.
 	Workspace string `json:"workspace,omitempty"`
+	// HerdrBin overrides the remote Herdr binary path for this host.
+	HerdrBin string `json:"herdr_bin,omitempty"`
 	// Disabled skips the host without removing it from the config.
 	Disabled bool `json:"disabled,omitempty"`
 }
@@ -77,6 +79,13 @@ type Config struct {
 	// LabelFormat builds the mirrored pane name. {name} is the remote pane's
 	// own label or terminal title, {host} is the host's display label.
 	LabelFormat string `json:"label_format,omitempty"`
+	// HerdrBin is the remote Herdr binary path used for hosts that do not
+	// override it. Empty probes the usual install locations, which is needed
+	// because `ssh host <command>` does not run a login shell.
+	HerdrBin string `json:"herdr_bin,omitempty"`
+	// AutoStart launches the remote Herdr session when it is not running, so
+	// a host only needs the herdr binary installed and reachable over SSH.
+	AutoStart *bool `json:"auto_start,omitempty"`
 	// MaxMirrors caps how many panes one host may mirror, so a remote with a
 	// runaway pane count cannot flood the local session.
 	MaxMirrors int `json:"max_mirrors,omitempty"`
@@ -92,6 +101,7 @@ func Defaults() Config {
 		Mode:         ModeAttach,
 		Placement:    "split",
 		LabelFormat:  "{name}@{host}",
+		AutoStart:    boolPtr(true),
 		MaxMirrors:   32,
 		Hosts:        []Host{},
 	}
@@ -165,6 +175,9 @@ func (c Config) normalized() Config {
 	if c.LabelFormat == "" {
 		c.LabelFormat = d.LabelFormat
 	}
+	if c.AutoStart == nil {
+		c.AutoStart = d.AutoStart
+	}
 	if c.MaxMirrors <= 0 {
 		c.MaxMirrors = d.MaxMirrors
 	}
@@ -198,6 +211,22 @@ func (c Config) SessionFor(h Host) string {
 		return ""
 	}
 	return name
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+// ShouldAutoStart reports whether a missing remote session may be started.
+func (c Config) ShouldAutoStart() bool {
+	return c.AutoStart == nil || *c.AutoStart
+}
+
+// BinFor resolves the remote Herdr binary for a host. An empty result means
+// the path is probed on the remote machine.
+func (c Config) BinFor(h Host) string {
+	if h.HerdrBin != "" {
+		return h.HerdrBin
+	}
+	return c.HerdrBin
 }
 
 // ModeFor resolves the effective bridge mode for a host.

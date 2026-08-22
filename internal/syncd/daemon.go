@@ -148,6 +148,20 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		}
 		return Reply{OK: true, Message: "disconnected from " + cmd.Host}
 
+	case "open":
+		host, ok := d.hostConfig(cmd.Host)
+		if !ok {
+			return Reply{Message: fmt.Sprintf("%s is not in the plugin config", cmd.Host)}
+		}
+		if err := d.connect(host); err != nil {
+			return Reply{Message: err.Error()}
+		}
+		if err := d.openRemotePane(host); err != nil {
+			return Reply{Message: err.Error()}
+		}
+		d.reconcileAll()
+		return Reply{OK: true, Message: "opened a pane on " + host.Target}
+
 	case "refresh":
 		d.reconcileAll()
 		return Reply{OK: true, Message: "refreshed"}
@@ -158,6 +172,37 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 	default:
 		return Reply{Message: "unknown command " + cmd.Cmd}
 	}
+}
+
+// openRemotePane creates a new pane on the remote host. The reconcile that
+// follows mirrors it back, so opening a pane "on a machine" is one action.
+func (d *Daemon) openRemotePane(host config.Host) error {
+	d.mu.Lock()
+	state, ok := d.hosts[host.Target]
+	d.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("%s is not connected", host.Target)
+	}
+
+	// A freshly started session has no workspace to put a tab in.
+	result, err := state.client.Run("workspace", "list")
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Workspaces []struct {
+			WorkspaceID string `json:"workspace_id"`
+		} `json:"workspaces"`
+	}
+	if err := json.Unmarshal(result, &body); err != nil {
+		return fmt.Errorf("parse remote workspace list: %w", err)
+	}
+	if len(body.Workspaces) == 0 {
+		_, err = state.client.Run("workspace", "create", "--label", host.DisplayLabel())
+		return err
+	}
+	_, err = state.client.Run("tab", "create")
+	return err
 }
 
 // hostConfig finds a configured host by target or label.
@@ -176,9 +221,19 @@ func (d *Daemon) hostConfig(name string) (config.Host, bool) {
 }
 
 func (d *Daemon) connect(host config.Host) error {
-	client := remote.New(host.Target, d.cfg.SessionFor(host))
+	client := remote.NewWithBin(host.Target, d.cfg.SessionFor(host), d.cfg.BinFor(host))
 	if err := client.Ping(); err != nil {
-		return err
+		// The host is reachable but its session is not up yet. Start one and
+		// retry before treating this as a failure.
+		if !d.cfg.ShouldAutoStart() {
+			return err
+		}
+		if startErr := client.Start(); startErr != nil {
+			return startErr
+		}
+		if retryErr := client.Ping(); retryErr != nil {
+			return retryErr
+		}
 	}
 
 	d.mu.Lock()
@@ -413,6 +468,7 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string) err
 			mirror.EnvSession:  d.cfg.SessionFor(state.host),
 			mirror.EnvTerminal: rp.TerminalID,
 			mirror.EnvMode:     string(d.cfg.ModeFor(state.host)),
+			mirror.EnvBin:      d.cfg.BinFor(state.host),
 			mirror.EnvName:     label,
 		},
 	})

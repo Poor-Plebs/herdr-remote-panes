@@ -49,7 +49,7 @@ func run(command string, args []string) error {
 	case "mirror":
 		return mirror.Run()
 
-	case "connect", "disconnect":
+	case "connect", "disconnect", "open":
 		host, err := hostArg(command, args)
 		if err != nil {
 			return err
@@ -111,6 +111,7 @@ func usage() {
   daemon                     run the reconciler (Herdr [[startup]] hook)
   mirror                     bridge one remote terminal (Herdr pane entrypoint)
   connect <ssh-target>       start mirroring a host
+  open <ssh-target>          open a new pane on a host (it mirrors back)
   disconnect <ssh-target>    stop mirroring a host and close its panes
   refresh                    reconcile every connected host now
   status                     show connected hosts and mirror counts

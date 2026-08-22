@@ -27,6 +27,13 @@ contexts = ["global", "selection"]
 command = ["./bin/herdr-remote-panes", "disconnect"]
 
 [[actions]]
+id = "open"
+title = "Remote panes: open pane on host"
+description = "Open a new pane on an SSH target; it mirrors back into this session."
+contexts = ["global", "selection"]
+command = ["./bin/herdr-remote-panes", "open"]
+
+[[actions]]
 id = "refresh"
 title = "Remote panes: refresh"
 description = "Reconcile every connected host right now."

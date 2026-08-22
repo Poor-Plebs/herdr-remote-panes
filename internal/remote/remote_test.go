@@ -8,7 +8,12 @@ import (
 func TestRemoteCommandClearsSocketOverrides(t *testing.T) {
 	// HERDR_SOCKET_PATH outranks HERDR_SESSION when Herdr resolves which
 	// server to talk to, so it must be cleared before the remote invocation.
-	got := strings.Join(New("workbox", "agents").Argv(false, "pane", "list"), " ")
+	// An explicit binary skips the probe, keeping this test offline.
+	argv, err := NewWithBin("workbox", "agents", "herdr").Argv(false, "pane", "list")
+	if err != nil {
+		t.Fatalf("Argv: %v", err)
+	}
+	got := strings.Join(argv, " ")
 	for _, want := range []string{
 		"-u HERDR_SOCKET_PATH",
 		"-u HERDR_CLIENT_SOCKET_PATH",
@@ -52,5 +57,17 @@ func TestShellQuote(t *testing.T) {
 		if got := shellQuote(in); got != want {
 			t.Errorf("shellQuote(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestConfiguredBinIsUsedVerbatim(t *testing.T) {
+	// A remote install under ~/.local/bin is invisible to `ssh host <cmd>`,
+	// which runs no login shell, so the path must survive into the command.
+	argv, err := NewWithBin("workbox", "", "~/.local/bin/herdr").Argv(false, "pane", "list")
+	if err != nil {
+		t.Fatalf("Argv: %v", err)
+	}
+	if got := strings.Join(argv, " "); !strings.Contains(got, "'~/.local/bin/herdr' pane list") {
+		t.Errorf("argv %q does not invoke the configured binary", got)
 	}
 }
