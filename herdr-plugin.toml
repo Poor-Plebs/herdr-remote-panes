@@ -1,8 +1,8 @@
 id = "poorplebs.remote-panes"
 name = "Remote Panes"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 min_herdr_version = "0.8.0"
-description = "Mirror panes from remote Herdr servers into this session, named <pane>@<host>"
+description = "Work on other machines from one Herdr: pick a machine, get a terminal on it. Optional two-way mirroring."
 platforms = ["linux", "macos"]
 
 [[build]]
