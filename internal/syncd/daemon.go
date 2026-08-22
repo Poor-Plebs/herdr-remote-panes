@@ -972,6 +972,29 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		// open rather than making the connection look lost.
 		if !state.adopted {
 			state.adopted = true
+
+			// Mirrors recorded while this machine was mirrored cannot be kept
+			// up in SSH mode, and nothing here would ever revisit them, so
+			// they would sit in the space as dead panes wearing live names.
+			hadPanes := len(state.mirrors) > 0
+			for terminalID, paneID := range state.mirrors {
+				if index.alive[paneID] {
+					log.Printf("%s: closing mirror %s, no longer mirroring this machine",
+						state.host.Target, paneID)
+					if err := herdrcli.ClosePaneByID(paneID); err != nil {
+						log.Printf("close mirror %s: %v", paneID, err)
+					}
+					delete(index.alive, paneID)
+				}
+				d.forgetPane(state, paneID)
+				delete(state.mirrors, terminalID)
+			}
+			// A machine that had panes should not vanish because the way it is
+			// reached changed; give it a terminal in the new style instead.
+			if hadPanes && state.restoreShells == 0 {
+				state.restoreShells = 1
+			}
+
 			if state.restoreShells > 0 {
 				workspaceID, wsErr := d.ensureWorkspace(state, index)
 				if wsErr != nil {

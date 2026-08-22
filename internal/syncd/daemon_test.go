@@ -110,3 +110,24 @@ func TestPaneIndexIgnoresPanesWithoutAWorkspace(t *testing.T) {
 		t.Error("the pane should still count as alive")
 	}
 }
+
+func TestForgetPaneClearsMirrorBookkeeping(t *testing.T) {
+	// Turning mirroring off for a machine leaves mirrors recorded that nothing
+	// in the SSH path would ever revisit, so they would sit in its space as
+	// dead panes wearing live names.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+
+	state := newTestHost()
+	state.mirrors["t1"] = "w1:p2"
+	state.labels["w1:p2"] = "build@bot"
+	state.reportedAgents["w1:p2"] = agentReport{agent: "claude", state: "idle"}
+
+	d := &Daemon{}
+	d.forgetPane(state, "w1:p2")
+	delete(state.mirrors, "t1")
+
+	if len(state.mirrors) != 0 || len(state.labels) != 0 || len(state.reportedAgents) != 0 {
+		t.Errorf("bookkeeping survived: mirrors=%v labels=%v agents=%v",
+			state.mirrors, state.labels, state.reportedAgents)
+	}
+}
