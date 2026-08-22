@@ -1,0 +1,87 @@
+package mirror
+
+import (
+	"os"
+	"path/filepath"
+	"strconv"
+	"syscall"
+)
+
+// Liveness marks which panes currently have a mirror process running.
+//
+// A restarted Herdr server restores a plugin pane as an ordinary shell in the
+// plugin's directory without re-running its command: the pane id survives, the
+// mirror does not. "The pane still exists" is therefore not enough to conclude
+// a mirror is live, and adopting such a husk would leave a dead local shell
+// wearing a name@host label forever. Each mirror records its pid instead.
+
+// livenessDir holds one file per pane, named for the pane, containing the pid.
+func livenessDir() string {
+	dir := os.Getenv("HERDR_PLUGIN_STATE_DIR")
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "panes")
+}
+
+func livenessPath(paneID string) string {
+	dir := livenessDir()
+	if dir == "" || paneID == "" {
+		return ""
+	}
+	return filepath.Join(dir, sanitizePaneID(paneID)+".pid")
+}
+
+// markLive records that this process is mirroring into the given pane, and
+// returns a function that clears the mark.
+func markLive(paneID string) func() {
+	path := livenessPath(paneID)
+	if path == "" {
+		return func() {}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return func() {}
+	}
+	if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		return func() {}
+	}
+	return func() { _ = os.Remove(path) }
+}
+
+// IsLive reports whether a mirror process is currently running for a pane.
+func IsLive(paneID string) bool {
+	path := livenessPath(paneID)
+	if path == "" {
+		return false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(string(raw))
+	if err != nil || pid <= 0 {
+		return false
+	}
+	// Signal 0 checks for existence without delivering anything.
+	return syscall.Kill(pid, 0) == nil
+}
+
+// ClearLive removes a stale mark, for panes the daemon has given up on.
+func ClearLive(paneID string) {
+	if path := livenessPath(paneID); path != "" {
+		_ = os.Remove(path)
+	}
+}
+
+// sanitizePaneID keeps a pane id usable as a filename; ids look like "w1:p2".
+func sanitizePaneID(paneID string) string {
+	out := []rune(paneID)
+	for i, r := range out {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			out[i] = '-'
+		}
+	}
+	return string(out)
+}

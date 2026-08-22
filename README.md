@@ -223,7 +223,10 @@ mise). Set `herdr_bin` if yours lives somewhere else:
 - **Closing a mirror keeps it closed.** The daemon will not reopen a mirror you
   closed by hand until that remote pane goes away and comes back. This survives
   a restart: the daemon records what it opened under the plugin state directory
-  and adopts those panes next time rather than opening a second set.
+  and adopts those panes next time rather than opening a second set. Restarting
+  Herdr itself restores a plugin pane as a plain shell without re-running its
+  command, so each mirror records its pid and a pane whose mirror is not running
+  is replaced rather than adopted.
 - **A mirror workspace holds only mirrors.** Herdr opens a shell with every new
   workspace; once a mirror replaces it, that placeholder is closed.
 - **A remote pane that closes closes its mirror**, on the next poll.

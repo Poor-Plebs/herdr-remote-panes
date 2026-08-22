@@ -437,6 +437,23 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 			if state.adopted {
 				state.dismissed[terminalID] = true
 			}
+			continue
+		}
+		if state.adopted {
+			continue
+		}
+		// The pane exists, but a Herdr restart restores a plugin pane as a
+		// plain shell without re-running its command. Such a husk keeps its
+		// name@host label while mirroring nothing, so close it and mirror the
+		// terminal again rather than adopting it.
+		if !mirror.IsLive(paneID) {
+			log.Printf("%s: replacing pane %s, its mirror is not running", state.host.Target, paneID)
+			if err := herdrcli.ClosePaneByID(paneID); err != nil {
+				log.Printf("close stale mirror %s: %v", paneID, err)
+			}
+			mirror.ClearLive(paneID)
+			delete(index.alive, paneID)
+			delete(state.mirrors, terminalID)
 		}
 	}
 	state.adopted = true
@@ -488,6 +505,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 			if err := herdrcli.ClosePane(paneID); err != nil {
 				log.Printf("close mirror %s: %v", paneID, err)
 			}
+			mirror.ClearLive(paneID)
 			delete(state.mirrors, terminalID)
 			delete(state.reportedAgents, paneID)
 		}
