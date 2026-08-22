@@ -1,6 +1,7 @@
 package syncd
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
@@ -193,4 +194,25 @@ func planLostPane(failed bool) bool {
 // machines that had a terminal open get one back; connecting is not implied.
 func planRestoreShell(hadShells, liveShells int) bool {
 	return hadShells > 0 && liveShells == 0
+}
+
+// planNeedsTerminal decides whether connecting to a machine should open one.
+//
+// It counts terminals that are actually still open, not how many have ever been
+// opened: after closing the last one, a machine that answers "already has
+// terminals" leaves the menu reporting a connection with nothing to show for
+// it, and no way back short of editing the config.
+func planNeedsTerminal(liveTerminals int) bool {
+	return liveTerminals == 0
+}
+
+// planShellName names a plain SSH terminal from how many are already open.
+//
+// Numbering from a running total instead drifts: close the only terminal and
+// the next one is called "shell 2", with no "shell 1" anywhere.
+func planShellName(liveTerminals int) string {
+	if liveTerminals == 0 {
+		return "shell"
+	}
+	return fmt.Sprintf("shell %d", liveTerminals+1)
 }

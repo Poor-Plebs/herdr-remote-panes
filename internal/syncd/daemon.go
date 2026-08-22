@@ -85,8 +85,6 @@ type hostSync struct {
 	// sshOnly marks a host used through plain SSH panes: it has no Herdr, so
 	// there is nothing to discover or mirror and reconcile leaves it alone.
 	sshOnly bool
-	// shells counts plain SSH panes opened for this host, to name them.
-	shells int
 	// shellPanes are the plain SSH panes opened for this host, watched so one
 	// whose connection drops can be brought back.
 	shellPanes map[string]bool
@@ -519,13 +517,7 @@ func (d *Daemon) openShellPane(state *hostSync) error {
 		return err
 	}
 
-	d.mu.Lock()
-	state.shells++
-	name := "shell"
-	if state.shells > 1 {
-		name = fmt.Sprintf("shell %d", state.shells)
-	}
-	d.mu.Unlock()
+	name := planShellName(d.liveTerminalCount(state.host.Target))
 
 	shellTarget := planPaneTarget(d.cfg.PlacementFor(state.host), workspaceID, index.anyInWorkspace[workspaceID])
 	opts := herdrcli.OpenOptions{
@@ -713,7 +705,7 @@ func (d *Daemon) ensureRemotePresence(host config.Host) (bool, error) {
 
 	if state.sshOnly {
 		// Nothing to create over there; a plain SSH machine has no Herdr.
-		if d.mirrorCount(host.Target) > 0 {
+		if !planNeedsTerminal(d.liveTerminalCount(host.Target)) {
 			return false, nil
 		}
 		return true, d.openShellPane(state)
@@ -727,7 +719,7 @@ func (d *Daemon) ensureRemotePresence(host config.Host) (bool, error) {
 		// The new space comes with a pane, which mirrors back here.
 		return true, nil
 	}
-	if d.mirrorCount(host.Target) > 0 {
+	if !planNeedsTerminal(d.liveTerminalCount(host.Target)) {
 		return false, nil
 	}
 	// The space is there but empty of anything to mirror.
@@ -735,18 +727,43 @@ func (d *Daemon) ensureRemotePresence(host config.Host) (bool, error) {
 	return true, err
 }
 
-// mirrorCount reports how many panes a host currently has here.
-func (d *Daemon) mirrorCount(target string) int {
+// liveTerminalCount reports how many of a machine's terminals are still open.
+func (d *Daemon) liveTerminalCount(target string) int {
+	// Counted from the panes Herdr actually has, rather than from bookkeeping:
+	// a terminal closed a moment ago may not have been reconciled away yet,
+	// and a stale count is what makes a machine impossible to reopen.
+	local, err := herdrcli.PaneList()
+	if err != nil {
+		log.Printf("local pane list: %v", err)
+		return 0
+	}
+	alive := make(map[string]bool, len(local))
+	for _, pane := range local {
+		alive[pane.PaneID] = true
+	}
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	state, ok := d.hosts[target]
 	if !ok {
 		return 0
 	}
+
+	live := 0
 	if state.sshOnly {
-		return state.shells
+		for paneID := range state.shellPanes {
+			if alive[paneID] {
+				live++
+			}
+		}
+		return live
 	}
-	return len(state.mirrors)
+	for _, paneID := range state.mirrors {
+		if alive[paneID] {
+			live++
+		}
+	}
+	return live
 }
 
 // connectAll connects every configured host that is not disabled, reporting

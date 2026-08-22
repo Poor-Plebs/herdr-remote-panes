@@ -323,3 +323,32 @@ func TestPlanRestoreShell(t *testing.T) {
 		t.Error("a machine with no terminals should not gain one")
 	}
 }
+
+func TestPlanNeedsTerminal(t *testing.T) {
+	// Counting terminals ever opened, rather than still open, left a machine
+	// reporting "connected" with nothing to show after its last terminal was
+	// closed, and no way to reopen it from the menu.
+	if !planNeedsTerminal(0) {
+		t.Error("a machine with no terminals should get one")
+	}
+	if planNeedsTerminal(1) {
+		t.Error("a machine that already has a terminal should not gain another")
+	}
+	if planNeedsTerminal(5) {
+		t.Error("a busy machine should not gain another terminal")
+	}
+}
+
+func TestPlanShellName(t *testing.T) {
+	// Numbering from a running total drifts: close the only terminal and the
+	// next one is "shell 2" with no "shell 1" anywhere.
+	if got := planShellName(0); got != "shell" {
+		t.Errorf("first terminal = %q, want %q", got, "shell")
+	}
+	if got := planShellName(1); got != "shell 2" {
+		t.Errorf("second terminal = %q, want %q", got, "shell 2")
+	}
+	if got := planShellName(3); got != "shell 4" {
+		t.Errorf("fourth terminal = %q, want %q", got, "shell 4")
+	}
+}
