@@ -16,12 +16,9 @@ import (
 type Mode string
 
 const (
-	// DefaultSession is the remote Herdr session mirrored unless configured
-	// otherwise. Herdr's own default session is left alone so mirroring never
-	// competes with the work already running there.
-	DefaultSession = "remote"
-	// DefaultSessionName opts a host back into the remote's unnamed default
-	// session.
+	// DefaultSessionName means the machine's own default session: the one
+	// plain `herdr` opens there. Mirroring into it is the default, because a
+	// dedicated session is invisible unless you know to ask for it by name.
 	DefaultSessionName = "default"
 )
 
@@ -74,9 +71,9 @@ func (h Host) DisplayLabel() string {
 type Config struct {
 	// PollInterval is how often each host is polled for pane changes.
 	PollInterval string `json:"poll_interval,omitempty"`
-	// Session is the remote HERDR_SESSION mirrored by default. It defaults to
-	// "remote" so the hub never disturbs whatever the user is doing in the
-	// remote machine's own default session.
+	// Session is the Herdr session mirrored on each machine. It defaults to
+	// the machine's own default session, so plain `herdr` there shows the
+	// shared terminals. Name a session to keep them separate instead.
 	Session string `json:"session,omitempty"`
 	// Mode is the default bridge mode for hosts that do not override it.
 	Mode Mode `json:"mode,omitempty"`
@@ -121,7 +118,7 @@ type Config struct {
 func Defaults() Config {
 	return Config{
 		PollInterval:          "2s",
-		Session:               DefaultSession,
+		Session:               DefaultSessionName,
 		Mode:                  ModeAttach,
 		Placement:             "split",
 		LabelFormat:           "{name}@{host}",
@@ -232,12 +229,12 @@ func (c Config) Interval() time.Duration {
 	return d
 }
 
-// SessionFor resolves which remote Herdr session a host is mirrored from.
+// SessionFor resolves which Herdr session on a machine is mirrored.
 //
-// Mirroring a dedicated session by default keeps the hub out of the remote's
-// default session. Naming the session DefaultSessionName opts back into the
-// remote's unnamed default session, which Herdr addresses with an empty
-// HERDR_SESSION.
+// The machine's own default session is addressed with an empty HERDR_SESSION,
+// so DefaultSessionName maps to "". Naming any other session keeps the shared
+// terminals separate from the machine's own work, at the cost of having to run
+// `herdr --session <name>` there to see them.
 func (c Config) SessionFor(h Host) string {
 	name := h.Session
 	if name == "" {

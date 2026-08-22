@@ -115,25 +115,29 @@ the part that needs Herdr on both ends.
 
 ## Seeing it on the machine itself
 
-The panes live in a Herdr session called `remote` on each machine, started for
-you over SSH, so mirroring never disturbs whatever you already had running
-there. That also means plain `herdr` on the machine shows its **own** default
-session, not the mirrored one. To see the shared terminals:
+The shared terminals are the machine's own, in its normal Herdr session, so
+they are already there when you look:
 
 ```bash
 ssh workbox
-herdr --session remote
+herdr
 ```
 
-They are grouped in a space named after *your* machine — `☁  L14` rather than
-`☁  workbox` — so from the machine's side it is clear whose panes they are.
-Change it with `remote_workspace_format`.
+Terminals opened by this plugin are grouped in a space named after *your*
+machine — `☁  L14` rather than `☁  workbox` — so from that side it is clear
+whose they are. Terminals that were already running keep whatever space they
+were in; nothing gets rearranged.
 
-If you would rather the terminals just be in that machine's normal session, so
-plain `herdr` there shows them, set the session to `default`:
+Because it is the machine's normal session, starting Herdr here will start it
+there too when it is not running. Set `"auto_start": false` if you would rather
+that never happen.
+
+To keep the shared terminals out of the machine's own session instead, name a
+session for them — and then run `herdr --session <name>` on the machine to see
+them:
 
 ```json
-{ "target": "workbox", "session": "default" }
+{ "target": "workbox", "session": "shared" }
 ```
 
 ## Settings
@@ -150,7 +154,7 @@ All optional, in `config.json`:
 | `placement` | `split` | `split`, `tab` or `zoomed` |
 | `poll_interval` | `2s` | How often machines are checked |
 | `max_mirrors` | `32` | Most terminals to show per machine |
-| `session` | `remote` | Which Herdr session on the machine to mirror; `default` for its normal one |
+| `session` | `default` | Which Herdr session on the machine to share; a name keeps it separate from the machine's own |
 | `remote_workspace_format` | `☁  {hub}` | How the space is named *on the machine*, `{hub}` being this machine |
 | `auto_start` | `true` | Start that session over SSH when it is not running |
 | `takeover` | `true` | Take over a stale connection left by a closed terminal |
