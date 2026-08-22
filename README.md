@@ -84,6 +84,7 @@ herdr server stop && herdr
 | `mode` | `attach` | `attach` for interactive, `observe` for read-only |
 | `placement` | `split` | `tab`, `split`, `zoomed` or `overlay` |
 | `label_format` | `{name}@{host}` | Supports `{name}`, `{host}`, `{agent}`, `{pane}` |
+| `workspace` | per host | Shared workspace label; default is one per machine |
 | `auto_start` | `true` | Start the remote session over SSH when it is not running |
 | `herdr_bin` | probed | Remote `herdr` path (see below) |
 | `max_mirrors` | `32` | Per-host cap, so a busy remote cannot flood the session |
@@ -161,8 +162,8 @@ description = "refresh remote panes"
 
 ## Several machines at once
 
-List every machine under `hosts`. Each one gets its own local workspace named
-after it, so panes stay grouped per machine rather than piling into one layout:
+One local Herdr, as many machines as you like, as many panes each. List them
+under `hosts`:
 
 ```json
 {
@@ -174,11 +175,33 @@ after it, so panes stay grouped per machine rather than piling into one layout:
 }
 ```
 
+By default each machine gets its own workspace, named after it:
+
 ```
 workspace: bot          workspace: prod         workspace: staging
   build@bot               deploy@prod             tail@staging   (read-only)
   claude@bot              psql@prod
 ```
+
+Set a top-level `workspace` to put every machine in **one** layout instead:
+
+```json
+{
+  "workspace": "remote",
+  "placement": "split",
+  "hosts": [{ "target": "bot" }, { "target": "prod" }]
+}
+```
+
+```
+workspace: remote
+  build@bot │ claude@bot │ deploy@prod │ psql@prod
+```
+
+`workspace` is a label, created when missing, and a host may override it — so
+you can group some machines together and keep others apart. Pair it with
+`placement`: `split` tiles the mirrors side by side, `tab` gives each its own
+tab.
 
 To open a fresh pane on a particular machine, invoke the `open` action with
 that host — the pane is created over there and mirrored straight back.

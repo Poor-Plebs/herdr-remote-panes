@@ -32,3 +32,35 @@ func TestNormalizedFillsDefaults(t *testing.T) {
 		t.Errorf("interval = %s, want 2s", cfg.Interval())
 	}
 }
+
+func TestWorkspaceFor(t *testing.T) {
+	cfg := Defaults()
+	bot := Host{Target: "bot"}
+	prod := Host{Target: "prod"}
+
+	// Default: one workspace per machine.
+	if got := cfg.WorkspaceFor(bot); got != "bot" {
+		t.Errorf("default workspace = %q, want %q", got, "bot")
+	}
+	if cfg.WorkspaceFor(bot) == cfg.WorkspaceFor(prod) {
+		t.Error("hosts should not share a workspace by default")
+	}
+
+	// A shared top-level workspace puts every machine in one layout.
+	cfg.Workspace = "remote"
+	if cfg.WorkspaceFor(bot) != "remote" || cfg.WorkspaceFor(prod) != "remote" {
+		t.Error("top-level workspace should group every host together")
+	}
+
+	// A per-host workspace still wins.
+	prod.Workspace = "prod-only"
+	if got := cfg.WorkspaceFor(prod); got != "prod-only" {
+		t.Errorf("per-host workspace = %q, want %q", got, "prod-only")
+	}
+
+	// A host label, not the target, names the workspace.
+	cfg.Workspace = ""
+	if got := cfg.WorkspaceFor(Host{Target: "165.227.153.104", Label: "droplet"}); got != "droplet" {
+		t.Errorf("workspace = %q, want %q", got, "droplet")
+	}
+}

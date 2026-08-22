@@ -38,8 +38,6 @@ type hostSync struct {
 	host   config.Host
 	client *remote.Client
 
-	// workspaceID is the local workspace mirrors from this host live in.
-	workspaceID string
 	// mirrors maps a remote terminal id to the local pane showing it.
 	mirrors map[string]string
 	// dismissed remembers mirrors the user closed by hand, so the next poll
@@ -51,6 +49,32 @@ type hostSync struct {
 	retryAt  map[string]time.Time
 
 	lastErr error
+}
+
+// paneIndex is the local pane snapshot used for one reconcile pass. It also
+// records panes created during the pass, so a split mirror can target a
+// sibling that did not exist when the snapshot was taken.
+type paneIndex struct {
+	alive          map[string]bool
+	anyInWorkspace map[string]string
+}
+
+func newPaneIndex(panes []herdrcli.Pane) *paneIndex {
+	index := &paneIndex{
+		alive:          make(map[string]bool, len(panes)),
+		anyInWorkspace: map[string]string{},
+	}
+	for _, p := range panes {
+		index.add(p)
+	}
+	return index
+}
+
+func (p *paneIndex) add(pane herdrcli.Pane) {
+	p.alive[pane.PaneID] = true
+	if pane.WorkspaceID != "" {
+		p.anyInWorkspace[pane.WorkspaceID] = pane.PaneID
+	}
 }
 
 // New builds a daemon from the on-disk configuration.
@@ -310,10 +334,7 @@ func (d *Daemon) reconcileAll() {
 		log.Printf("local pane list: %v", err)
 		return
 	}
-	livePanes := map[string]bool{}
-	for _, p := range local {
-		livePanes[p.PaneID] = true
-	}
+	index := newPaneIndex(local)
 
 	var wg sync.WaitGroup
 	for _, state := range states {
@@ -322,7 +343,7 @@ func (d *Daemon) reconcileAll() {
 			defer wg.Done()
 			d.mu.Lock()
 			defer d.mu.Unlock()
-			if err := d.reconcileHost(state, livePanes); err != nil {
+			if err := d.reconcileHost(state, index); err != nil {
 				if state.lastErr == nil || state.lastErr.Error() != err.Error() {
 					log.Printf("reconcile %s: %v", state.host.Target, err)
 				}
@@ -336,10 +357,10 @@ func (d *Daemon) reconcileAll() {
 }
 
 // reconcileHost brings one host's mirrors in line with its remote panes.
-func (d *Daemon) reconcileHost(state *hostSync, livePanes map[string]bool) error {
+func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	// Drop mirrors the user closed by hand and do not reopen them.
 	for terminalID, paneID := range state.mirrors {
-		if !livePanes[paneID] {
+		if !index.alive[paneID] {
 			delete(state.mirrors, terminalID)
 			state.dismissed[terminalID] = true
 		}
@@ -373,7 +394,7 @@ func (d *Daemon) reconcileHost(state *hostSync, livePanes map[string]bool) error
 				state.host.Target, d.cfg.MaxMirrors)
 			break
 		}
-		if err := d.openMirror(state, rp, label); err != nil {
+		if err := d.openMirror(state, rp, label, index); err != nil {
 			d.backOff(state, rp.TerminalID, err)
 			continue
 		}
@@ -452,46 +473,69 @@ func (d *Daemon) label(host config.Host, rp herdrcli.Pane) string {
 }
 
 // openMirror creates the local pane that bridges one remote terminal.
-func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string) error {
+func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, index *paneIndex) error {
 	workspaceID, err := d.ensureWorkspace(state)
 	if err != nil {
 		return err
 	}
 
-	pane, err := herdrcli.OpenPane(herdrcli.OpenOptions{
+	env := map[string]string{
+		mirror.EnvTarget:   state.host.Target,
+		mirror.EnvSession:  d.cfg.SessionFor(state.host),
+		mirror.EnvTerminal: rp.TerminalID,
+		mirror.EnvMode:     string(d.cfg.ModeFor(state.host)),
+		mirror.EnvName:     label,
+	}
+	if bin := d.cfg.BinFor(state.host); bin != "" {
+		env[mirror.EnvBin] = bin
+	}
+
+	opts := herdrcli.OpenOptions{
 		PluginID:   PluginID,
 		Entrypoint: paneEntrypoint,
 		Placement:  d.cfg.PlacementFor(state.host),
-		Workspace:  workspaceID,
-		Env: map[string]string{
-			mirror.EnvTarget:   state.host.Target,
-			mirror.EnvSession:  d.cfg.SessionFor(state.host),
-			mirror.EnvTerminal: rp.TerminalID,
-			mirror.EnvMode:     string(d.cfg.ModeFor(state.host)),
-			mirror.EnvBin:      d.cfg.BinFor(state.host),
-			mirror.EnvName:     label,
-		},
-	})
+		Env:        env,
+	}
+
+	// Herdr treats these targets as mutually exclusive. A split or zoomed pane
+	// takes only a target pane, which implies its workspace; a tab takes only a
+	// workspace; an overlay takes neither and lands on the active pane. Sending
+	// both is rejected outright.
+	switch opts.Placement {
+	case "split", "zoomed":
+		target := index.anyInWorkspace[workspaceID]
+		if target == "" {
+			// Nothing to split from, so fall back to a tab in that workspace.
+			opts.Placement = "tab"
+			opts.Workspace = workspaceID
+			break
+		}
+		opts.TargetPane = target
+	case "overlay", "popup":
+		// Targeting is not allowed; the pane opens over the active one.
+	default:
+		opts.Workspace = workspaceID
+	}
+
+	pane, err := herdrcli.OpenPane(opts)
 	if err != nil {
 		return err
 	}
 
+	index.add(pane)
 	state.mirrors[rp.TerminalID] = pane.PaneID
 	d.retitle(pane.PaneID, label)
 	return nil
 }
 
-// ensureWorkspace finds or creates the local workspace for a host, so mirrors
-// from different machines do not pile into the same layout.
+// ensureWorkspace finds or creates the local workspace a host's mirrors belong
+// in, resolving by label so several hosts can be pointed at one workspace.
+//
+// The id is looked up each time rather than cached: a workspace the user closed
+// must be recreated, not remembered.
 func (d *Daemon) ensureWorkspace(state *hostSync) (string, error) {
-	if state.host.Workspace != "" {
-		return state.host.Workspace, nil
-	}
-	if state.workspaceID != "" {
-		return state.workspaceID, nil
-	}
+	label := d.cfg.WorkspaceFor(state.host)
 
-	label := state.host.DisplayLabel()
 	result, err := herdrcli.Run("workspace", "list")
 	if err != nil {
 		return "", err
@@ -507,7 +551,6 @@ func (d *Daemon) ensureWorkspace(state *hostSync) (string, error) {
 	}
 	for _, ws := range body.Workspaces {
 		if ws.Label == label {
-			state.workspaceID = ws.WorkspaceID
 			return ws.WorkspaceID, nil
 		}
 	}
@@ -524,6 +567,5 @@ func (d *Daemon) ensureWorkspace(state *hostSync) (string, error) {
 	if err := json.Unmarshal(created, &createdBody); err != nil {
 		return "", fmt.Errorf("parse workspace create: %w", err)
 	}
-	state.workspaceID = createdBody.Workspace.WorkspaceID
-	return state.workspaceID, nil
+	return createdBody.Workspace.WorkspaceID, nil
 }

@@ -48,7 +48,8 @@ type Host struct {
 	Mode Mode `json:"mode,omitempty"`
 	// Placement overrides the global placement for this host.
 	Placement string `json:"placement,omitempty"`
-	// Workspace pins mirrors from this host to a local workspace id.
+	// Workspace is the local workspace label mirrors from this host land in.
+	// It is created when missing. Empty falls back to the top-level Workspace.
 	Workspace string `json:"workspace,omitempty"`
 	// HerdrBin overrides the remote Herdr binary path for this host.
 	HerdrBin string `json:"herdr_bin,omitempty"`
@@ -83,6 +84,9 @@ type Config struct {
 	// override it. Empty probes the usual install locations, which is needed
 	// because `ssh host <command>` does not run a login shell.
 	HerdrBin string `json:"herdr_bin,omitempty"`
+	// Workspace is the local workspace label every host's mirrors share. Empty
+	// gives each host its own workspace named after it.
+	Workspace string `json:"workspace,omitempty"`
 	// AutoStart launches the remote Herdr session when it is not running, so
 	// a host only needs the herdr binary installed and reachable over SSH.
 	AutoStart *bool `json:"auto_start,omitempty"`
@@ -218,6 +222,21 @@ func boolPtr(b bool) *bool { return &b }
 // ShouldAutoStart reports whether a missing remote session may be started.
 func (c Config) ShouldAutoStart() bool {
 	return c.AutoStart == nil || *c.AutoStart
+}
+
+// WorkspaceFor resolves the local workspace label a host's mirrors belong in.
+//
+// Per-host wins, then a shared top-level workspace, then the host's own name.
+// Pointing several hosts at one label puts panes from different machines in a
+// single layout; the default keeps each machine separate.
+func (c Config) WorkspaceFor(h Host) string {
+	if h.Workspace != "" {
+		return h.Workspace
+	}
+	if c.Workspace != "" {
+		return c.Workspace
+	}
+	return h.DisplayLabel()
 }
 
 // BinFor resolves the remote Herdr binary for a host. An empty result means
