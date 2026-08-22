@@ -6,7 +6,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 )
 
 // Each test here stands for a bug that reached a real machine. The comments say
@@ -634,5 +636,33 @@ func TestPlanTrackedMirrorChecksIdentity(t *testing.T) {
 	// processes without being the wrong one.
 	if got := planTrackedMirrorFor(true, true, false, "t1", "t5"); got != mirrorKeep {
 		t.Errorf("after adoption the pane should be left alone, got %v", got)
+	}
+}
+
+func TestLabelIsSafeToDraw(t *testing.T) {
+	// A terminal's name comes from whatever runs on the far machine, and ends
+	// up in the sidebar here. Anything that moves the cursor or changes how the
+	// rest is drawn has to go, and a long name has to be cut.
+	d := &Daemon{cfg: config.Defaults()}
+	host := config.Host{Target: "bot"}
+
+	got := d.label(host, herdrcli.Pane{}, "build\nfake")
+	if strings.Contains(got, "\n") {
+		t.Errorf("label %q still spans lines", got)
+	}
+
+	got = d.label(host, herdrcli.Pane{}, "build\x1b[31m")
+	if strings.Contains(got, "\x1b") {
+		t.Errorf("label %q still carries an escape", got)
+	}
+
+	got = d.label(host, herdrcli.Pane{}, strings.Repeat("x", 200))
+	if text.Width(got) > maxLabelWidth+len("@bot")+1 {
+		t.Errorf("label %q is %d cells, too wide for the sidebar", got, text.Width(got))
+	}
+
+	// An ordinary name is left as it is.
+	if got := d.label(host, herdrcli.Pane{}, "build"); got != "build@bot" {
+		t.Errorf("label = %q, want build@bot", got)
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/mirror"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 )
 
 // PluginID must match the id in herdr-plugin.toml.
@@ -1408,6 +1409,10 @@ func (d *Daemon) forgetPane(state *hostSync, paneID string) {
 	mirror.ClearFailed(paneID)
 }
 
+// maxLabelWidth bounds a terminal's name in the sidebar, which is narrow and
+// shared with the machine it belongs to.
+const maxLabelWidth = 28
+
 // labelsFor names every mirror from one host, keeping them distinguishable.
 //
 // Unnamed remote panes fall back to their working directory, so several shells
@@ -1432,6 +1437,12 @@ func shortPaneID(paneID string) string {
 
 // label renders the configured LabelFormat for a remote pane.
 func (d *Daemon) label(host config.Host, rp herdrcli.Pane, name string) string {
+	// A terminal's name comes from whatever is running on the far machine — a
+	// shell sets its own title as a matter of course — and ends up in the
+	// sidebar here. A newline or an escape sequence in one would be drawn
+	// rather than read, and a long one crowds out everything beside it.
+	name = text.Truncate(text.Sanitize(name), maxLabelWidth)
+
 	replacer := strings.NewReplacer(
 		"{name}", name,
 		"{host}", host.DisplayLabel(),

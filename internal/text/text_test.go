@@ -1,4 +1,4 @@
-package picker
+package text
 
 import (
 	"strings"
@@ -38,14 +38,14 @@ func TestSanitizeName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := sanitizeName(tt.in); got != tt.want {
-				t.Errorf("sanitizeName(%q) = %q, want %q", tt.in, got, tt.want)
+			if got := Sanitize(tt.in); got != tt.want {
+				t.Errorf("Sanitize(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}
 
 	t.Run("nothing printable survives a control-only name", func(t *testing.T) {
-		if got := sanitizeName("\x00\x01\x02"); got != "" {
+		if got := Sanitize("\x00\x01\x02"); got != "" {
 			t.Errorf("got %q, want empty", got)
 		}
 	})
@@ -61,23 +61,23 @@ func TestDisplayWidth(t *testing.T) {
 		"\U0001F680": 2, // an emoji takes two cells
 		"é":         1, // a combining accent sits on the previous cell
 	} {
-		if got := displayWidth(in); got != want {
-			t.Errorf("displayWidth(%q) = %d, want %d", in, got, want)
+		if got := Width(in); got != want {
+			t.Errorf("Width(%q) = %d, want %d", in, got, want)
 		}
 	}
 }
 
 func TestTruncateToWidth(t *testing.T) {
 	t.Run("a short name is untouched", func(t *testing.T) {
-		if got := truncateToWidth("workbox", 20); got != "workbox" {
+		if got := Truncate("workbox", 20); got != "workbox" {
 			t.Errorf("got %q", got)
 		}
 	})
 
 	t.Run("a long name is cut and marked", func(t *testing.T) {
-		got := truncateToWidth("build-server-eu-west-1a-production", 20)
-		if displayWidth(got) > 20 {
-			t.Errorf("%q is %d cells, want at most 20", got, displayWidth(got))
+		got := Truncate("build-server-eu-west-1a-production", 20)
+		if Width(got) > 20 {
+			t.Errorf("%q is %d cells, want at most 20", got, Width(got))
 		}
 		if !strings.HasSuffix(got, "…") {
 			t.Errorf("%q should show that it was cut", got)
@@ -87,38 +87,29 @@ func TestTruncateToWidth(t *testing.T) {
 	t.Run("wide characters do not overshoot", func(t *testing.T) {
 		// Cutting by runes would leave twice the intended width on screen and
 		// push the column after it past the edge of the popup.
-		got := truncateToWidth(strings.Repeat("构", 20), 10)
-		if displayWidth(got) > 10 {
-			t.Errorf("%q is %d cells, want at most 10", got, displayWidth(got))
+		got := Truncate(strings.Repeat("构", 20), 10)
+		if Width(got) > 10 {
+			t.Errorf("%q is %d cells, want at most 10", got, Width(got))
 		}
 	})
 
 	t.Run("no room means nothing", func(t *testing.T) {
-		if got := truncateToWidth("workbox", 0); got != "" {
+		if got := Truncate("workbox", 0); got != "" {
 			t.Errorf("got %q, want empty", got)
 		}
 	})
 }
 
 func TestPadToWidth(t *testing.T) {
-	if got := padToWidth("bot", 6); displayWidth(got) != 6 {
-		t.Errorf("padToWidth(bot, 6) is %d cells, want 6", displayWidth(got))
+	if got := Pad("bot", 6); Width(got) != 6 {
+		t.Errorf("Pad(bot, 6) is %d cells, want 6", Width(got))
 	}
 	// A wide name must be padded by cells, or the column after it shifts.
-	if got := padToWidth("构建", 6); displayWidth(got) != 6 {
-		t.Errorf("padding a wide name gave %d cells, want 6", displayWidth(got))
+	if got := Pad("构建", 6); Width(got) != 6 {
+		t.Errorf("padding a wide name gave %d cells, want 6", Width(got))
 	}
 	// Something already too wide is left alone rather than padded negatively.
-	if got := padToWidth("a-very-long-name", 4); got != "a-very-long-name" {
+	if got := Pad("a-very-long-name", 4); got != "a-very-long-name" {
 		t.Errorf("got %q, want it untouched", got)
-	}
-}
-
-func TestNameWidthFitsThePopup(t *testing.T) {
-	// The menu runs in a popup whose width it does not control.
-	for _, cols := range []int{20, 40, 80, 200} {
-		if w := nameWidth(cols); w < 8 || w > 40 {
-			t.Errorf("nameWidth(%d) = %d, want it clamped between 8 and 40", cols, w)
-		}
 	}
 }

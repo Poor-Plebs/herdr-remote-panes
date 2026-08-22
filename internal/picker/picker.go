@@ -13,6 +13,7 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/sshconfig"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 )
 
 // Entry is one machine offered in the menu.
@@ -300,11 +301,11 @@ func draw(entries []Entry, selected int) {
 
 		// Names come from ~/.ssh/config, so they are made safe to draw and cut
 		// to fit rather than trusted to be short and printable.
-		name := sanitizeName(entry.Target)
+		name := text.Sanitize(entry.Target)
 		if entry.Label != "" && entry.Label != entry.Target {
-			name = fmt.Sprintf("%s (%s)", name, sanitizeName(entry.Label))
+			name = fmt.Sprintf("%s (%s)", name, text.Sanitize(entry.Label))
 		}
-		name = padToWidth(truncateToWidth(name, nameWidth(cols)), nameWidth(cols))
+		name = text.Pad(text.Truncate(name, nameWidth(cols)), nameWidth(cols))
 
 		mode := "ssh"
 		if entry.Mirroring {

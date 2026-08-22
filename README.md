@@ -185,6 +185,13 @@ herdr plugin log list --plugin poorplebs.remote-panes
 cat ~/.local/state/herdr/plugins/poorplebs.remote-panes/mirror.log
 ```
 
+**A setting seems to be ignored.** Settings that read fine but mean something
+else are reported when the daemon starts, in `status`, and in the menu:
+
+```
+config: mode "shh" is not one of ssh, attach or observe; machines default to a plain SSH terminal
+```
+
 **A keybinding does nothing.** It probably clashes with a built-in. Taken:
 `b c e g h j k l n o p q r s v w x z tab minus alt+g shift+d shift+g shift+n
 shift+p shift+r shift+t shift+w shift+x shift+tab`.

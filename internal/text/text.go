@@ -1,19 +1,22 @@
-package picker
+package text
 
 import (
 	"strings"
 	"unicode"
 )
 
-// Machine names come from ~/.ssh/config and the plugin config, which this code
-// does not control, and they are printed straight into a terminal. A name with
-// a newline in it drew a second row that the menu did not know about, throwing
-// off which entry the arrow keys were on; an escape sequence changed the colour
-// of everything after it; and a long name ran past the edge of the popup.
+// Package text draws names this plugin did not write.
+//
+// Machine names come from ~/.ssh/config, and terminal names come from whatever
+// is running on the far machine — a shell sets its own title as a matter of
+// course. Both end up in a terminal here. A newline drew a row nothing knew
+// about, an escape sequence changed the colour of everything after it, and a
+// long name ran past the edge of what it was drawn into.
 
 // sanitizeName makes a name safe to draw: one line, no control characters, no
 // escape sequences.
-func sanitizeName(name string) string {
+// Sanitize makes a name safe to draw.
+func Sanitize(name string) string {
 	var b strings.Builder
 	b.Grow(len(name))
 	for _, r := range name {
@@ -40,7 +43,8 @@ func sanitizeName(name string) string {
 //
 // Padding by rune count misaligns anything that is not narrow: East Asian
 // characters and most emoji take two cells, and combining marks take none.
-func displayWidth(s string) int {
+// Width is how many terminal cells a string occupies.
+func Width(s string) int {
 	width := 0
 	for _, r := range s {
 		width += runeWidth(r)
@@ -83,11 +87,12 @@ func isWide(r rune) bool {
 
 // truncateToWidth shortens a string to at most width cells, marking that it was
 // cut. Cutting by bytes or runes would overshoot on wide characters.
-func truncateToWidth(s string, width int) string {
+// Truncate shortens a string to at most width cells.
+func Truncate(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	if displayWidth(s) <= width {
+	if Width(s) <= width {
 		return s
 	}
 
@@ -106,8 +111,9 @@ func truncateToWidth(s string, width int) string {
 
 // padToWidth pads a string on the right so columns line up, measuring cells
 // rather than characters.
-func padToWidth(s string, width int) string {
-	if pad := width - displayWidth(s); pad > 0 {
+// Pad pads a string on the right so columns line up.
+func Pad(s string, width int) string {
+	if pad := width - Width(s); pad > 0 {
 		return s + strings.Repeat(" ", pad)
 	}
 	return s
