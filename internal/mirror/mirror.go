@@ -4,10 +4,12 @@ package mirror
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -264,27 +266,26 @@ func streamOnce(client *remote.Client, terminal string, cols, rows int, winch <-
 	}()
 
 	frames := bufio.NewScanner(stdout)
-	frames.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	frames.Buffer(make([]byte, 0, 64*1024), maxFrameBytes)
 	sawFrame := false
 	for frames.Scan() {
-		line := strings.TrimSpace(frames.Text())
-		if line == "" {
-			continue
-		}
-		var frame struct {
-			Bytes string `json:"bytes"`
-		}
-		if err := json.Unmarshal([]byte(line), &frame); err != nil || frame.Bytes == "" {
-			continue
-		}
-		raw, err := base64.StdEncoding.DecodeString(frame.Bytes)
-		if err != nil {
+		raw, ok := decodeFrame(frames.Bytes())
+		if !ok {
 			continue
 		}
 		sawFrame = true
 		if _, err := os.Stdout.Write(raw); err != nil {
 			break
 		}
+	}
+	if err := frames.Err(); err != nil {
+		// A frame too large for the buffer ends the scan, and treating that as
+		// a closed terminal would quietly shut the pane. Reconnecting is the
+		// right response: the stream resumes from the terminal's current state.
+		log.Printf("stream from %s: %v", client.Target, err)
+		close(done)
+		_ = cmd.Wait()
+		return err
 	}
 	close(done)
 
@@ -300,15 +301,56 @@ func streamOnce(client *remote.Client, terminal string, cols, rows int, winch <-
 	return nil
 }
 
+// maxFrameBytes bounds one frame from the stream. Terminal output arrives in
+// small pieces; anything approaching this is a stream that has gone wrong.
+const maxFrameBytes = 8 * 1024 * 1024
+
+// decodeFrame reads one line of the observe stream, which carries terminal
+// output as base64 inside a JSON envelope. It reports whether the line held
+// anything to write.
+//
+// Anything unreadable is skipped rather than fatal: the stream is a live feed,
+// and one bad line is no reason to tear down a working terminal.
+func decodeFrame(line []byte) ([]byte, bool) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 || line[0] != '{' {
+		return nil, false
+	}
+	var frame struct {
+		Bytes string `json:"bytes"`
+	}
+	if err := json.Unmarshal(line, &frame); err != nil || frame.Bytes == "" {
+		return nil, false
+	}
+	raw, err := base64.StdEncoding.DecodeString(frame.Bytes)
+	if err != nil || len(raw) == 0 {
+		return nil, false
+	}
+	return raw, true
+}
+
 // windowSize reports this pane's size, falling back to a sane default when the
 // pty cannot be queried.
 func windowSize() (cols, rows int) {
-	cols, rows = 120, 40
 	out, err := sttyOutput("size")
 	if err != nil {
-		return cols, rows
+		return defaultCols, defaultRows
 	}
-	fields := strings.Fields(string(out))
+	return parseWindowSize(string(out))
+}
+
+// Sizes used when the pty cannot be measured. The stream is opened at whatever
+// size is requested, so a wrong guess only means the remote wraps oddly until
+// the next resize.
+const (
+	defaultCols = 120
+	defaultRows = 40
+)
+
+// parseWindowSize reads "rows cols" as stty size reports it.
+func parseWindowSize(out string) (cols, rows int) {
+	cols, rows = defaultCols, defaultRows
+	fields := strings.Fields(out)
 	if len(fields) != 2 {
 		return cols, rows
 	}
