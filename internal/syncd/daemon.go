@@ -192,6 +192,16 @@ func (d *Daemon) handleControl(conn net.Conn) {
 func (d *Daemon) dispatch(cmd Command) Reply {
 	switch cmd.Cmd {
 	case "connect":
+		// With no host, reconnect everything configured. That gives a single
+		// bindable "bring my remote spaces back" with nothing to select.
+		if cmd.Host == "" {
+			connected, err := d.connectAll()
+			if err != nil {
+				return Reply{Message: err.Error()}
+			}
+			d.reconcileAll()
+			return Reply{OK: true, Message: "connected to " + strings.Join(connected, ", ")}
+		}
 		host, ok := d.hostConfig(cmd.Host)
 		if !ok {
 			return Reply{Message: fmt.Sprintf("%s is not in the plugin config", cmd.Host)}
@@ -340,6 +350,10 @@ func (d *Daemon) connect(host config.Host) error {
 	defer d.mu.Unlock()
 	if existing, ok := d.hosts[host.Target]; ok {
 		existing.host = host
+		// Connecting is a deliberate "give me this machine's panes", so it
+		// clears earlier dismissals. Without this, closing a remote workspace
+		// left every mirror marked as closed-by-hand and there was no way back.
+		clear(existing.dismissed)
 		return nil
 	}
 	state := &hostSync{
@@ -353,12 +367,11 @@ func (d *Daemon) connect(host config.Host) error {
 		reportedAgents: map[string]agentReport{},
 	}
 	// Adopt what a previous daemon opened so a restart does not duplicate it.
+	// Dismissals are deliberately not restored here: reaching connect means
+	// the user asked for this machine's panes back.
 	if saved, ok := d.snapshot.Hosts[host.Target]; ok {
 		for terminalID, paneID := range saved.Mirrors {
 			state.mirrors[terminalID] = paneID
-		}
-		for _, terminalID := range saved.Dismissed {
-			state.dismissed[terminalID] = true
 		}
 	}
 	d.hosts[host.Target] = state
@@ -403,7 +416,35 @@ func (d *Daemon) disconnect(target string) error {
 		}
 	}
 	state.client.Close()
+	// Persist immediately so a reconnect before the next reconcile does not
+	// pick this host's stale bookkeeping back up.
+	d.persist()
 	return nil
+}
+
+// connectAll connects every configured host that is not disabled, reporting
+// which ones answered. It fails only when none of them do.
+func (d *Daemon) connectAll() ([]string, error) {
+	var connected []string
+	var lastErr error
+	for _, host := range d.cfg.Hosts {
+		if host.Disabled {
+			continue
+		}
+		if err := d.connect(host); err != nil {
+			log.Printf("connect %s: %v", host.Target, err)
+			lastErr = err
+			continue
+		}
+		connected = append(connected, host.Target)
+	}
+	if len(connected) == 0 {
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, fmt.Errorf("no hosts configured")
+	}
+	return connected, nil
 }
 
 func (d *Daemon) status() []HostInfo {

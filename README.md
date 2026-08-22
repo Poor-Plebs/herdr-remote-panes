@@ -145,7 +145,7 @@ affected — a full UI client is not an attach owner.
 
 | Action | Effect |
 | --- | --- |
-| `poorplebs.remote-panes.connect` | Start mirroring a host (uses the current selection as the target) |
+| `poorplebs.remote-panes.connect` | Mirror a machine again after closing its space; with no target, every configured host |
 | `poorplebs.remote-panes.open` | New terminal on the machine whose workspace you are in; a local pane elsewhere |
 | `poorplebs.remote-panes.disconnect` | Stop mirroring a host and close its mirrors |
 | `poorplebs.remote-panes.refresh` | Reconcile every host now |
@@ -239,6 +239,24 @@ mise). Set `herdr_bin` if yours lives somewhere else:
 ```json
 { "target": "bot", "herdr_bin": "/opt/herdr/bin/herdr" }
 ```
+
+### Closing and reopening a space
+
+Closing a machine's workspace closes its mirrors, and the daemon takes that at
+face value: it will not reopen them behind your back. To bring the machine back,
+invoke the `connect` action. With no target it reconnects every configured host,
+so it works as a plain keybinding with nothing to select:
+
+```toml
+[[keys.command]]
+key = "prefix+shift+r"
+type = "plugin_action"
+command = "poorplebs.remote-panes.connect"
+description = "reconnect remote spaces"
+```
+
+Connecting is treated as a deliberate request for that machine's panes, so it
+clears earlier dismissals. Restarting Herdr has the same effect.
 
 ## Behaviour worth knowing
 

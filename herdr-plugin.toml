@@ -14,8 +14,8 @@ command = ["./bin/herdr-remote-panes", "daemon"]
 
 [[actions]]
 id = "connect"
-title = "Remote panes: connect host"
-description = "Mirror the panes of an SSH target. Uses the current selection as the target."
+title = "Remote panes: connect"
+description = "Mirror a machine's panes again after closing its space. With no target, reconnects every configured host."
 contexts = ["global", "selection"]
 command = ["./bin/herdr-remote-panes", "connect"]
 

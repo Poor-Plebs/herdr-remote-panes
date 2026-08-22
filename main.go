@@ -49,7 +49,19 @@ func run(command string, args []string) error {
 	case "mirror":
 		return mirror.Run()
 
-	case "connect", "disconnect":
+	case "connect":
+		// A host is optional: with none, every configured host reconnects.
+		host := ""
+		if len(args) > 0 {
+			host = args[0]
+		} else if env := strings.TrimSpace(os.Getenv("HRP_HOST")); env != "" {
+			host = env
+		} else {
+			host = selectedText()
+		}
+		return call(syncd.Command{Cmd: "connect", Host: host})
+
+	case "disconnect":
 		host, err := hostArg(command, args)
 		if err != nil {
 			return err
@@ -136,7 +148,7 @@ func usage() {
 
   daemon                     run the reconciler (Herdr [[startup]] hook)
   mirror                     bridge one remote terminal (Herdr pane entrypoint)
-  connect <ssh-target>       start mirroring a host
+  connect [ssh-target]       start mirroring a host, or all configured hosts
   open <ssh-target>          open a new pane on a host (it mirrors back)
   disconnect <ssh-target>    stop mirroring a host and close its panes
   refresh                    reconcile every connected host now
