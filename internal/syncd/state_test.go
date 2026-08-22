@@ -3,34 +3,71 @@ package syncd
 import (
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestControlSocketIsPerSession(t *testing.T) {
+func TestSocketPathFor(t *testing.T) {
+	const temp = "/tmp"
+	const stateDir = "/home/u/.local/state/herdr/plugins/p"
+
+	t.Run("a short path stays in the state directory", func(t *testing.T) {
+		// Keeping it there means the socket sits with the rest of the plugin's
+		// state, under a name a person can recognise.
+		got := socketPathFor(stateDir, "hub", temp)
+		if !strings.HasSuffix(got, "control-hub.sock") || !strings.HasPrefix(got, stateDir) {
+			t.Errorf("got %q, want it named for the session inside the state directory", got)
+		}
+	})
+
+	t.Run("sessions do not share a socket", func(t *testing.T) {
+		// Each session runs its own daemon out of a shared state directory.
+		if socketPathFor(stateDir, "hub", temp) == socketPathFor(stateDir, "other", temp) {
+			t.Error("two sessions resolved to the same socket")
+		}
+	})
+
+	t.Run("an overlong path falls back and stays bindable", func(t *testing.T) {
+		// Not hypothetical: macOS temp directories are already near the limit,
+		// and binding past it fails with "invalid argument", which says
+		// nothing about the cause.
+		long := "/" + strings.Repeat("deeply-nested-directory/", 6)
+		got := socketPathFor(long, strings.Repeat("session", 5), temp)
+		if len(got) > maxUnixSocketPath {
+			t.Errorf("fallback is %d bytes, still too long: %s", len(got), got)
+		}
+		if !strings.HasPrefix(got, temp) {
+			t.Errorf("got %q, want the fallback under %q", got, temp)
+		}
+	})
+
+	t.Run("the fallback is deterministic and per session", func(t *testing.T) {
+		// The actions must look for the socket the daemon actually bound.
+		long := "/" + strings.Repeat("deeply-nested-directory/", 6)
+		if socketPathFor(long, "hub", temp) != socketPathFor(long, "hub", temp) {
+			t.Error("the fallback path is not stable")
+		}
+		if socketPathFor(long, "hub", temp) == socketPathFor(long, "other", temp) {
+			t.Error("two sessions collided in the fallback")
+		}
+	})
+}
+
+func TestControlSocketBinds(t *testing.T) {
+	// Whatever the platform's directories look like, the result must bind.
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
-
-	t.Setenv("HERDR_SESSION", "")
-	def, err := ControlSocket()
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	t.Setenv("HERDR_SESSION", "hub")
-	hub, err := ControlSocket()
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	// Each session runs its own daemon out of a shared state directory, so
-	// their control sockets must not collide.
-	if def == hub {
-		t.Fatalf("sessions share a control socket: %s", def)
+	socket, err := ControlSocket()
+	if err != nil {
+		t.Fatalf("ControlSocket: %v", err)
 	}
-	if !strings.Contains(hub, "control-hub.sock") {
-		t.Errorf("socket %q is not named for the session", hub)
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("listen on %q (%d bytes): %v", socket, len(socket), err)
 	}
+	listener.Close()
+	os.Remove(socket)
 }
 
 func TestSanitize(t *testing.T) {
@@ -112,58 +149,5 @@ func TestCorruptSnapshotLoadsEmpty(t *testing.T) {
 	// Unreadable bookkeeping must not stop the daemon starting.
 	if got := loadSnapshot(); len(got.Hosts) != 0 {
 		t.Fatalf("corrupt snapshot should load empty, got %+v", got)
-	}
-}
-
-func TestControlSocketStaysBindable(t *testing.T) {
-	// A Unix socket path is bounded by the sockaddr struct. A long home
-	// directory or session name overruns it, and binding then fails with
-	// "invalid argument", which says nothing about the real cause.
-	deep := filepath.Join(t.TempDir(), strings.Repeat("nested-directory/", 8))
-	if err := os.MkdirAll(deep, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HERDR_PLUGIN_STATE_DIR", deep)
-	t.Setenv("HERDR_SESSION", strings.Repeat("long-session-name", 4))
-
-	socket, err := ControlSocket()
-	if err != nil {
-		t.Fatalf("ControlSocket: %v", err)
-	}
-	if len(socket) > maxUnixSocketPath {
-		t.Errorf("socket path is %d bytes, too long to bind: %s", len(socket), socket)
-	}
-
-	// It must be stable, or the actions would look for a different socket
-	// than the daemon bound.
-	again, err := ControlSocket()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if again != socket {
-		t.Errorf("path is not deterministic: %q then %q", socket, again)
-	}
-
-	// And it must actually bind.
-	listener, err := net.Listen("unix", socket)
-	if err != nil {
-		t.Fatalf("listen on the fallback path: %v", err)
-	}
-	listener.Close()
-	os.Remove(socket)
-}
-
-func TestControlSocketUsesTheStateDirWhenItFits(t *testing.T) {
-	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
-	t.Setenv("HERDR_SESSION", "hub")
-
-	socket, err := ControlSocket()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The readable path is kept whenever it can be, so the socket stays next
-	// to the rest of the plugin's state.
-	if !strings.Contains(socket, "control-hub.sock") {
-		t.Errorf("socket %q should sit in the state directory", socket)
 	}
 }

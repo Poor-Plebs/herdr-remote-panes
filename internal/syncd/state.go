@@ -36,18 +36,24 @@ func ControlSocket() (string, error) {
 	if session == "" {
 		session = "default"
 	}
+	return socketPathFor(dir, session, os.TempDir()), nil
+}
 
-	path := filepath.Join(dir, "control-"+sanitize(session)+".sock")
+// socketPathFor places the control socket, preferring the plugin's state
+// directory so it sits with the rest of its state.
+//
+// A Unix socket path is bounded by the sockaddr struct, and a long state
+// directory or session name overruns it — macOS temp directories alone are
+// nearly at the limit. Binding then fails with "invalid argument", which says
+// nothing about the cause, so an overlong path falls back to a short
+// deterministic one that the daemon and the actions both derive the same way.
+func socketPathFor(stateDir, session, tempDir string) string {
+	path := filepath.Join(stateDir, "control-"+sanitize(session)+".sock")
 	if len(path) <= maxUnixSocketPath {
-		return path, nil
+		return path
 	}
-	// A Unix socket path is bounded by the sockaddr struct, and a long home
-	// directory or session name overruns it. Binding then fails with
-	// "invalid argument", which says nothing about the real problem, so fall
-	// back to a short deterministic path both the daemon and the actions
-	// derive the same way.
 	sum := sha256.Sum256([]byte(path))
-	return filepath.Join(os.TempDir(), "hrp-"+hex.EncodeToString(sum[:8])+".sock"), nil
+	return filepath.Join(tempDir, "hrp-"+hex.EncodeToString(sum[:8])+".sock")
 }
 
 // maxUnixSocketPath is a conservative bound on a bindable socket path. The
