@@ -223,6 +223,19 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 			return Reply{Message: err.Error()}
 		}
 		d.reconcileAll()
+
+		// Asking for a specific machine means wanting to work on it. If it has
+		// nothing running, connecting would otherwise appear to do nothing at
+		// all: no panes to mirror means no space. Open one terminal so there
+		// is something to land in.
+		if d.mirrorCount(host.Target) == 0 {
+			if err := d.openRemotePane(host); err != nil {
+				return Reply{Message: fmt.Sprintf("connected to %s, but could not open a terminal: %v",
+					host.Target, err)}
+			}
+			d.reconcileAll()
+			return Reply{OK: true, Message: "connected to " + host.Target + " and opened a terminal"}
+		}
 		return Reply{OK: true, Message: "connected to " + host.Target}
 
 	case "disconnect":
@@ -519,6 +532,20 @@ func (d *Daemon) disconnect(target string) error {
 	// pick this host's stale bookkeeping back up.
 	d.persist()
 	return nil
+}
+
+// mirrorCount reports how many panes a host currently has here.
+func (d *Daemon) mirrorCount(target string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	state, ok := d.hosts[target]
+	if !ok {
+		return 0
+	}
+	if state.sshOnly {
+		return state.shells
+	}
+	return len(state.mirrors)
 }
 
 // connectAll connects every configured host that is not disabled, reporting

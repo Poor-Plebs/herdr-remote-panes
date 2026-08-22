@@ -60,6 +60,9 @@ and from this plugin's config, showing which are connected. Move with the arrow
 keys or `j`/`k`, jump with `1`-`9`, `enter` to connect, `q` to cancel. Machines
 picked from the menu do not have to be in `config.json` first.
 
+If the machine has nothing running, connecting opens a terminal on it, so you
+always land somewhere. Machines that are already busy just show what is there.
+
 Actions are easier on a key. Add to `~/.config/herdr/config.toml`:
 
 ```toml
