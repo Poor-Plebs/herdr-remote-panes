@@ -71,9 +71,9 @@ type hostSync struct {
 	// seenStray records local panes in this host's space that were noticed and
 	// left alone, so a pane is only considered for capture once.
 	seenStray map[string]bool
-	// strays is what the last pass decided to move onto the machine. It is
-	// acted on after the host lock is released.
-	strays []string
+	// strays is what the last pass decided to move onto the machine, each with
+	// the placement to recreate it as. Acted on after the lock is released.
+	strays []strayPane
 
 	// sshOnly marks a host used through plain SSH panes: it has no Herdr, so
 	// there is nothing to discover or mirror and reconcile leaves it alone.
@@ -110,6 +110,8 @@ type paneIndex struct {
 	anyInWorkspace map[string]string
 	workspaceOf    map[string]string
 	panesIn        map[string][]string
+	tabOf          map[string]string
+	panesPerTab    map[string]int
 }
 
 func newPaneIndex(panes []herdrcli.Pane) *paneIndex {
@@ -118,6 +120,8 @@ func newPaneIndex(panes []herdrcli.Pane) *paneIndex {
 		anyInWorkspace: map[string]string{},
 		workspaceOf:    map[string]string{},
 		panesIn:        map[string][]string{},
+		tabOf:          map[string]string{},
+		panesPerTab:    map[string]int{},
 	}
 	for _, p := range panes {
 		index.add(p)
@@ -131,6 +135,10 @@ func (p *paneIndex) add(pane herdrcli.Pane) {
 		p.anyInWorkspace[pane.WorkspaceID] = pane.PaneID
 		p.workspaceOf[pane.PaneID] = pane.WorkspaceID
 		p.panesIn[pane.WorkspaceID] = append(p.panesIn[pane.WorkspaceID], pane.PaneID)
+	}
+	if pane.TabID != "" {
+		p.tabOf[pane.PaneID] = pane.TabID
+		p.panesPerTab[pane.TabID]++
 	}
 }
 
@@ -897,6 +905,13 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	return nil
 }
 
+// strayPane is a local pane to move onto its machine, with the placement its
+// replacement should use.
+type strayPane struct {
+	PaneID    string
+	Placement string
+}
+
 // planStrayCapture lists local panes sitting in a machine's space that should
 // be moved onto that machine. Herdr's plus icon and new-tab key always open a
 // local shell and neither can be intercepted by a plugin, so they are corrected
@@ -904,7 +919,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 //
 // This only decides. Acting on the list needs the host lock released, because
 // opening a terminal on the machine takes that lock again.
-func (d *Daemon) planStrayCapture(state *hostSync, index *paneIndex) []string {
+func (d *Daemon) planStrayCapture(state *hostSync, index *paneIndex) []strayPane {
 	if state.sshOnly || state.workspaceID == "" {
 		return nil
 	}
@@ -914,10 +929,13 @@ func (d *Daemon) planStrayCapture(state *hostSync, index *paneIndex) []string {
 		mirrors[paneID] = true
 	}
 
-	var strays []string
+	var strays []strayPane
 	for _, paneID := range index.panesIn[state.workspaceID] {
 		if planStrayPane(d.cfg.ShouldCaptureNewPanes(), mirrors[paneID], state.seenStray[paneID]) {
-			strays = append(strays, paneID)
+			strays = append(strays, strayPane{
+				PaneID:    paneID,
+				Placement: planStrayPlacement(index.panesPerTab[index.tabOf[paneID]]),
+			})
 		}
 		state.seenStray[paneID] = true
 	}
@@ -933,15 +951,16 @@ func (d *Daemon) planStrayCapture(state *hostSync, index *paneIndex) []string {
 
 // captureStrayPanes carries out what planStrayCapture decided. It must run with
 // the host lock released.
-func (d *Daemon) captureStrayPanes(state *hostSync, strays []string) {
-	for _, paneID := range strays {
-		log.Printf("%s: moving pane %s onto the machine", state.host.Target, paneID)
-		if err := d.openRemotePane(state.host, ""); err != nil {
+func (d *Daemon) captureStrayPanes(state *hostSync, strays []strayPane) {
+	for _, stray := range strays {
+		log.Printf("%s: moving pane %s onto the machine as a %s",
+			state.host.Target, stray.PaneID, stray.Placement)
+		if err := d.openRemotePane(state.host, stray.Placement); err != nil {
 			log.Printf("open terminal on %s: %v", state.host.Target, err)
 			continue
 		}
-		if err := herdrcli.ClosePaneByID(paneID); err != nil {
-			log.Printf("close local pane %s: %v", paneID, err)
+		if err := herdrcli.ClosePaneByID(stray.PaneID); err != nil {
+			log.Printf("close local pane %s: %v", stray.PaneID, err)
 		}
 	}
 }

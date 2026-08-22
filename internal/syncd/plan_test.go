@@ -227,3 +227,19 @@ func TestPlanStrayPane(t *testing.T) {
 		})
 	}
 }
+
+func TestPlanStrayPlacement(t *testing.T) {
+	// A pane alone in its tab was made by the plus icon or the new-tab key, so
+	// its replacement is a tab. Replacing it with a split would rearrange the
+	// layout under someone who asked for a tab.
+	if got := planStrayPlacement(1); got != placementTab {
+		t.Errorf("a pane alone in its tab = %q, want %q", got, placementTab)
+	}
+	if got := planStrayPlacement(0); got != placementTab {
+		t.Errorf("an unknown tab should default to %q, got %q", placementTab, got)
+	}
+	// Sharing a tab means it came from a split.
+	if got := planStrayPlacement(2); got != placementSplit {
+		t.Errorf("a pane sharing a tab = %q, want %q", got, placementSplit)
+	}
+}

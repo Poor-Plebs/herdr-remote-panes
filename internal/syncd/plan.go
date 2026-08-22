@@ -128,3 +128,17 @@ func planStrayPane(capture, isMirror, seenBefore bool) bool {
 	}
 	return true
 }
+
+// planStrayPlacement infers how a captured pane should be replaced, from the
+// shape of what was created.
+//
+// A pane alone in its tab came from a new-tab path — the plus icon or the
+// new-tab key — so its replacement is a tab. A pane sharing a tab came from a
+// split, so it is replaced with a split. Replacing a tab with a split, or the
+// reverse, rearranges the layout under someone who did not ask for it.
+func planStrayPlacement(panesInSameTab int) string {
+	if panesInSameTab <= 1 {
+		return placementTab
+	}
+	return placementSplit
+}

@@ -151,7 +151,7 @@ All optional, in `config.json`:
 | `workspace` | one per machine | Put every machine in one space instead |
 | `workspace_format` | `☁  {host}` | How a machine's space is named |
 | `label_format` | `{name}@{host}` | How its terminals are named |
-| `placement` | `split` | `split`, `tab` or `zoomed` |
+| `placement` | `split` | How mirrors are placed here: `split`, `tab` or `zoomed` |
 | `poll_interval` | `2s` | How often machines are checked |
 | `max_mirrors` | `32` | Most terminals to show per machine |
 | `session` | `default` | Which Herdr session on the machine to share; a name keeps it separate from the machine's own |
