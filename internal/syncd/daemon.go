@@ -135,6 +135,7 @@ type paneIndex struct {
 	anyInWorkspace map[string]string
 	workspaceOf    map[string]string
 	panesIn        map[string][]string
+	labelOf        map[string]string
 	tabOf          map[string]string
 	panesPerTab    map[string]int
 }
@@ -145,6 +146,7 @@ func newPaneIndex(panes []herdrcli.Pane) *paneIndex {
 		anyInWorkspace: map[string]string{},
 		workspaceOf:    map[string]string{},
 		panesIn:        map[string][]string{},
+		labelOf:        map[string]string{},
 		tabOf:          map[string]string{},
 		panesPerTab:    map[string]int{},
 	}
@@ -156,6 +158,7 @@ func newPaneIndex(panes []herdrcli.Pane) *paneIndex {
 
 func (p *paneIndex) add(pane herdrcli.Pane) {
 	p.alive[pane.PaneID] = true
+	p.labelOf[pane.PaneID] = pane.Label
 	if pane.WorkspaceID != "" {
 		p.anyInWorkspace[pane.WorkspaceID] = pane.PaneID
 		p.workspaceOf[pane.PaneID] = pane.WorkspaceID
@@ -979,6 +982,11 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 			// Mirrors recorded while this machine was mirrored cannot be kept
 			// up in SSH mode, and nothing here would ever revisit them, so
 			// they would sit in the space as dead panes wearing live names.
+			// Panes wearing this machine's name whose mirror is not running are
+			// left over from when it was mirrored, and nothing else revisits
+			// them.
+			d.closeOrphans(state, index)
+
 			hadPanes := len(state.mirrors) > 0
 			for terminalID, paneID := range state.mirrors {
 				if index.alive[paneID] {
@@ -1201,6 +1209,62 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 type strayPane struct {
 	PaneID    string
 	Placement string
+}
+
+// closeOrphans clears panes in a machine's space that carry a remote terminal's
+// name but have no mirror behind them.
+func (d *Daemon) closeOrphans(state *hostSync, index *paneIndex) {
+	workspaceID := state.workspaceID
+	if workspaceID == "" {
+		found, err := d.findLocalWorkspace(state)
+		if err != nil || !found {
+			return
+		}
+		workspaceID = state.workspaceID
+	}
+
+	suffix := "@" + state.host.DisplayLabel()
+	tracked := make(map[string]bool, len(state.mirrors)+len(state.shellPanes))
+	for _, paneID := range state.mirrors {
+		tracked[paneID] = true
+	}
+	for paneID := range state.shellPanes {
+		tracked[paneID] = true
+	}
+
+	for _, paneID := range index.panesIn[workspaceID] {
+		label := index.labelOf[paneID]
+		if !planOrphanedPane(label, suffix, tracked[paneID], mirror.IsLive(paneID)) {
+			continue
+		}
+		log.Printf("%s: closing %s, a leftover %q with nothing behind it",
+			state.host.Target, paneID, label)
+		if err := herdrcli.ClosePaneByID(paneID); err != nil {
+			log.Printf("close leftover %s: %v", paneID, err)
+		}
+		d.forgetPane(state, paneID)
+		delete(index.alive, paneID)
+	}
+}
+
+// findLocalWorkspace looks up this machine's space here without creating one.
+func (d *Daemon) findLocalWorkspace(state *hostSync) (bool, error) {
+	result, err := herdrcli.Run("workspace", "list")
+	if err != nil {
+		return false, err
+	}
+	workspaces, err := herdrcli.ParseWorkspaceList(result)
+	if err != nil {
+		return false, err
+	}
+	label := d.cfg.WorkspaceFor(state.host)
+	for _, ws := range workspaces {
+		if ws.Label == label || sameWorkspace(ws.Label, state.host.DisplayLabel()) {
+			state.workspaceID = ws.WorkspaceID
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // planStrayCapture lists local panes sitting in a machine's space that should

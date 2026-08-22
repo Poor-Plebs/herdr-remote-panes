@@ -345,3 +345,21 @@ func planMirrors(remote []herdrcli.Pane, state mirrorState) mirrorPlan {
 	sort.Strings(plan.Gone)
 	return plan
 }
+
+// planOrphanedPane decides whether a pane in a machine's space is a mirror that
+// lost its process and should be closed.
+//
+// Herdr restores a plugin pane after a restart as a plain shell without
+// re-running its command, so what is left wears the name of a remote terminal
+// while being a local shell. Untracked ones — left behind by turning mirroring
+// off, or by a restart the bookkeeping did not survive — would otherwise sit in
+// the space forever.
+//
+// The name is what tells them from a terminal someone opened there themselves,
+// which is moved onto the machine instead of being closed.
+func planOrphanedPane(label, hostSuffix string, tracked, mirrorRunning bool) bool {
+	if tracked || mirrorRunning || label == "" || hostSuffix == "" {
+		return false
+	}
+	return strings.HasSuffix(label, hostSuffix)
+}

@@ -548,3 +548,64 @@ func TestPlanMirrors(t *testing.T) {
 		}
 	})
 }
+
+func TestPlanOrphanedPane(t *testing.T) {
+	const suffix = "@bot"
+
+	tests := []struct {
+		name          string
+		label         string
+		tracked       bool
+		mirrorRunning bool
+		want          bool
+	}{
+		{
+			// Herdr restores a plugin pane after a restart as a plain shell
+			// without re-running its command, so what is left wears a remote
+			// terminal's name while being a local shell. Untracked ones would
+			// sit in the space forever.
+			name:  "a name from this machine with nothing behind it is closed",
+			label: "build@bot", want: true,
+		},
+		{
+			// A pane the plugin is looking after is not an orphan, whatever
+			// its process is doing at this instant.
+			name:  "a tracked pane is left alone",
+			label: "build@bot", tracked: true, want: false,
+		},
+		{
+			name:  "a working mirror is left alone",
+			label: "build@bot", mirrorRunning: true, want: false,
+		},
+		{
+			// A terminal someone opened in the space is moved onto the machine
+			// rather than closed, so it must not be taken for an orphan.
+			name:  "an unnamed pane is not an orphan",
+			label: "", want: false,
+		},
+		{
+			name:  "a name from another machine is left alone",
+			label: "build@other", want: false,
+		},
+		{
+			name:  "a name that merely contains the machine is left alone",
+			label: "bot-notes", want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := planOrphanedPane(tt.label, suffix, tt.tracked, tt.mirrorRunning)
+			if got != tt.want {
+				t.Errorf("planOrphanedPane(%q, %q, tracked=%v, running=%v) = %v, want %v",
+					tt.label, suffix, tt.tracked, tt.mirrorRunning, got, tt.want)
+			}
+		})
+	}
+
+	t.Run("no machine name means nothing is an orphan", func(t *testing.T) {
+		if planOrphanedPane("build@bot", "", false, false) {
+			t.Error("without a machine name nothing should be closed")
+		}
+	})
+}
