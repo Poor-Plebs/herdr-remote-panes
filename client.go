@@ -37,6 +37,9 @@ func status() error {
 	if err != nil {
 		return err
 	}
+	if reply.Warning != "" {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", reply.Warning)
+	}
 	if len(reply.Hosts) == 0 {
 		report("no hosts connected")
 		return nil

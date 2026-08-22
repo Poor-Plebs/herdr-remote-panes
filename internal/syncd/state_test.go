@@ -1,7 +1,9 @@
 package syncd
 
 import (
+	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -110,5 +112,58 @@ func TestCorruptSnapshotLoadsEmpty(t *testing.T) {
 	// Unreadable bookkeeping must not stop the daemon starting.
 	if got := loadSnapshot(); len(got.Hosts) != 0 {
 		t.Fatalf("corrupt snapshot should load empty, got %+v", got)
+	}
+}
+
+func TestControlSocketStaysBindable(t *testing.T) {
+	// A Unix socket path is bounded by the sockaddr struct. A long home
+	// directory or session name overruns it, and binding then fails with
+	// "invalid argument", which says nothing about the real cause.
+	deep := filepath.Join(t.TempDir(), strings.Repeat("nested-directory/", 8))
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", deep)
+	t.Setenv("HERDR_SESSION", strings.Repeat("long-session-name", 4))
+
+	socket, err := ControlSocket()
+	if err != nil {
+		t.Fatalf("ControlSocket: %v", err)
+	}
+	if len(socket) > maxUnixSocketPath {
+		t.Errorf("socket path is %d bytes, too long to bind: %s", len(socket), socket)
+	}
+
+	// It must be stable, or the actions would look for a different socket
+	// than the daemon bound.
+	again, err := ControlSocket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != socket {
+		t.Errorf("path is not deterministic: %q then %q", socket, again)
+	}
+
+	// And it must actually bind.
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("listen on the fallback path: %v", err)
+	}
+	listener.Close()
+	os.Remove(socket)
+}
+
+func TestControlSocketUsesTheStateDirWhenItFits(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	socket, err := ControlSocket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The readable path is kept whenever it can be, so the socket stays next
+	// to the rest of the plugin's state.
+	if !strings.Contains(socket, "control-hub.sock") {
+		t.Errorf("socket %q should sit in the state directory", socket)
 	}
 }

@@ -33,6 +33,11 @@ type Daemon struct {
 	mu    sync.Mutex
 	hosts map[string]*hostSync
 
+	// configErr records a configuration that could not be read. The daemon
+	// still runs, so the menu and actions work and can say what is wrong,
+	// rather than everything failing with no visible reason.
+	configErr error
+
 	// snapshot is the bookkeeping left by a previous daemon, consulted when a
 	// host connects so its panes are adopted rather than reopened.
 	snapshot snapshot
@@ -162,12 +167,19 @@ func (p *paneIndex) add(pane herdrcli.Pane) {
 
 // New builds a daemon from the on-disk configuration.
 func New(cfg config.Config) *Daemon {
+	return NewWithConfigError(cfg, nil)
+}
+
+// NewWithConfigError builds a daemon that knows its configuration was not
+// readable, so it can report that instead of behaving as if none was set.
+func NewWithConfigError(cfg config.Config, configErr error) *Daemon {
 	return &Daemon{
 		cfg:              cfg,
 		hosts:            map[string]*hostSync{},
 		rootPanes:        map[string]string{},
 		markedWorkspaces: map[string]string{},
 		snapshot:         loadSnapshot(),
+		configErr:        configErr,
 	}
 }
 
@@ -343,7 +355,7 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		return Reply{OK: true, Message: "refreshed"}
 
 	case "status":
-		return Reply{OK: true, Hosts: d.status()}
+		return Reply{OK: true, Hosts: d.status(), Warning: d.configWarning()}
 
 	default:
 		return Reply{Message: "unknown command " + cmd.Cmd}
@@ -578,6 +590,14 @@ func (d *Daemon) openShellPane(state *hostSync) error {
 	d.retitle(pane.PaneID, d.label(state.host, herdrcli.Pane{}, name))
 	d.retireRootPane(workspaceID, index)
 	return nil
+}
+
+// configWarning describes an unreadable configuration, if there was one.
+func (d *Daemon) configWarning() string {
+	if d.configErr == nil {
+		return ""
+	}
+	return fmt.Sprintf("the plugin config could not be read, so no machines are configured: %v", d.configErr)
 }
 
 // hostConfig finds a configured host by target or label.

@@ -1,6 +1,8 @@
 package syncd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -34,8 +36,24 @@ func ControlSocket() (string, error) {
 	if session == "" {
 		session = "default"
 	}
-	return filepath.Join(dir, "control-"+sanitize(session)+".sock"), nil
+
+	path := filepath.Join(dir, "control-"+sanitize(session)+".sock")
+	if len(path) <= maxUnixSocketPath {
+		return path, nil
+	}
+	// A Unix socket path is bounded by the sockaddr struct, and a long home
+	// directory or session name overruns it. Binding then fails with
+	// "invalid argument", which says nothing about the real problem, so fall
+	// back to a short deterministic path both the daemon and the actions
+	// derive the same way.
+	sum := sha256.Sum256([]byte(path))
+	return filepath.Join(os.TempDir(), "hrp-"+hex.EncodeToString(sum[:8])+".sock"), nil
 }
+
+// maxUnixSocketPath is a conservative bound on a bindable socket path. The
+// kernel limit is 108 bytes on Linux and 104 on macOS, including the
+// terminator.
+const maxUnixSocketPath = 100
 
 // sanitize keeps a session name usable as a filename.
 func sanitize(name string) string {
@@ -71,8 +89,11 @@ type Command struct {
 
 // Reply is the daemon's answer to a Command.
 type Reply struct {
-	OK      bool       `json:"ok"`
-	Message string     `json:"message,omitempty"`
+	OK      bool   `json:"ok"`
+	Message string `json:"message,omitempty"`
+	// Warning carries a problem worth reporting that did not stop the command,
+	// such as a configuration file that could not be read.
+	Warning string     `json:"warning,omitempty"`
 	Hosts   []HostInfo `json:"hosts,omitempty"`
 }
 

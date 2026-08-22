@@ -43,11 +43,11 @@ func hostsFrom(path string, depth int) []string {
 	seen := map[string]bool{}
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		fields := strings.Fields(strings.TrimSpace(scanner.Text()))
+		fields := splitDirective(scanner.Text())
 		if len(fields) < 2 {
 			continue
 		}
-		keyword := strings.ToLower(strings.TrimSuffix(fields[0], "="))
+		keyword := strings.ToLower(fields[0])
 
 		switch keyword {
 		case "host":
@@ -72,6 +72,28 @@ func hostsFrom(path string, depth int) []string {
 		}
 	}
 	return hosts
+}
+
+// splitDirective turns a config line into its keyword and values.
+//
+// It drops comments, which are legal on a Host line and would otherwise be read
+// as machine names — "Host bot # work laptop" offering "#", "work" and "laptop"
+// alongside "bot". It also accepts the "Key=Value" spelling that ssh allows.
+func splitDirective(line string) []string {
+	if i := strings.IndexByte(line, '#'); i >= 0 {
+		line = line[:i]
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+	// "Host=bot" and "Host = bot" both mean "Host bot".
+	if i := strings.IndexByte(line, '='); i >= 0 {
+		if len(strings.Fields(line[:i])) == 1 {
+			line = line[:i] + " " + line[i+1:]
+		}
+	}
+	return strings.Fields(line)
 }
 
 // isPattern reports whether an alias is a wildcard or a negation rather than a

@@ -42,11 +42,16 @@ func main() {
 func run(command string, args []string) error {
 	switch command {
 	case "daemon":
+		// A configuration that cannot be read must not stop the daemon: the
+		// menu and every action reach it over its socket, so exiting here
+		// leaves them all failing with no visible reason.
 		cfg, err := config.Load()
 		if err != nil {
-			return err
+			log.Printf("%v", err)
+			log.Print("continuing with defaults; fix the config and reconnect")
+			cfg = config.Defaults()
 		}
-		return syncd.New(cfg).Run()
+		return syncd.NewWithConfigError(cfg, err).Run()
 
 	case "mirror":
 		return mirror.Run()
