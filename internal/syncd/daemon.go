@@ -63,6 +63,8 @@ type hostSync struct {
 	// workspaceID is the local workspace this host's panes live in, remembered
 	// so the remote marker can be updated without another lookup.
 	workspaceID string
+	// remoteWorkspaceID is this machine's space on the remote one.
+	remoteWorkspaceID string
 
 	// sshOnly marks a host used through plain SSH panes: it has no Herdr, so
 	// there is nothing to discover or mirror and reconcile leaves it alone.
@@ -224,16 +226,17 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		}
 		d.reconcileAll()
 
-		// Asking for a specific machine means wanting to work on it. If it has
-		// nothing running, connecting would otherwise appear to do nothing at
-		// all: no panes to mirror means no space. Open one terminal so there
-		// is something to land in.
-		if d.mirrorCount(host.Target) == 0 {
-			if err := d.openRemotePane(host); err != nil {
-				return Reply{Message: fmt.Sprintf("connected to %s, but could not open a terminal: %v",
-					host.Target, err)}
-			}
-			d.reconcileAll()
+		// Make the connection visible from both ends. Without this, connecting
+		// to a machine that already had terminals mirrored them here but left
+		// no trace over there, so from the machine it looked like nothing had
+		// happened.
+		opened, err := d.ensureRemotePresence(host)
+		if err != nil {
+			return Reply{Message: fmt.Sprintf("connected to %s, but could not open a terminal: %v",
+				host.Target, err)}
+		}
+		d.reconcileAll()
+		if opened {
 			return Reply{OK: true, Message: "connected to " + host.Target + " and opened a terminal"}
 		}
 		return Reply{OK: true, Message: "connected to " + host.Target}
@@ -328,6 +331,7 @@ func (d *Daemon) ensureRemoteWorkspace(state *hostSync) (string, bool, error) {
 	}
 	for _, ws := range body.Workspaces {
 		if ws.Label == label {
+			state.remoteWorkspaceID = ws.WorkspaceID
 			return ws.WorkspaceID, false, nil
 		}
 	}
@@ -344,7 +348,8 @@ func (d *Daemon) ensureRemoteWorkspace(state *hostSync) (string, bool, error) {
 	if err := json.Unmarshal(created, &createdBody); err != nil {
 		return "", false, fmt.Errorf("parse remote workspace create: %w", err)
 	}
-	return createdBody.Workspace.WorkspaceID, true, nil
+	state.remoteWorkspaceID = createdBody.Workspace.WorkspaceID
+	return state.remoteWorkspaceID, true, nil
 }
 
 // resolveOpenTarget decides which machine a new pane belongs to: an explicitly
@@ -569,6 +574,45 @@ func (d *Daemon) disconnect(target string) error {
 	// pick this host's stale bookkeeping back up.
 	d.persist()
 	return nil
+}
+
+// ensureRemotePresence makes this machine's connection visible on the remote
+// one, by making sure its space exists there. It reports whether a terminal was
+// opened as a result.
+//
+// A machine that already has terminals gets the space too: seeing "☁ L14" over
+// there is how you know the connection is live, and it is where terminals
+// opened from here will land.
+func (d *Daemon) ensureRemotePresence(host config.Host) (bool, error) {
+	d.mu.Lock()
+	state, ok := d.hosts[host.Target]
+	d.mu.Unlock()
+	if !ok {
+		return false, fmt.Errorf("%s is not connected", host.Target)
+	}
+
+	if state.sshOnly {
+		// Nothing to create over there; a plain SSH machine has no Herdr.
+		if d.mirrorCount(host.Target) > 0 {
+			return false, nil
+		}
+		return true, d.openShellPane(state)
+	}
+
+	_, created, err := d.ensureRemoteWorkspace(state)
+	if err != nil {
+		return false, err
+	}
+	if created {
+		// The new space comes with a pane, which mirrors back here.
+		return true, nil
+	}
+	if d.mirrorCount(host.Target) > 0 {
+		return false, nil
+	}
+	// The space is there but empty of anything to mirror.
+	_, err = state.client.Run("tab", "create", "--workspace", state.remoteWorkspaceID)
+	return true, err
 }
 
 // mirrorCount reports how many panes a host currently has here.
@@ -889,11 +933,22 @@ func (d *Daemon) labelsFor(host config.Host, panes []herdrcli.Pane) map[string]s
 		counts[rp.DisplayName()]++
 	}
 
+	// Short pane ids are nicer, but they repeat across workspaces: "w2:p1" and
+	// "w7:p1" both shorten to "p1". Fall back to the full id when that happens.
+	shortCounts := map[string]int{}
+	for _, rp := range panes {
+		shortCounts[shortPaneID(rp.PaneID)]++
+	}
+
 	labels := make(map[string]string, len(panes))
 	for _, rp := range panes {
 		name := rp.DisplayName()
 		if counts[name] > 1 {
-			name = name + " " + shortPaneID(rp.PaneID)
+			suffix := shortPaneID(rp.PaneID)
+			if shortCounts[suffix] > 1 {
+				suffix = rp.PaneID
+			}
+			name = name + " " + suffix
 		}
 		labels[rp.TerminalID] = d.label(host, rp, name)
 	}

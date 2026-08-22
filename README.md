@@ -123,10 +123,10 @@ ssh workbox
 herdr
 ```
 
-Terminals opened by this plugin are grouped in a space named after *your*
-machine — `☁  L14` rather than `☁  workbox` — so from that side it is clear
-whose they are. Terminals that were already running keep whatever space they
-were in; nothing gets rearranged.
+Connecting creates a space there named after *your* machine — `☁  L14` rather
+than `☁  workbox` — so from that side it is obvious the connection is live and
+where terminals opened from here will land. Terminals that were already running
+keep whatever space they were in; nothing gets rearranged.
 
 Because it is the machine's normal session, starting Herdr here will start it
 there too when it is not running. Set `"auto_start": false` if you would rather
