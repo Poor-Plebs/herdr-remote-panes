@@ -105,6 +105,9 @@ type HostInfo struct {
 	Mirrors   int    `json:"mirrors"`
 	// SSHOnly marks a host reached through plain SSH panes.
 	SSHOnly bool `json:"ssh_only,omitempty"`
+	// Terminals is how many plain SSH terminals this machine has open, which
+	// is what a machine in SSH mode has instead of mirrors.
+	Terminals int `json:"terminals,omitempty"`
 	// Mirroring reports whether this machine's terminals are kept in step,
 	// rather than being a plain SSH session.
 	Mirroring bool `json:"mirroring,omitempty"`

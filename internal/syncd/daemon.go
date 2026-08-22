@@ -400,21 +400,17 @@ func (d *Daemon) rememberPlacement(state *hostSync, result json.RawMessage, plac
 	if placement == "" && !focus {
 		return
 	}
-	var body struct {
-		RootPane struct {
-			TerminalID string `json:"terminal_id"`
-		} `json:"root_pane"`
-	}
-	if err := json.Unmarshal(result, &body); err != nil || body.RootPane.TerminalID == "" {
+	made, err := herdrcli.ParseCreated(result)
+	if err != nil || made.RootPane.TerminalID == "" {
 		return
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if placement != "" {
-		state.pendingPlacement[body.RootPane.TerminalID] = placement
+		state.pendingPlacement[made.RootPane.TerminalID] = placement
 	}
 	if focus {
-		state.pendingFocus[body.RootPane.TerminalID] = true
+		state.pendingFocus[made.RootPane.TerminalID] = true
 	}
 }
 
@@ -454,20 +450,13 @@ func (d *Daemon) findRemoteWorkspace(state *hostSync) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	var body struct {
-		Workspaces []struct {
-			WorkspaceID string `json:"workspace_id"`
-			Label       string `json:"label"`
-		} `json:"workspaces"`
+	workspaces, err := herdrcli.ParseWorkspaceList(result)
+	if err != nil {
+		return false, err
 	}
-	if err := json.Unmarshal(result, &body); err != nil {
-		return false, fmt.Errorf("parse remote workspace list: %w", err)
-	}
-	for _, ws := range body.Workspaces {
-		if ws.Label == label {
-			state.remoteWorkspaceID = ws.WorkspaceID
-			return true, nil
-		}
+	if id, ok := herdrcli.FindWorkspace(workspaces, label); ok {
+		state.remoteWorkspaceID = id
+		return true, nil
 	}
 	return false, nil
 }
@@ -487,35 +476,24 @@ func (d *Daemon) ensureRemoteWorkspace(state *hostSync) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	var body struct {
-		Workspaces []struct {
-			WorkspaceID string `json:"workspace_id"`
-			Label       string `json:"label"`
-		} `json:"workspaces"`
+	workspaces, err := herdrcli.ParseWorkspaceList(result)
+	if err != nil {
+		return "", false, err
 	}
-	if err := json.Unmarshal(result, &body); err != nil {
-		return "", false, fmt.Errorf("parse remote workspace list: %w", err)
-	}
-	for _, ws := range body.Workspaces {
-		if ws.Label == label {
-			state.remoteWorkspaceID = ws.WorkspaceID
-			return ws.WorkspaceID, false, nil
-		}
+	if id, ok := herdrcli.FindWorkspace(workspaces, label); ok {
+		state.remoteWorkspaceID = id
+		return id, false, nil
 	}
 
 	created, err := state.client.Run("workspace", "create", "--label", label)
 	if err != nil {
 		return "", false, err
 	}
-	var createdBody struct {
-		Workspace struct {
-			WorkspaceID string `json:"workspace_id"`
-		} `json:"workspace"`
+	made, err := herdrcli.ParseCreated(created)
+	if err != nil {
+		return "", false, err
 	}
-	if err := json.Unmarshal(created, &createdBody); err != nil {
-		return "", false, fmt.Errorf("parse remote workspace create: %w", err)
-	}
-	state.remoteWorkspaceID = createdBody.Workspace.WorkspaceID
+	state.remoteWorkspaceID = made.WorkspaceID
 	return state.remoteWorkspaceID, true, nil
 }
 
@@ -868,11 +846,12 @@ func (d *Daemon) status() []HostInfo {
 			Connected: state.lastErr == nil,
 			Mirrors:   len(state.mirrors),
 			SSHOnly:   state.sshOnly,
+			Terminals: len(state.shellPanes),
 			Mirroring: d.cfg.Mirrors(state.host),
 			GaveUp:    state.gaveUp,
 		}
 		if state.lastErr != nil {
-			info.LastError = state.lastErr.Error()
+			info.LastError = summarizeError(state.lastErr)
 		}
 		out = append(out, info)
 	}
@@ -1402,16 +1381,11 @@ func (d *Daemon) ensureWorkspace(state *hostSync, index *paneIndex) (string, err
 	if err != nil {
 		return "", err
 	}
-	var body struct {
-		Workspaces []struct {
-			WorkspaceID string `json:"workspace_id"`
-			Label       string `json:"label"`
-		} `json:"workspaces"`
+	workspaces, err := herdrcli.ParseWorkspaceList(result)
+	if err != nil {
+		return "", err
 	}
-	if err := json.Unmarshal(result, &body); err != nil {
-		return "", fmt.Errorf("parse workspace list: %w", err)
-	}
-	for _, ws := range body.Workspaces {
+	for _, ws := range workspaces {
 		if ws.Label == label || sameWorkspace(ws.Label, state.host.DisplayLabel()) {
 			state.workspaceID = ws.WorkspaceID
 			return ws.WorkspaceID, nil
@@ -1422,26 +1396,19 @@ func (d *Daemon) ensureWorkspace(state *hostSync, index *paneIndex) (string, err
 	if err != nil {
 		return "", err
 	}
-	var createdBody struct {
-		Workspace struct {
-			WorkspaceID string `json:"workspace_id"`
-		} `json:"workspace"`
-		RootPane struct {
-			PaneID string `json:"pane_id"`
-		} `json:"root_pane"`
-	}
-	if err := json.Unmarshal(created, &createdBody); err != nil {
-		return "", fmt.Errorf("parse workspace create: %w", err)
+	madeLocal, err := herdrcli.ParseCreated(created)
+	if err != nil {
+		return "", err
 	}
 
-	workspaceID := createdBody.Workspace.WorkspaceID
+	workspaceID := madeLocal.WorkspaceID
 	// Herdr opens a local shell with every new workspace. In a workspace that
 	// exists only to hold mirrors that is a stray local terminal, so remember
 	// it and close it once a mirror has taken its place. It cannot be closed
 	// now: a workspace with no panes at all closes itself.
 	state.workspaceID = workspaceID
 
-	if root := createdBody.RootPane.PaneID; root != "" {
+	if root := madeLocal.RootPane.PaneID; root != "" {
 		d.rootPanes[workspaceID] = root
 		// The index was captured before this workspace existed. Register the
 		// new pane so a split has something to target and so the placeholder

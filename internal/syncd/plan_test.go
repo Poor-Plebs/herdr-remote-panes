@@ -1,7 +1,10 @@
 package syncd
 
 import (
+	"errors"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 )
@@ -372,5 +375,64 @@ func TestPlanGiveUp(t *testing.T) {
 	}
 	if !planGiveUp(20) {
 		t.Error("a long-failing machine should stay left alone")
+	}
+}
+
+func TestSummarizeError(t *testing.T) {
+	// SSH prints fifteen lines of banner for a changed host key, which turned a
+	// status listing into a wall of text and buried the machine it belonged to.
+	hostKey := errors.New(`prod is not reachable over ssh: exit status 255: @@@@@@@@@@@@@@@@
+@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
+@@@@@@@@@@@@@@@@
+IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!
+Offending ECDSA key in /home/ounos/.ssh/known_hosts:113
+Host key verification failed.`)
+
+	got := summarizeError(hostKey)
+	if strings.Contains(got, "\n") {
+		t.Errorf("summary spans lines: %q", got)
+	}
+	if !strings.Contains(got, "host key changed") {
+		t.Errorf("summary = %q, want it to name the cause", got)
+	}
+
+	for in, want := range map[string]string{
+		"ssh: Permission denied (publickey).":  "ssh permission denied — check your key",
+		"connect: Connection refused":          "connection refused",
+		"ssh: Could not resolve hostname nope": "host name does not resolve",
+		"bot: no herdr on the remote host":     "herdr not found on the machine",
+	} {
+		if got := summarizeError(errors.New(in)); got != want {
+			t.Errorf("summarizeError(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	t.Run("an unrecognised failure keeps its first line", func(t *testing.T) {
+		if got := summarizeError(errors.New("something odd\nmore detail below")); got != "something odd" {
+			t.Errorf("got %q", got)
+		}
+	})
+
+	t.Run("a very long line is trimmed", func(t *testing.T) {
+		got := summarizeError(errors.New(strings.Repeat("x", 500)))
+		if n := len([]rune(got)); n > 90 {
+			t.Errorf("summary is %d characters, too long for a list", n)
+		}
+	})
+
+	t.Run("trimming does not split a character", func(t *testing.T) {
+		// Cutting by bytes would leave half a rune behind, which renders as a
+		// replacement character in the sidebar.
+		got := summarizeError(errors.New(strings.Repeat("☁", 500)))
+		if !utf8.ValidString(got) {
+			t.Errorf("summary is not valid UTF-8: %q", got)
+		}
+		if n := len([]rune(got)); n > 90 {
+			t.Errorf("summary is %d characters, too long", n)
+		}
+	})
+
+	if summarizeError(nil) != "" {
+		t.Error("no error should summarize to nothing")
 	}
 }

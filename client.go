@@ -53,12 +53,12 @@ func status() error {
 		case !h.Connected:
 			state = "error: " + h.LastError
 		}
-		kind := "mirrored"
+		count, kind := h.Mirrors, "mirrored"
 		if h.SSHOnly {
-			kind = "ssh panes (no herdr on host)"
+			count, kind = h.Terminals, "ssh"
 		}
-		fmt.Printf("%-24s %2d %s  %s\n", h.Label, h.Mirrors, kind, state)
-		summary = append(summary, fmt.Sprintf("%s (%d)", h.Label, h.Mirrors))
+		fmt.Printf("  %-22s %2d %-9s %s\n", h.Label, count, kind, state)
+		summary = append(summary, fmt.Sprintf("%s (%d)", h.Label, count))
 	}
 	if os.Getenv("HERDR_PLUGIN_ACTION_ID") != "" {
 		herdrcli.Notify("mirroring " + strings.Join(summary, ", "))

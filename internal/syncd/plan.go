@@ -3,6 +3,7 @@ package syncd
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 )
@@ -229,4 +230,53 @@ const maxHostAttempts = 2
 // which is an explicit "try now".
 func planGiveUp(consecutiveFailures int) bool {
 	return consecutiveFailures >= maxHostAttempts
+}
+
+// summarizeError reduces a failure to one line fit for a list.
+//
+// SSH is verbose when it refuses: a changed host key alone prints fifteen lines
+// of banner, which turns a status listing into a wall of text and buries the
+// machine it belongs to. The recognisable causes get a short phrase; anything
+// else keeps its first line.
+func summarizeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+
+	for _, known := range []struct{ needle, summary string }{
+		{"REMOTE HOST IDENTIFICATION HAS CHANGED", "host key changed — verify it, then update ~/.ssh/known_hosts"},
+		{"Host key verification failed", "host key not accepted"},
+		{"Permission denied", "ssh permission denied — check your key"},
+		{"Connection refused", "connection refused"},
+		{"Connection timed out", "connection timed out"},
+		{"Name or service not known", "host name does not resolve"},
+		{"Could not resolve hostname", "host name does not resolve"},
+		{"No route to host", "no route to host"},
+		{"no herdr on the remote host", "herdr not found on the machine"},
+	} {
+		if strings.Contains(message, known.needle) {
+			return known.summary
+		}
+	}
+
+	// Otherwise the first line, which is where the cause usually is.
+	if i := strings.IndexByte(message, '\n'); i >= 0 {
+		message = message[:i]
+	}
+	// Trimmed by runes, not bytes: a host name or path can be non-ASCII, and
+	// cutting mid-character would emit a broken rune into the sidebar.
+	return truncateRunes(strings.TrimSpace(message), 90)
+}
+
+// truncateRunes shortens a string to at most max characters, ellipsis included.
+func truncateRunes(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max < 1 {
+		return ""
+	}
+	return string(runes[:max-1]) + "…"
 }

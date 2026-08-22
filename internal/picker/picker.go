@@ -25,7 +25,10 @@ type Entry struct {
 	Configured bool
 	Connected  bool
 	Mirrors    int
-	SSHOnly    bool
+	// Terminals is how many plain SSH terminals the machine has open, which is
+	// what a machine in SSH mode has instead of mirrors.
+	Terminals int
+	SSHOnly   bool
 	// Mirroring reports whether this machine's terminals are kept in step,
 	// rather than being a plain SSH session.
 	Mirroring bool
@@ -163,6 +166,7 @@ func collect() ([]Entry, string) {
 		if entry, ok := byTarget[info.Target]; ok {
 			entry.Connected = info.Connected
 			entry.Mirrors = info.Mirrors
+			entry.Terminals = info.Terminals
 			entry.SSHOnly = info.SSHOnly
 			entry.Mirroring = info.Mirroring
 			entry.GaveUp = info.GaveUp
@@ -289,6 +293,8 @@ func draw(entries []Entry, selected int) {
 			line = red + "unreachable" + reset + dim + " · enter to retry" + reset
 		case entry.Connected && entry.Mirroring:
 			line = green + fmt.Sprintf("connected · %d mirrored", entry.Mirrors) + reset
+		case entry.Connected && entry.Terminals > 0:
+			line = green + fmt.Sprintf("connected · %d open", entry.Terminals) + reset
 		case entry.Connected:
 			line = green + "connected" + reset + dim + " · ssh" + reset
 		case entry.Configured:

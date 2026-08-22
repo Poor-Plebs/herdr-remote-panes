@@ -3,6 +3,7 @@ package herdrcli
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestDisplayName(t *testing.T) {
@@ -157,4 +158,78 @@ func TestOpenPaneArgs(t *testing.T) {
 			t.Errorf("args %v should carry both env vars in sorted order", args)
 		}
 	})
+}
+
+func TestDecodeToleratesNotices(t *testing.T) {
+	ok := `{"id":"x","result":{"type":"ok"}}`
+
+	tests := []struct {
+		name    string
+		out     string
+		wantErr bool
+	}{
+		{"a clean response", ok, false},
+		{"a trailing newline", ok + "\n", false},
+		{"blank lines around it", "\n\n" + ok + "\n\n", false},
+		{
+			// Herdr prints the occasional notice around its JSON, and reading
+			// the output as one document made any such line fail the command.
+			name: "a notice before the response",
+			out:  "note: a new version of herdr is available\n" + ok,
+		},
+		{"a notice after the response", ok + "\nnote: restart needed", false},
+		{"notices on both sides", "warning: x\n" + ok + "\nnote: y", false},
+		{"no response at all", "just noise\nand more noise", true},
+		{"empty output", "", false},
+		{
+			// An error envelope must still be reported as an error, not
+			// skipped over in search of a result.
+			name:    "an error envelope",
+			out:     `{"id":"x","error":{"code":"pane_not_found","message":"gone"}}`,
+			wantErr: true,
+		},
+		{
+			// A later result supersedes an earlier one.
+			name: "the last envelope wins",
+			out:  `{"id":"a","error":{"code":"e","message":"m"}}` + "\n" + ok,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Decode([]byte(tt.out), []string{"pane", "list"})
+			if tt.wantErr && err == nil {
+				t.Errorf("Decode(%q) = nil error, want one", tt.out)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("Decode(%q) = %v, want no error", tt.out, err)
+			}
+		})
+	}
+}
+
+func TestDecodeReadsMultiLineJSON(t *testing.T) {
+	// Herdr prints compact JSON today, but a response spread across lines is
+	// still a response and should not be rejected for its formatting.
+	pretty := "{\n  \"id\": \"x\",\n  \"result\": {\n    \"type\": \"ok\"\n  }\n}"
+	if _, err := Decode([]byte(pretty), []string{"pane", "list"}); err != nil {
+		t.Errorf("Decode(pretty-printed) = %v, want no error", err)
+	}
+}
+
+func TestTruncateKeepsValidUTF8(t *testing.T) {
+	// An unreadable response is quoted back in the error. Cutting it by bytes
+	// would leave half a character behind.
+	long := strings.Repeat("☁", 400)
+	got := truncate(long)
+	if !utf8.ValidString(got) {
+		t.Errorf("truncated text is not valid UTF-8")
+	}
+	if n := len([]rune(got)); n > 210 {
+		t.Errorf("truncated to %d characters, want about 200", n)
+	}
+	// Short text is untouched.
+	if got := truncate("fine"); got != "fine" {
+		t.Errorf("truncate(%q) = %q", "fine", got)
+	}
 }

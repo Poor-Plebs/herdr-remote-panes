@@ -94,13 +94,47 @@ func RunWith(env []string, args ...string) (json.RawMessage, error) {
 }
 
 // Decode unwraps a Herdr CLI JSON envelope, surfacing API errors as errors.
+//
+// The response is found line by line rather than by parsing the whole output.
+// Herdr prints the occasional notice — an available update, a banner — around
+// its JSON, and treating the output as a single document made any such line
+// fail every command with "unreadable response".
 func Decode(out []byte, args []string) (json.RawMessage, error) {
-	out = bytes.TrimSpace(out)
-	if len(out) == 0 {
-		return nil, nil
+	var (
+		found bool
+		env   envelope
+	)
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var candidate envelope
+		if err := json.Unmarshal(line, &candidate); err != nil {
+			continue
+		}
+		if candidate.Result == nil && candidate.Error == nil {
+			continue
+		}
+		// The last envelope wins: a command that reports progress before its
+		// result should be read by its result.
+		env, found = candidate, true
 	}
-	var env envelope
-	if err := json.Unmarshal(out, &env); err != nil {
+
+	if !found {
+		trimmed := bytes.TrimSpace(out)
+		if len(trimmed) == 0 {
+			return nil, nil
+		}
+		// Nothing on a line of its own parsed, so try the whole output: a
+		// response printed across several lines is still a valid response.
+		var whole envelope
+		if err := json.Unmarshal(trimmed, &whole); err == nil &&
+			(whole.Result != nil || whole.Error != nil) {
+			env, found = whole, true
+		}
+	}
+	if !found {
 		return nil, fmt.Errorf("herdr %s: unreadable response: %s",
 			strings.Join(args, " "), truncate(string(out)))
 	}
@@ -111,12 +145,16 @@ func Decode(out []byte, args []string) (json.RawMessage, error) {
 	return env.Result, nil
 }
 
+// truncate shortens a response for an error message. It counts characters, not
+// bytes: a response can carry non-ASCII text, and cutting mid-character would
+// put a broken rune into the error.
 func truncate(s string) string {
 	const max = 200
-	if len(s) <= max {
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
-	return s[:max] + "..."
+	return string(runes[:max]) + "..."
 }
 
 // PaneList returns every pane in the local session.
