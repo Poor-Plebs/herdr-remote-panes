@@ -80,3 +80,37 @@ func deadPID(t *testing.T) int {
 	_ = cmd.Wait()
 	return pid
 }
+
+func TestFailureMarks(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+
+	// A pane closes whether its bridge dropped or someone shut the terminal.
+	// Only the first records a failure, which is what tells them apart.
+	if Failed("w1:p2") {
+		t.Error("a pane with no record must not read as failed")
+	}
+	MarkFailed("w1:p2")
+	if !Failed("w1:p2") {
+		t.Error("a recorded failure should read as failed")
+	}
+	ClearFailed("w1:p2")
+	if Failed("w1:p2") {
+		t.Error("a cleared failure must not read as failed")
+	}
+}
+
+func TestFailureAndLivenessAreSeparate(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+
+	clear := markLive("w1:p3")
+	MarkFailed("w1:p3")
+	clear()
+
+	// Clearing liveness on exit must not erase why the pane went away.
+	if IsLive("w1:p3") {
+		t.Error("liveness should be cleared")
+	}
+	if !Failed("w1:p3") {
+		t.Error("the failure record should survive the liveness mark being cleared")
+	}
+}

@@ -104,6 +104,10 @@ space it opens a terminal there, anywhere else it opens a normal local one.
 **Closing a space closes those terminals here, not on the machine.** Your work
 keeps running over there. Run `connect` to bring the space back.
 
+**A dropped connection comes back on its own.** A terminal whose SSH link fails
+is reopened; one you close stays closed. Restarting Herdr restores the machines
+you had connected rather than leaving an empty sidebar.
+
 **Closing one terminal keeps it closed.** It will not reappear behind your back
 until that terminal goes away on the machine and comes back.
 

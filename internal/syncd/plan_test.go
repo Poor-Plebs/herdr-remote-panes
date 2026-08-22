@@ -294,3 +294,16 @@ func TestPlanSharedPanes(t *testing.T) {
 		}
 	})
 }
+
+func TestPlanLostPane(t *testing.T) {
+	// A dropped connection took the machine's whole space with it and nothing
+	// brought it back, so the machine looked disconnected until it was
+	// reconnected by hand.
+	if !planLostPane(true) {
+		t.Error("a terminal whose bridge failed should be reopened")
+	}
+	// Reopening a terminal someone just closed is worse than leaving it shut.
+	if planLostPane(false) {
+		t.Error("a terminal closed by hand should stay closed")
+	}
+}

@@ -43,14 +43,45 @@ const (
 // into the plugin state directory, and through the exit status.
 func Run() error {
 	err := bridge()
-	if err != nil {
+	if err != nil && !stopped.Load() {
+		// Closing a pane signals this process and makes the bridge exit with
+		// an error too, so a deliberate close would otherwise be recorded as a
+		// dropped connection and the terminal reopened underneath the user.
 		reportFailure(err)
 	}
 	return err
 }
 
+// stopped records that this process was asked to exit, which means the pane was
+// closed rather than the connection lost.
+var stopped atomic.Bool
+
+// watchForStop forwards a termination signal to the bridge and remembers that
+// the exit was asked for. The returned function stops watching.
+func watchForStop(proc *os.Process) func() {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-signals:
+			stopped.Store(true)
+			if proc != nil {
+				_ = proc.Signal(syscall.SIGTERM)
+			}
+		case <-done:
+		}
+	}()
+	return func() {
+		signal.Stop(signals)
+		close(done)
+	}
+}
+
 // reportFailure leaves a trace a user can actually find.
 func reportFailure(err error) {
+	MarkFailed(os.Getenv("HERDR_PANE_ID"))
+
 	name := os.Getenv(EnvName)
 	if name == "" {
 		name = os.Getenv(EnvTerminal)
@@ -107,7 +138,13 @@ func shell(client *remote.Client) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("%w running: %s", err, strings.Join(argv, " "))
+	}
+	stop := watchForStop(cmd.Process)
+	defer stop()
+
+	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("%w running: %s", err, strings.Join(argv, " "))
 	}
 	return nil
@@ -140,24 +177,10 @@ func attach(client *remote.Client, terminal string) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("%w running: %s", err, strings.Join(argv, " "))
 	}
+	stop := watchForStop(cmd.Process)
+	defer stop()
 
-	// Closing a pane signals its process; pass that on so the SSH client — and
-	// with it the remote attach — goes away instead of being orphaned.
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
-	defer signal.Stop(stop)
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-stop:
-			_ = cmd.Process.Signal(syscall.SIGTERM)
-		case <-done:
-		}
-	}()
-
-	err = cmd.Wait()
-	close(done)
-	if err != nil {
+	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("%w running: %s", err, strings.Join(argv, " "))
 	}
 	return nil

@@ -172,3 +172,14 @@ func planSharedPanes(panes []herdrcli.Pane, sharedWorkspace string, tabOrder map
 	})
 	return selected
 }
+
+// planLostPane decides whether a pane that has gone should be reopened.
+//
+// A pane closes both when its bridge drops and when someone shuts the terminal,
+// and the two need opposite responses: reopening a terminal someone just closed
+// is infuriating, and never recovering from a dropped connection leaves the
+// machine looking disconnected until it is reconnected by hand. The bridge
+// records a failure on its way out, which tells them apart.
+func planLostPane(failed bool) bool {
+	return failed
+}

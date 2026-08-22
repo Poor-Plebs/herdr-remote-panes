@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 )
 
 // Liveness marks which panes currently have a mirror process running.
@@ -64,6 +65,47 @@ func IsLive(paneID string) bool {
 	}
 	// Signal 0 checks for existence without delivering anything.
 	return syscall.Kill(pid, 0) == nil
+}
+
+// failurePath marks a pane whose bridge exited with an error, as opposed to
+// one closed deliberately. A pane closes either way, so without this the daemon
+// cannot tell a dropped connection from someone shutting a terminal, and would
+// have to choose between never recovering and reopening what was just closed.
+func failurePath(paneID string) string {
+	dir := livenessDir()
+	if dir == "" || paneID == "" {
+		return ""
+	}
+	return filepath.Join(dir, sanitizePaneID(paneID)+".failed")
+}
+
+// MarkFailed records that a pane's bridge died of an error.
+func MarkFailed(paneID string) {
+	path := failurePath(paneID)
+	if path == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(path, []byte(strconv.FormatInt(time.Now().Unix(), 10)), 0o600)
+}
+
+// Failed reports whether a pane's bridge died of an error.
+func Failed(paneID string) bool {
+	path := failurePath(paneID)
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// ClearFailed forgets a recorded failure, once it has been acted on.
+func ClearFailed(paneID string) {
+	if path := failurePath(paneID); path != "" {
+		_ = os.Remove(path)
+	}
 }
 
 // ClearLive removes a stale mark, for panes the daemon has given up on.

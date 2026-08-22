@@ -78,12 +78,21 @@ type hostSync struct {
 	// strays is what the last pass decided to move onto the machine, each with
 	// the placement to recreate it as. Acted on after the lock is released.
 	strays []strayPane
+	// reopenShell asks for a replacement SSH terminal, acted on once the lock
+	// is released because opening one takes it again.
+	reopenShell bool
 
 	// sshOnly marks a host used through plain SSH panes: it has no Herdr, so
 	// there is nothing to discover or mirror and reconcile leaves it alone.
 	sshOnly bool
 	// shells counts plain SSH panes opened for this host, to name them.
 	shells int
+	// shellPanes are the plain SSH panes opened for this host, watched so one
+	// whose connection drops can be brought back.
+	shellPanes map[string]bool
+	// restoreShells is how many plain SSH terminals this host had before the
+	// daemon restarted, used to bring the connection back.
+	restoreShells int
 
 	// adopted marks that the first reconcile after a restart has run. Until it
 	// does, mirrors restored from the snapshot whose panes are gone are stale
@@ -536,6 +545,9 @@ func (d *Daemon) openShellPane(state *hostSync) error {
 		return err
 	}
 	index.add(pane)
+	d.mu.Lock()
+	state.shellPanes[pane.PaneID] = true
+	d.mu.Unlock()
 	d.retitle(pane.PaneID, d.label(state.host, herdrcli.Pane{}, name))
 	d.retireRootPane(workspaceID, index)
 	return nil
@@ -598,11 +610,13 @@ func (d *Daemon) connect(host config.Host) error {
 			pendingPlacement: map[string]string{},
 			pendingFocus:     map[string]bool{},
 			seenStray:        map[string]bool{},
+			shellPanes:       map[string]bool{},
 		}
 		if saved, ok := d.snapshot.Hosts[host.Target]; ok {
 			for terminalID, paneID := range saved.Mirrors {
 				state.mirrors[terminalID] = paneID
 			}
+			state.restoreShells = saved.Shells
 		}
 		d.hosts[host.Target] = state
 	}
@@ -829,8 +843,16 @@ func (d *Daemon) reconcileAll() {
 		d.mu.Lock()
 		strays := state.strays
 		state.strays = nil
+		reopen := state.reopenShell
+		state.reopenShell = false
 		d.mu.Unlock()
+
 		d.captureStrayPanes(state, strays)
+		if reopen {
+			if err := d.openShellPane(state); err != nil {
+				log.Printf("reopen terminal on %s: %v", state.host.Target, err)
+			}
+		}
 	}
 }
 
@@ -848,7 +870,11 @@ func (d *Daemon) persist() {
 			dismissed = append(dismissed, terminalID)
 		}
 		sort.Strings(dismissed)
-		current.Hosts[target] = hostSnapshot{Mirrors: mirrors, Dismissed: dismissed}
+		current.Hosts[target] = hostSnapshot{
+			Mirrors:   mirrors,
+			Dismissed: dismissed,
+			Shells:    len(state.shellPanes),
+		}
 	}
 	d.snapshot = current
 	d.mu.Unlock()
@@ -860,9 +886,59 @@ func (d *Daemon) persist() {
 
 // reconcileHost brings one host's mirrors in line with its remote panes.
 func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
-	// A plain SSH host exposes no panes to discover, and its panes were opened
-	// deliberately, so there is nothing to add or retire here.
+	// A plain SSH host exposes no panes to discover, so there is nothing to add
+	// or retire. Its terminals are still watched, because one whose connection
+	// drops would otherwise take the machine's whole space with it.
 	if state.sshOnly {
+		state.strays = nil
+
+		// A Herdr restart leaves the machine with no terminals and nothing to
+		// discover, so the space would simply be missing. Bring back what was
+		// open rather than making the connection look lost.
+		if !state.adopted {
+			state.adopted = true
+			if state.restoreShells > 0 {
+				workspaceID, wsErr := d.ensureWorkspace(state, index)
+				if wsErr != nil {
+					return wsErr
+				}
+				// Herdr restores a plugin pane as a plain shell without
+				// re-running its command, so what is left in the space are
+				// husks wearing the old name. Clear them before reopening.
+				live := 0
+				for _, paneID := range index.panesIn[workspaceID] {
+					if mirror.IsLive(paneID) {
+						live++
+						state.shellPanes[paneID] = true
+						continue
+					}
+					if err := herdrcli.ClosePaneByID(paneID); err != nil {
+						log.Printf("close stale terminal %s: %v", paneID, err)
+					}
+					mirror.ClearLive(paneID)
+					mirror.ClearFailed(paneID)
+					delete(index.alive, paneID)
+				}
+				if live == 0 {
+					log.Printf("%s: restoring terminal after restart", state.host.Target)
+					state.reopenShell = true
+					return nil
+				}
+			}
+		}
+
+		for paneID := range state.shellPanes {
+			if index.alive[paneID] {
+				continue
+			}
+			delete(state.shellPanes, paneID)
+			if planLostPane(mirror.Failed(paneID)) {
+				log.Printf("%s: terminal %s dropped, reopening", state.host.Target, paneID)
+				state.reopenShell = true
+			}
+			mirror.ClearFailed(paneID)
+			mirror.ClearLive(paneID)
+		}
 		return nil
 	}
 

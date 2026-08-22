@@ -101,6 +101,9 @@ type hostSnapshot struct {
 	Mirrors map[string]string `json:"mirrors"`
 	// Dismissed are mirrors the user closed by hand.
 	Dismissed []string `json:"dismissed,omitempty"`
+	// Shells is how many plain SSH terminals this machine had open, so a
+	// restart restores the connection rather than leaving an empty sidebar.
+	Shells int `json:"shells,omitempty"`
 }
 
 // snapshotPath is per session, matching the control socket.
