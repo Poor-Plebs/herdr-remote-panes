@@ -77,6 +77,8 @@ type hostSync struct {
 	// replacing a pane someone just created leaves them in the new terminal
 	// rather than back where they started.
 	pendingFocus map[string]bool
+	// labels is the name last applied to each of this host's panes.
+	labels map[string]string
 	// seenStray records local panes in this host's space that were noticed and
 	// left alone, so a pane is only considered for capture once.
 	seenStray map[string]bool
@@ -565,7 +567,7 @@ func (d *Daemon) openShellPane(state *hostSync) error {
 	d.mu.Lock()
 	state.shellPanes[pane.PaneID] = true
 	d.mu.Unlock()
-	d.retitle(pane.PaneID, d.label(state.host, herdrcli.Pane{}, name))
+	d.retitle(state, pane.PaneID, d.label(state.host, herdrcli.Pane{}, name))
 	d.retireRootPane(workspaceID, index)
 	return nil
 }
@@ -639,6 +641,7 @@ func (d *Daemon) connect(host config.Host) error {
 			reportedAgents:   map[string]agentReport{},
 			pendingPlacement: map[string]string{},
 			pendingFocus:     map[string]bool{},
+			labels:           map[string]string{},
 			seenStray:        map[string]bool{},
 			shellPanes:       map[string]bool{},
 		}
@@ -987,8 +990,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 					if err := herdrcli.ClosePaneByID(paneID); err != nil {
 						log.Printf("close stale terminal %s: %v", paneID, err)
 					}
-					mirror.ClearLive(paneID)
-					mirror.ClearFailed(paneID)
+					d.forgetPane(state, paneID)
 					delete(index.alive, paneID)
 				}
 				if live == 0 {
@@ -1005,7 +1007,6 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 				state.shellFailures = 0
 				continue
 			}
-			delete(state.shellPanes, paneID)
 			if planLostPane(mirror.Failed(paneID)) {
 				state.shellFailures++
 				if planGiveUp(state.shellFailures) {
@@ -1018,8 +1019,9 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 					state.reopenShell = true
 				}
 			}
-			mirror.ClearFailed(paneID)
-			mirror.ClearLive(paneID)
+			// Read the failure marker before forgetting the pane, since that
+			// is what tells a dropped link from a deliberate close.
+			d.forgetPane(state, paneID)
 		}
 
 		// With no terminal up, nothing else here ever talks to the machine, so
@@ -1040,8 +1042,10 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		case mirrorKeep:
 		case mirrorForget:
 			delete(state.mirrors, terminalID)
+			d.forgetPane(state, paneID)
 		case mirrorDismiss:
 			delete(state.mirrors, terminalID)
+			d.forgetPane(state, paneID)
 			state.dismissed[terminalID] = true
 			closedHere = append(closedHere, terminalID)
 		case mirrorReplace:
@@ -1049,7 +1053,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 			if err := herdrcli.ClosePaneByID(paneID); err != nil {
 				log.Printf("close stale mirror %s: %v", paneID, err)
 			}
-			mirror.ClearLive(paneID)
+			d.forgetPane(state, paneID)
 			delete(index.alive, paneID)
 			delete(state.mirrors, terminalID)
 		}
@@ -1106,7 +1110,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 
 		label := labels[rp.TerminalID]
 		if paneID, ok := state.mirrors[rp.TerminalID]; ok {
-			d.retitle(paneID, label)
+			d.retitle(state, paneID, label)
 			d.syncAgent(state, paneID, rp)
 			continue
 		}
@@ -1139,9 +1143,8 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 			if err := herdrcli.ClosePane(paneID); err != nil {
 				log.Printf("close mirror %s: %v", paneID, err)
 			}
-			mirror.ClearLive(paneID)
+			d.forgetPane(state, paneID)
 			delete(state.mirrors, terminalID)
-			delete(state.reportedAgents, paneID)
 		}
 	}
 	for terminalID := range state.dismissed {
@@ -1269,19 +1272,33 @@ func (d *Daemon) syncAgent(state *hostSync, paneID string, rp herdrcli.Pane) {
 	state.reportedAgents[paneID] = want
 }
 
-// labels tracks the last label applied to each mirror so reconcile does not
-// rename a pane on every poll.
-var labels sync.Map // paneID -> label
-
-func (d *Daemon) retitle(paneID, label string) {
-	if prev, ok := labels.Load(paneID); ok && prev.(string) == label {
+// retitle names a pane, skipping the call when it already carries that name so
+// reconcile does not rename everything on every poll.
+//
+// What was applied is remembered per host and forgotten when the pane goes.
+// Herdr reuses pane ids, so a cache that outlived the pane would decide a
+// recycled id already had its name and skip the rename — leaving the new mirror
+// showing Herdr's default plugin pane title instead of the machine's.
+func (d *Daemon) retitle(state *hostSync, paneID, label string) {
+	if state.labels[paneID] == label {
 		return
 	}
 	if err := herdrcli.RenamePane(paneID, label); err != nil {
 		log.Printf("rename %s: %v", paneID, err)
 		return
 	}
-	labels.Store(paneID, label)
+	state.labels[paneID] = label
+}
+
+// forgetPane drops everything remembered about a pane that has gone, so a
+// recycled id starts clean.
+func (d *Daemon) forgetPane(state *hostSync, paneID string) {
+	delete(state.labels, paneID)
+	delete(state.reportedAgents, paneID)
+	delete(state.shellPanes, paneID)
+	delete(state.seenStray, paneID)
+	mirror.ClearLive(paneID)
+	mirror.ClearFailed(paneID)
 }
 
 // labelsFor names every mirror from one host, keeping them distinguishable.
@@ -1364,7 +1381,7 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, ind
 
 	index.add(pane)
 	state.mirrors[rp.TerminalID] = pane.PaneID
-	d.retitle(pane.PaneID, label)
+	d.retitle(state, pane.PaneID, label)
 	d.retireRootPane(workspaceID, index)
 	return nil
 }
