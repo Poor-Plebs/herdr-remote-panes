@@ -43,13 +43,21 @@ const (
 // into the plugin state directory, and through the exit status.
 func Run() error {
 	err := bridge()
-	if err != nil && !stopped.Load() {
-		// Closing a pane signals this process and makes the bridge exit with
-		// an error too, so a deliberate close would otherwise be recorded as a
-		// dropped connection and the terminal reopened underneath the user.
+	if shouldReportFailure(err, stopped.Load()) {
 		reportFailure(err)
 	}
 	return err
+}
+
+// shouldReportFailure reports whether an exit was a dropped connection rather
+// than a deliberate close.
+//
+// Closing a pane signals this process, which makes the bridge exit with an
+// error too, so the error alone cannot tell them apart. Getting this backwards
+// means either reopening a terminal someone just closed, or never recovering
+// from a dropped link.
+func shouldReportFailure(err error, askedToStop bool) bool {
+	return err != nil && !askedToStop
 }
 
 // stopped records that this process was asked to exit, which means the pane was

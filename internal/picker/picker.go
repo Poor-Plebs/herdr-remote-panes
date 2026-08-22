@@ -38,7 +38,13 @@ type SetMode func(target, mode string) (string, error)
 // Run draws the menu and connects to whatever the user picks. It returns when
 // the user chooses or cancels; the pane closes as soon as it returns.
 func Run(connect Connect, setMode SetMode) error {
-	entries := collect()
+	entries, warning := collect()
+	if warning != "" {
+		// A machine silently missing from the menu is worse than an ugly menu:
+		// it looks like the plugin forgot it.
+		fmt.Printf("\r\n  %s\r\n\r\n  Press any key.\r\n", warning)
+		waitForKey()
+	}
 	if len(entries) == 0 {
 		fmt.Print("\r\nNo machines found.\r\n\r\nAdd hosts to ~/.ssh/config or to the plugin's config.json.\r\n")
 		waitForKey()
@@ -76,7 +82,7 @@ func Run(connect Connect, setMode SetMode) error {
 				fmt.Printf("\r\n  Could not change %s: %v\r\n\r\n  Press any key.\r\n", entry.Target, err)
 				readKey()
 			}
-			entries = collect()
+			entries, _ = collect()
 			if selected >= len(entries) {
 				selected = 0
 			}
@@ -105,10 +111,14 @@ func choose(entry Entry, connect Connect) error {
 
 // collect merges the machines from the SSH config with those in the plugin
 // config, and marks which are already connected.
-func collect() []Entry {
+func collect() ([]Entry, string) {
+	// A config that cannot be read would otherwise drop every machine that is
+	// only listed there, leaving the menu quietly incomplete.
+	warning := ""
 	cfg, err := config.Load()
 	if err != nil {
 		cfg = config.Defaults()
+		warning = fmt.Sprintf("Could not read the plugin config, so only ~/.ssh/config machines are listed: %v", err)
 	}
 
 	byTarget := map[string]*Entry{}
@@ -153,7 +163,7 @@ func collect() []Entry {
 	sort.SliceStable(entries, func(i, j int) bool {
 		return entries[i].Configured && !entries[j].Configured
 	})
-	return entries
+	return entries, warning
 }
 
 // status asks the daemon what it is currently mirroring. A daemon that is not

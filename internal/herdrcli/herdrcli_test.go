@@ -1,6 +1,9 @@
 package herdrcli
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDisplayName(t *testing.T) {
 	tests := []struct {
@@ -85,4 +88,73 @@ func TestAgentState(t *testing.T) {
 			t.Errorf("AgentState(%q) = %q, want %q", status, got, want)
 		}
 	}
+}
+
+func TestOpenPaneArgs(t *testing.T) {
+	// Herdr rejects the wrong combination of targeting flags with
+	// invalid_params, and ignores a flag name it does not know, so both are
+	// worth pinning: neither failure is visible without reading the response.
+	find := func(args []string, flag string) (string, bool) {
+		for i, a := range args {
+			if a == flag && i+1 < len(args) {
+				return args[i+1], true
+			}
+		}
+		return "", false
+	}
+	has := func(args []string, flag string) bool {
+		for _, a := range args {
+			if a == flag {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("a split targets a pane", func(t *testing.T) {
+		args := openPaneArgs(OpenOptions{
+			PluginID: "p", Entrypoint: "mirror",
+			Placement: "split", TargetPane: "w1:p1",
+		})
+		if got, ok := find(args, "--target-pane"); !ok || got != "w1:p1" {
+			t.Errorf("args %v missing --target-pane w1:p1", args)
+		}
+		if has(args, "--workspace") {
+			t.Errorf("args %v must not send --workspace with a split", args)
+		}
+	})
+
+	t.Run("a tab targets a workspace", func(t *testing.T) {
+		args := openPaneArgs(OpenOptions{
+			PluginID: "p", Entrypoint: "mirror",
+			Placement: "tab", Workspace: "w1",
+		})
+		if got, ok := find(args, "--workspace"); !ok || got != "w1" {
+			t.Errorf("args %v missing --workspace w1", args)
+		}
+		if has(args, "--target-pane") {
+			t.Errorf("args %v must not send --target-pane with a tab", args)
+		}
+	})
+
+	t.Run("focus is explicit either way", func(t *testing.T) {
+		// Herdr focuses by default, so a mirror opening in the background has
+		// to say so, or every new pane steals focus.
+		if !has(openPaneArgs(OpenOptions{Focus: true}), "--focus") {
+			t.Error("a focused pane should pass --focus")
+		}
+		if !has(openPaneArgs(OpenOptions{Focus: false}), "--no-focus") {
+			t.Error("an unfocused pane should pass --no-focus")
+		}
+	})
+
+	t.Run("environment is passed as repeated flags in a stable order", func(t *testing.T) {
+		args := openPaneArgs(OpenOptions{
+			Env: map[string]string{"HRP_TARGET": "bot", "HRP_MODE": "ssh"},
+		})
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "--env HRP_MODE=ssh --env HRP_TARGET=bot") {
+			t.Errorf("args %v should carry both env vars in sorted order", args)
+		}
+	})
 }

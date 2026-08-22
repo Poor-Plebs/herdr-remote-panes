@@ -183,3 +183,14 @@ func planSharedPanes(panes []herdrcli.Pane, sharedWorkspace string, tabOrder map
 func planLostPane(failed bool) bool {
 	return failed
 }
+
+// planRestoreShell decides whether a plain SSH machine needs a terminal
+// reopened after the daemon restarts.
+//
+// Such a machine has nothing to discover: its terminals do not survive a Herdr
+// restart and there is nothing running remotely to re-derive them from, so
+// without this the machine is simply missing from the sidebar afterwards. Only
+// machines that had a terminal open get one back; connecting is not implied.
+func planRestoreShell(hadShells, liveShells int) bool {
+	return hadShells > 0 && liveShells == 0
+}

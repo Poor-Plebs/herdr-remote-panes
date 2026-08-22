@@ -307,3 +307,19 @@ func TestPlanLostPane(t *testing.T) {
 		t.Error("a terminal closed by hand should stay closed")
 	}
 }
+
+func TestPlanRestoreShell(t *testing.T) {
+	// A plain SSH machine has nothing to discover, so after a Herdr restart it
+	// was simply missing from the sidebar with no way back but reconnecting.
+	if !planRestoreShell(1, 0) {
+		t.Error("a machine that had a terminal should get one back")
+	}
+	// Its terminals survived, so nothing is needed.
+	if planRestoreShell(1, 1) {
+		t.Error("a machine whose terminal is alive should be left alone")
+	}
+	// Connecting is not implied: a machine nobody connected to stays absent.
+	if planRestoreShell(0, 0) {
+		t.Error("a machine with no terminals should not gain one")
+	}
+}

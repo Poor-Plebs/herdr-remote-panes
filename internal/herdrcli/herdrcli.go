@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"sort"
 	"strings"
 )
 
@@ -153,35 +154,7 @@ type OpenOptions struct {
 
 // OpenPane opens a plugin-owned pane and returns the pane Herdr created.
 func OpenPane(opts OpenOptions) (Pane, error) {
-	args := []string{"plugin", "pane", "open",
-		"--plugin", opts.PluginID,
-		"--entrypoint", opts.Entrypoint,
-	}
-	if opts.Placement != "" {
-		args = append(args, "--placement", opts.Placement)
-	}
-	if opts.Workspace != "" {
-		args = append(args, "--workspace", opts.Workspace)
-	}
-	if opts.TargetPane != "" {
-		args = append(args, "--target-pane", opts.TargetPane)
-	}
-	if opts.Direction != "" {
-		args = append(args, "--direction", opts.Direction)
-	}
-	if opts.Cwd != "" {
-		args = append(args, "--cwd", opts.Cwd)
-	}
-	for k, v := range opts.Env {
-		args = append(args, "--env", k+"="+v)
-	}
-	if opts.Focus {
-		args = append(args, "--focus")
-	} else {
-		args = append(args, "--no-focus")
-	}
-
-	result, err := Run(args...)
+	result, err := Run(openPaneArgs(opts)...)
 	if err != nil {
 		return Pane{}, err
 	}
@@ -212,6 +185,45 @@ func parseOpenedPane(result json.RawMessage) (Pane, error) {
 		return Pane{}, fmt.Errorf("plugin pane open returned no pane id: %s", truncate(string(result)))
 	}
 	return pane, nil
+}
+
+// openPaneArgs renders a plugin pane request as CLI arguments. Kept separate
+// so the flag names, which Herdr rejects silently when wrong, can be tested.
+func openPaneArgs(opts OpenOptions) []string {
+	args := []string{"plugin", "pane", "open",
+		"--plugin", opts.PluginID,
+		"--entrypoint", opts.Entrypoint,
+	}
+	if opts.Placement != "" {
+		args = append(args, "--placement", opts.Placement)
+	}
+	if opts.Workspace != "" {
+		args = append(args, "--workspace", opts.Workspace)
+	}
+	if opts.TargetPane != "" {
+		args = append(args, "--target-pane", opts.TargetPane)
+	}
+	if opts.Direction != "" {
+		args = append(args, "--direction", opts.Direction)
+	}
+	if opts.Cwd != "" {
+		args = append(args, "--cwd", opts.Cwd)
+	}
+	// Sorted so the command is stable, which keeps logs and tests readable.
+	keys := make([]string, 0, len(opts.Env))
+	for k := range opts.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		args = append(args, "--env", k+"="+opts.Env[k])
+	}
+	if opts.Focus {
+		args = append(args, "--focus")
+	} else {
+		args = append(args, "--no-focus")
+	}
+	return args
 }
 
 // RenamePane sets a pane's display label.
