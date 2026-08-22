@@ -3,6 +3,7 @@ package picker
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -125,5 +126,61 @@ func TestVisibleWindow(t *testing.T) {
 				t.Errorf("selected %d is outside the window %d..%d", tt.selected, first, last)
 			}
 		})
+	}
+}
+
+func TestParseKey(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  key
+	}{
+		// A terminal in application cursor mode sends ESC O A for Up rather
+		// than ESC [ A. Handling only the second form left the arrow keys
+		// silently dead, with j/k the only way to move.
+		{"up, normal mode", "\x1b[A", keyUp},
+		{"up, application mode", "\x1bOA", keyUp},
+		{"down, normal mode", "\x1b[B", keyDown},
+		{"down, application mode", "\x1bOB", keyDown},
+
+		{"page up", "\x1b[5~", keyPageUp},
+		{"page down", "\x1b[6~", keyPageDown},
+		{"home", "\x1b[H", keyTop},
+		{"end", "\x1b[F", keyBottom},
+		{"home, numeric", "\x1b[1~", keyTop},
+		{"end, numeric", "\x1b[4~", keyBottom},
+
+		{"k moves up", "k", keyUp},
+		{"j moves down", "j", keyDown},
+		{"g jumps to the top", "g", keyTop},
+		{"G jumps to the end", "G", keyBottom},
+		{"enter selects", "\r", keyEnter},
+		{"q cancels", "q", keyQuit},
+		{"m toggles", "m", keyToggle},
+		{"ctrl+c cancels", "\x03", keyQuit},
+		{"bare escape cancels", "\x1b", keyQuit},
+		{"a digit is passed through", "3", key('3')},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseKey(strings.NewReader(tt.input)); got != tt.want {
+				t.Errorf("parseKey(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMove(t *testing.T) {
+	// Paging past either end should stop there. Wrapping from the bottom back
+	// to the top is disorienting when the jump is a whole page.
+	if got := move(0, -5, 6); got != 0 {
+		t.Errorf("paging up from the top = %d, want 0", got)
+	}
+	if got := move(5, 5, 6); got != 5 {
+		t.Errorf("paging down from the end = %d, want 5", got)
+	}
+	if got := move(2, 2, 6); got != 4 {
+		t.Errorf("paging down = %d, want 4", got)
 	}
 }

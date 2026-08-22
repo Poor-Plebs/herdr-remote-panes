@@ -61,8 +61,10 @@ machine. That is all — see [Machines without Herdr](#machines-without-herdr).
 
 The `menu` action opens a popup listing every machine from your `~/.ssh/config`
 and from this plugin's config, showing which are connected. Move with the arrow
-keys or `j`/`k`, jump with `1`-`9`, `enter` to connect, `q` to cancel. Machines
-picked from the menu do not have to be in `config.json` first.
+keys or `j`/`k`, page with `PgUp`/`PgDn`, jump to either end with `g`/`G`, pick
+one directly with `1`-`9`, `enter` to connect, `q` to cancel. The list scrolls,
+so a long `~/.ssh/config` is fine. Machines picked from the menu do not have to
+be in `config.json` first.
 
 `m` toggles mirroring for the highlighted machine and remembers it. Without it
 you get a plain SSH terminal, which needs nothing on the far side.

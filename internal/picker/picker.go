@@ -3,6 +3,7 @@ package picker
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -65,6 +66,14 @@ func Run(connect Connect, setMode SetMode) error {
 			selected = (selected - 1 + len(entries)) % len(entries)
 		case keyDown:
 			selected = (selected + 1) % len(entries)
+		case keyPageUp:
+			selected = move(selected, -pageStep(), len(entries))
+		case keyPageDown:
+			selected = move(selected, pageStep(), len(entries))
+		case keyTop:
+			selected = 0
+		case keyBottom:
+			selected = len(entries) - 1
 		case keyQuit:
 			clear()
 			return nil
@@ -191,6 +200,29 @@ func clear() {
 	fmt.Print(esc + "[2J" + esc + "[H")
 }
 
+// move shifts the selection by n, stopping at either end rather than wrapping,
+// which is what paging past the edge should do.
+func move(selected, n, count int) int {
+	next := selected + n
+	if next < 0 {
+		return 0
+	}
+	if next >= count {
+		return count - 1
+	}
+	return next
+}
+
+// pageStep is how far a page key moves, derived from the popup height.
+func pageStep() int {
+	_, rows := windowSize()
+	step := rows - 4
+	if step < 1 {
+		step = 1
+	}
+	return step
+}
+
 // visibleWindow picks the slice of entries to show, keeping the selected one
 // on screen.
 //
@@ -264,7 +296,7 @@ func draw(entries []Entry, selected int) {
 	if last < len(entries) || first > 0 {
 		b.WriteString("  " + dim + fmt.Sprintf("showing %d-%d of %d", first+1, last, len(entries)) + reset + "\r\n")
 	}
-	b.WriteString("  " + dim + "↑↓ move · 1-9 jump · enter connect" + reset + "\r\n")
+	b.WriteString("  " + dim + "↑↓ jk move · pgup/pgdn g/G jump · 1-9 pick · enter connect" + reset + "\r\n")
 	b.WriteString("  " + dim + "m toggle mirroring (experimental) · q cancel" + reset)
 	fmt.Print(b.String())
 }
@@ -293,23 +325,42 @@ func windowSize() (cols, rows int) {
 type key rune
 
 const (
-	keyUp     key = 0xE000
-	keyDown   key = 0xE001
-	keyEnter  key = 0xE002
-	keyQuit   key = 0xE003
-	keyNone   key = 0xE004
-	keyToggle key = 0xE005
+	keyUp       key = 0xE000
+	keyDown     key = 0xE001
+	keyEnter    key = 0xE002
+	keyQuit     key = 0xE003
+	keyNone     key = 0xE004
+	keyToggle   key = 0xE005
+	keyPageUp   key = 0xE006
+	keyPageDown key = 0xE007
+	keyTop      key = 0xE008
+	keyBottom   key = 0xE009
 )
 
-// readKey reads one keypress, translating the arrow-key escape sequences.
+// readKey reads one keypress from the popup.
 func readKey() key {
-	buf := make([]byte, 3)
-	n, err := os.Stdin.Read(buf[:1])
-	if err != nil || n == 0 {
+	return parseKey(os.Stdin)
+}
+
+// parseKey reads one keypress, translating the escape sequences a terminal
+// sends for arrows and paging.
+//
+// Both cursor-key encodings are handled: a terminal in application mode sends
+// ESC O A for Up rather than ESC [ A, and reading only the second form leaves
+// the arrow keys dead with no clue why.
+func parseKey(r io.Reader) key {
+	var buf [1]byte
+	read := func() (byte, bool) {
+		n, err := r.Read(buf[:])
+		return buf[0], err == nil && n == 1
+	}
+
+	first, ok := read()
+	if !ok {
 		return keyQuit
 	}
 
-	switch buf[0] {
+	switch first {
 	case '\r', '\n':
 		return keyEnter
 	case 'q', 'Q', 3: // 3 is ctrl+c
@@ -320,20 +371,51 @@ func readKey() key {
 		return keyUp
 	case 'j':
 		return keyDown
+	case 'g':
+		return keyTop
+	case 'G':
+		return keyBottom
 	case 0x1b:
-		// Either a bare Escape or an arrow key.
-		if n, _ := os.Stdin.Read(buf[1:3]); n == 2 && buf[1] == '[' {
-			switch buf[2] {
-			case 'A':
-				return keyUp
-			case 'B':
-				return keyDown
-			}
-			return keyNone
+		// Bare Escape, or the start of a sequence.
+		intro, ok := read()
+		if !ok {
+			return keyQuit
 		}
-		return keyQuit
+		if intro != '[' && intro != 'O' {
+			return keyQuit
+		}
+		code, ok := read()
+		if !ok {
+			return keyQuit
+		}
+		switch code {
+		case 'A':
+			return keyUp
+		case 'B':
+			return keyDown
+		case 'H':
+			return keyTop
+		case 'F':
+			return keyBottom
+		case '5', '6', '1', '4':
+			// A numeric sequence, terminated by '~'.
+			if tilde, ok := read(); !ok || tilde != '~' {
+				return keyNone
+			}
+			switch code {
+			case '5':
+				return keyPageUp
+			case '6':
+				return keyPageDown
+			case '1':
+				return keyTop
+			case '4':
+				return keyBottom
+			}
+		}
+		return keyNone
 	}
-	return key(buf[0])
+	return key(first)
 }
 
 func waitForKey() {
