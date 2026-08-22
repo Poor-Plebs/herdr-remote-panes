@@ -113,19 +113,28 @@ The difference is that nothing syncs for such a machine: terminals exist
 because you opened them. Terminals appearing and disappearing on their own is
 the part that needs Herdr on both ends.
 
-## Which session gets mirrored
+## Seeing it on the machine itself
 
-On each machine, the plugin uses a Herdr session called `remote`, started for
-you over SSH, so it never disturbs whatever you already have running there. To
-watch it on the machine itself:
+The panes live in a Herdr session called `remote` on each machine, started for
+you over SSH, so mirroring never disturbs whatever you already had running
+there. That also means plain `herdr` on the machine shows its **own** default
+session, not the mirrored one. To see the shared terminals:
 
 ```bash
 ssh workbox
 herdr --session remote
 ```
 
-You will see the same terminals. Plain `herdr` there shows that machine's own
-default session instead, which is not what gets mirrored.
+They are grouped in a space named after *your* machine — `☁  L14` rather than
+`☁  workbox` — so from the machine's side it is clear whose panes they are.
+Change it with `remote_workspace_format`.
+
+If you would rather the terminals just be in that machine's normal session, so
+plain `herdr` there shows them, set the session to `default`:
+
+```json
+{ "target": "workbox", "session": "default" }
+```
 
 ## Settings
 
@@ -141,7 +150,8 @@ All optional, in `config.json`:
 | `placement` | `split` | `split`, `tab` or `zoomed` |
 | `poll_interval` | `2s` | How often machines are checked |
 | `max_mirrors` | `32` | Most terminals to show per machine |
-| `session` | `remote` | Which Herdr session to mirror |
+| `session` | `remote` | Which Herdr session on the machine to mirror; `default` for its normal one |
+| `remote_workspace_format` | `☁  {hub}` | How the space is named *on the machine*, `{hub}` being this machine |
 | `auto_start` | `true` | Start that session over SSH when it is not running |
 | `takeover` | `true` | Take over a stale connection left by a closed terminal |
 | `herdr_bin` | found automatically | Where `herdr` lives on the machine |

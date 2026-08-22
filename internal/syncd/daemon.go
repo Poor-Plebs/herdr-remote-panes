@@ -289,25 +289,62 @@ func (d *Daemon) openRemotePane(host config.Host) error {
 		return d.openShellPane(state)
 	}
 
-	// A freshly started session has no workspace to put a tab in.
-	result, err := state.client.Run("workspace", "list")
+	workspaceID, created, err := d.ensureRemoteWorkspace(state)
 	if err != nil {
 		return err
+	}
+	if created {
+		// A new workspace already comes with a pane; that is the terminal.
+		// Adding a tab as well would open two for one request.
+		return nil
+	}
+	_, err = state.client.Run("tab", "create", "--workspace", workspaceID)
+	return err
+}
+
+// ensureRemoteWorkspace finds or creates the workspace on the remote machine
+// that this plugin's panes live in.
+//
+// It is named after this machine rather than the remote one: sitting on the
+// remote, "☁ L14" says who these panes are shared with, whereas a space named
+// after the machine you are already on says nothing.
+// The bool reports whether the workspace was created just now, in which case
+// its root pane is already the terminal that was asked for.
+func (d *Daemon) ensureRemoteWorkspace(state *hostSync) (string, bool, error) {
+	label := d.cfg.RemoteWorkspaceLabel()
+
+	result, err := state.client.Run("workspace", "list")
+	if err != nil {
+		return "", false, err
 	}
 	var body struct {
 		Workspaces []struct {
 			WorkspaceID string `json:"workspace_id"`
+			Label       string `json:"label"`
 		} `json:"workspaces"`
 	}
 	if err := json.Unmarshal(result, &body); err != nil {
-		return fmt.Errorf("parse remote workspace list: %w", err)
+		return "", false, fmt.Errorf("parse remote workspace list: %w", err)
 	}
-	if len(body.Workspaces) == 0 {
-		_, err = state.client.Run("workspace", "create", "--label", host.DisplayLabel())
-		return err
+	for _, ws := range body.Workspaces {
+		if ws.Label == label {
+			return ws.WorkspaceID, false, nil
+		}
 	}
-	_, err = state.client.Run("tab", "create")
-	return err
+
+	created, err := state.client.Run("workspace", "create", "--label", label)
+	if err != nil {
+		return "", false, err
+	}
+	var createdBody struct {
+		Workspace struct {
+			WorkspaceID string `json:"workspace_id"`
+		} `json:"workspace"`
+	}
+	if err := json.Unmarshal(created, &createdBody); err != nil {
+		return "", false, fmt.Errorf("parse remote workspace create: %w", err)
+	}
+	return createdBody.Workspace.WorkspaceID, true, nil
 }
 
 // resolveOpenTarget decides which machine a new pane belongs to: an explicitly

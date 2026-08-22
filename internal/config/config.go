@@ -103,6 +103,10 @@ type Config struct {
 	// direct attach is exclusive and can outlive the pane that started it, so
 	// without this a killed mirror blocks its terminal until that process dies.
 	Takeover *bool `json:"takeover,omitempty"`
+	// RemoteWorkspaceFormat names the workspace this plugin creates on the
+	// remote machine. {hub} is this machine's hostname, so that sitting on the
+	// remote you can tell which machine those panes are shared with.
+	RemoteWorkspaceFormat string `json:"remote_workspace_format,omitempty"`
 	// AutoStart launches the remote Herdr session when it is not running, so
 	// a host only needs the herdr binary installed and reachable over SSH.
 	AutoStart *bool `json:"auto_start,omitempty"`
@@ -116,16 +120,17 @@ type Config struct {
 // Defaults returns a configuration with every optional field populated.
 func Defaults() Config {
 	return Config{
-		PollInterval:    "2s",
-		Session:         DefaultSession,
-		Mode:            ModeAttach,
-		Placement:       "split",
-		LabelFormat:     "{name}@{host}",
-		WorkspaceFormat: "☁  {host}",
-		Takeover:        boolPtr(true),
-		AutoStart:       boolPtr(true),
-		MaxMirrors:      32,
-		Hosts:           []Host{},
+		PollInterval:          "2s",
+		Session:               DefaultSession,
+		Mode:                  ModeAttach,
+		Placement:             "split",
+		LabelFormat:           "{name}@{host}",
+		WorkspaceFormat:       "☁  {host}",
+		RemoteWorkspaceFormat: "☁  {hub}",
+		Takeover:              boolPtr(true),
+		AutoStart:             boolPtr(true),
+		MaxMirrors:            32,
+		Hosts:                 []Host{},
 	}
 }
 
@@ -200,6 +205,9 @@ func (c Config) normalized() Config {
 	if c.WorkspaceFormat == "" {
 		c.WorkspaceFormat = d.WorkspaceFormat
 	}
+	if c.RemoteWorkspaceFormat == "" {
+		c.RemoteWorkspaceFormat = d.RemoteWorkspaceFormat
+	}
 	if c.Takeover == nil {
 		c.Takeover = d.Takeover
 	}
@@ -266,6 +274,15 @@ func (c Config) WorkspaceFor(h Host) string {
 		return c.Workspace
 	}
 	return strings.ReplaceAll(c.WorkspaceFormat, "{host}", h.DisplayLabel())
+}
+
+// RemoteWorkspaceLabel is the workspace label used on the remote machine.
+func (c Config) RemoteWorkspaceLabel() string {
+	hub, err := os.Hostname()
+	if err != nil || hub == "" {
+		hub = "herdr"
+	}
+	return strings.ReplaceAll(c.RemoteWorkspaceFormat, "{hub}", hub)
 }
 
 // BinFor resolves the remote Herdr binary for a host. An empty result means
