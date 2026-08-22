@@ -1,45 +1,17 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
 )
 
-// send delivers one command to the running daemon and returns its reply.
-func send(cmd syncd.Command) (syncd.Reply, error) {
-	socket, err := syncd.ControlSocket()
-	if err != nil {
-		return syncd.Reply{}, err
-	}
-	conn, err := net.DialTimeout("unix", socket, 3*time.Second)
-	if err != nil {
-		return syncd.Reply{}, fmt.Errorf(
-			"no running daemon (is the plugin enabled? check `herdr plugin log list --plugin %s`): %w",
-			syncd.PluginID, err)
-	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(60 * time.Second))
-
-	if err := json.NewEncoder(conn).Encode(cmd); err != nil {
-		return syncd.Reply{}, err
-	}
-	var reply syncd.Reply
-	if err := json.NewDecoder(conn).Decode(&reply); err != nil {
-		return syncd.Reply{}, err
-	}
-	return reply, nil
-}
-
 // call runs a command that only reports success or failure.
 func call(cmd syncd.Command) error {
-	reply, err := send(cmd)
+	reply, err := syncd.Ask(cmd)
 	if err != nil {
 		return err
 	}
@@ -61,7 +33,7 @@ func report(message string) {
 
 // status prints one line per connected host.
 func status() error {
-	reply, err := send(syncd.Command{Cmd: "status"})
+	reply, err := syncd.Ask(syncd.Command{Cmd: "status"})
 	if err != nil {
 		return err
 	}

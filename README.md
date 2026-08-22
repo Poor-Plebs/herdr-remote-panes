@@ -47,14 +47,28 @@ machine. That is all — see [Machines without Herdr](#machines-without-herdr).
 
 | You want | Do this |
 | --- | --- |
+| Connect to a machine | Open the menu and pick one |
 | See a machine's terminals | They appear on their own, in a space named after the machine |
 | A new terminal on a machine | Run the `open` action while in that machine's space |
-| Bring a space back after closing it | Run the `connect` action |
+| Bring a space back after closing it | Run the `connect` action, or pick it from the menu |
 | Check what is connected | Run the `status` action |
+
+### The machine menu
+
+The `menu` action opens a popup listing every machine from your `~/.ssh/config`
+and from this plugin's config, showing which are connected. Move with the arrow
+keys or `j`/`k`, jump with `1`-`9`, `enter` to connect, `q` to cancel. Machines
+picked from the menu do not have to be in `config.json` first.
 
 Actions are easier on a key. Add to `~/.config/herdr/config.toml`:
 
 ```toml
+[[keys.command]]
+key = "prefix+shift+s"
+type = "plugin_action"
+command = "poorplebs.remote-panes.menu"
+description = "connect to a machine"
+
 [[keys.command]]
 key = "prefix+shift+c"
 type = "plugin_action"

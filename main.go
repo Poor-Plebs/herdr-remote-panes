@@ -17,7 +17,9 @@ import (
 	"strings"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/mirror"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/picker"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
 )
 
@@ -48,6 +50,26 @@ func run(command string, args []string) error {
 
 	case "mirror":
 		return mirror.Run()
+
+	case "menu":
+		// Opens the picker as a Herdr popup: session-modal, receives every
+		// key including Escape, and closes when the picker exits.
+		_, err := herdrcli.Run("plugin", "pane", "open",
+			"--plugin", syncd.PluginID, "--entrypoint", "picker",
+			"--placement", "popup", "--focus")
+		return err
+
+	case "picker":
+		return picker.Run(func(target string) (string, error) {
+			reply, err := syncd.Ask(syncd.Command{Cmd: "connect", Host: target})
+			if err != nil {
+				return "", err
+			}
+			if !reply.OK {
+				return "", fmt.Errorf("%s", reply.Message)
+			}
+			return reply.Message, nil
+		})
 
 	case "connect":
 		// A host is optional: with none, every configured host reconnects.
@@ -151,6 +173,8 @@ func usage() {
   connect [ssh-target]       start mirroring a host, or all configured hosts
   open <ssh-target>          open a new pane on a host (it mirrors back)
   disconnect <ssh-target>    stop mirroring a host and close its panes
+  menu                       open the machine menu (Herdr popup)
+  picker                     draw the machine menu (popup entrypoint)
   refresh                    reconcile every connected host now
   status                     show connected hosts and mirror counts
 `)

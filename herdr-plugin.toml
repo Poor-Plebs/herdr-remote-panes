@@ -34,6 +34,13 @@ contexts = ["global", "workspace", "selection"]
 command = ["./bin/herdr-remote-panes", "open"]
 
 [[actions]]
+id = "menu"
+title = "Remote panes: machine menu"
+description = "Pick a machine to connect to, from your SSH config and this plugin's hosts."
+contexts = ["global"]
+command = ["./bin/herdr-remote-panes", "menu"]
+
+[[actions]]
 id = "refresh"
 title = "Remote panes: refresh"
 description = "Reconcile every connected host right now."
@@ -49,6 +56,17 @@ command = ["./bin/herdr-remote-panes", "status"]
 
 # One mirror pane per remote terminal. The daemon supplies the target through
 # HRP_* environment variables and overrides the placement per host.
+# The machine menu. A popup is session-modal and gets every key, including
+# Escape, which is what a menu needs.
+[[panes]]
+id = "picker"
+title = "Connect to a machine"
+description = "Menu of machines to connect to."
+placement = "popup"
+width = "60%"
+height = 18
+command = ["./bin/herdr-remote-panes", "picker"]
+
 [[panes]]
 id = "mirror"
 title = "Remote pane"
