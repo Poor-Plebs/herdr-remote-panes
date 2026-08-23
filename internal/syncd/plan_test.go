@@ -1341,3 +1341,49 @@ func TestAFailedSnapshotWriteIsTriedAgain(t *testing.T) {
 		t.Errorf("snapshot = %s, want the mirror in it", raw)
 	}
 }
+
+func TestEveryPartOfALabelIsSafeToDraw(t *testing.T) {
+	// A terminal's name was made safe several passes ago; the agent name comes
+	// from the same place by the same route and was not. Whatever a format
+	// refers to ends up in the sidebar, so all of it has to survive being
+	// drawn rather than obeyed.
+	d := withConfig(&Daemon{}, config.Config{
+		LabelFormat: "{name}|{agent}|{pane}|{host}",
+	})
+
+	got := d.label(
+		config.Host{Target: "bot", Label: "b\x1bot"},
+		herdrcli.Pane{
+			Agent:  "claude\x1b[31m\nfake",
+			PaneID: "w1:p1\x1b[0m",
+		},
+		"build\nstep",
+	)
+
+	for _, bad := range []string{"\x1b", "\n", "\r", "\x00"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("label %q still carries %q", got, bad)
+		}
+	}
+	// The readable parts survive.
+	for _, want := range []string{"build", "claude", "w1", "bot"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("label %q lost %q", got, want)
+		}
+	}
+}
+
+func TestALongAgentNameCannotCrowdOutTheLabel(t *testing.T) {
+	d := withConfig(&Daemon{}, config.Config{LabelFormat: "{agent}@{host}"})
+
+	got := d.label(config.Host{Target: "bot"},
+		herdrcli.Pane{Agent: strings.Repeat("x", 400)}, "")
+
+	if len([]rune(got)) > maxLabelWidth+len("@bot")+1 {
+		t.Errorf("label is %d runes: %q", len([]rune(got)), got)
+	}
+	// closeOrphans matches on the host suffix, so it has to survive the cut.
+	if !strings.HasSuffix(got, "@bot") {
+		t.Errorf("label %q no longer ends with the machine", got)
+	}
+}

@@ -158,7 +158,7 @@ All optional, in `$(herdr plugin config-dir poorplebs.remote-panes)/config.json`
 | `workspace_format_down` | `⚠  {host}` | How it is named while unreachable |
 | `workspace` | one per machine | Put every machine in one space instead |
 | `remote_workspace_format` | `☁  {hub}` | How *this* machine's space is named **on** the machine, so it is recognisable from that end |
-| `label_format` | `{name}@{host}` | How its terminals are named |
+| `label_format` | `{name}@{host}` | How its terminals are named. `{name}` `{host}` `{agent}` `{pane}` |
 | `poll_interval` | `2s` | How often machines are checked |
 | `close_propagates` | `true` | Closing a mirrored tab closes it on the machine |
 | `capture_new_panes` | `true` | Move a local pane opened in a machine's space onto it |

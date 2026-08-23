@@ -1586,11 +1586,15 @@ func (d *Daemon) label(host config.Host, rp herdrcli.Pane, name string) string {
 	// rather than read, and a long one crowds out everything beside it.
 	name = text.Truncate(text.Sanitize(name), maxLabelWidth)
 
+	// The agent name comes from the far machine as well, and reaches the
+	// sidebar the same way a terminal's name does whenever {agent} is used in
+	// the format. Sanitising one and not the other left the same hole open by
+	// a different route.
 	replacer := strings.NewReplacer(
 		"{name}", name,
-		"{host}", host.DisplayLabel(),
-		"{agent}", rp.Agent,
-		"{pane}", rp.PaneID,
+		"{host}", text.Sanitize(host.DisplayLabel()),
+		"{agent}", text.Truncate(text.Sanitize(rp.Agent), maxLabelWidth),
+		"{pane}", text.Sanitize(rp.PaneID),
 	)
 	return replacer.Replace(d.config().LabelFormat)
 }
