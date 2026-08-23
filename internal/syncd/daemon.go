@@ -1428,10 +1428,8 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 				// Herdr restores a plugin pane as a plain shell without
 				// re-running its command, so what is left in the space are
 				// husks wearing the old name. Clear them before reopening.
-				live := 0
 				for _, paneID := range index.panesIn[workspaceID] {
 					if mirror.IsLive(paneID) {
-						live++
 						state.shellPanes[paneID] = true
 						continue
 					}
@@ -1441,26 +1439,30 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 					d.forgetPane(state, paneID)
 					delete(index.alive, paneID)
 				}
-				// As many as there were, not one. The count is what the
-				// snapshot records and what this field is named for, and it was
-				// being read as "there were some": three terminals on a machine
-				// came back as one, quietly, and the other two were closed as
-				// husks a moment earlier.
-				//
-				// One per pass rather than all at once, so restoring a machine
-				// with several is a handful of SSH connections spread over a
-				// few seconds instead of all at the same moment.
-				if planRestoreShell(state.restoreShells, live) {
-					log.Printf("%s: restoring terminal %d of %d after restart",
-						state.host.Target, live+1, state.restoreShells)
-					state.reopenShell = true
-					return nil
-				}
-				// Restored. Forgetting the count matters: without it, closing
-				// one of them afterwards would look like another terminal to
-				// restore, and it would come back.
-				state.restoreShells = 0
 			}
+		}
+
+		// Reopening carries on across passes, one terminal each, until the
+		// machine has as many as it had. Only the clearing above is a
+		// once-after-a-restart job -- doing that repeatedly would close a pane
+		// that had just been opened and not yet said it was alive.
+		if state.restoreShells > 0 {
+			live := 0
+			for paneID := range state.shellPanes {
+				if index.alive[paneID] {
+					live++
+				}
+			}
+			if planRestoreShell(state.restoreShells, live) {
+				log.Printf("%s: restoring terminal %d of %d after restart",
+					state.host.Target, live+1, state.restoreShells)
+				state.reopenShell = true
+				return nil
+			}
+			// Restored. Forgetting the count matters: without it, closing one
+			// of them afterwards would look like another to restore, and it
+			// would come back.
+			state.restoreShells = 0
 		}
 
 		for paneID := range state.shellPanes {
