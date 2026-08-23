@@ -1758,11 +1758,9 @@ func (d *Daemon) findLocalWorkspace(state *hostSync) (bool, error) {
 		return false, err
 	}
 	label := d.config().WorkspaceFor(state.host)
-	for _, ws := range workspaces {
-		if ws.Label == label || sameWorkspace(ws.Label, state.host.DisplayLabel()) {
-			state.workspaceID = ws.WorkspaceID
-			return true, nil
-		}
+	if id, ok := pickWorkspace(workspaces, label, state.host.DisplayLabel()); ok {
+		state.workspaceID = id
+		return true, nil
 	}
 	return false, nil
 }
@@ -2047,11 +2045,9 @@ func (d *Daemon) ensureWorkspace(state *hostSync, index *paneIndex) (string, err
 	if err != nil {
 		return "", err
 	}
-	for _, ws := range workspaces {
-		if ws.Label == label || sameWorkspace(ws.Label, state.host.DisplayLabel()) {
-			state.workspaceID = ws.WorkspaceID
-			return ws.WorkspaceID, nil
-		}
+	if id, ok := pickWorkspace(workspaces, label, state.host.DisplayLabel()); ok {
+		state.workspaceID = id
+		return id, nil
 	}
 
 	created, err := herdrcli.Run("workspace", "create", "--label", label)
@@ -2083,6 +2079,32 @@ func (d *Daemon) ensureWorkspace(state *hostSync, index *paneIndex) (string, err
 // markerRunes are the decorations a workspace label may carry in front of the
 // host name.
 const markerRunes = "☁⛅⚠🔴🟢 \t"
+
+// pickWorkspace chooses the space that belongs to a name, preferring one that
+// carries it exactly.
+//
+// The tolerant match exists so that changing workspace_format does not orphan
+// the space a machine's terminals are already in, which means it also accepts a
+// space called just "bot". Taking the first match found made that a matter of
+// what order Herdr happened to list them in: somebody with a space of their own
+// called "bot", and a machine called bot, could have either one adopted --
+// renamed, and given terminals from the machine.
+//
+// An exact match is the space this made; anything else is a guess, and a guess
+// should not win over a certainty.
+func pickWorkspace(workspaces []herdrcli.Workspace, label, hostLabel string) (string, bool) {
+	for _, ws := range workspaces {
+		if ws.Label == label {
+			return ws.WorkspaceID, true
+		}
+	}
+	for _, ws := range workspaces {
+		if sameWorkspace(ws.Label, hostLabel) {
+			return ws.WorkspaceID, true
+		}
+	}
+	return "", false
+}
 
 // sameWorkspace reports whether a workspace label names this host, ignoring any
 // leading marker. Without this, changing workspace_format would orphan the

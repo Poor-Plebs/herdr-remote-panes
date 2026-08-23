@@ -2296,3 +2296,48 @@ func TestRestoringFromASnapshotIsInAStableOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestAnExactlyNamedSpaceWinsOverAGuess(t *testing.T) {
+	// The tolerant match exists so that changing workspace_format does not
+	// orphan the space a machine's terminals are already in, which means it
+	// also accepts a space called just "bot". Taking the first match found made
+	// that a matter of what order Herdr happened to list them in: somebody with
+	// a space of their own called "bot", and a machine called bot, could have
+	// either adopted -- renamed, and given terminals from the machine.
+	mine := herdrcli.Workspace{WorkspaceID: "w1", Label: "bot"}    // somebody's own
+	ours := herdrcli.Workspace{WorkspaceID: "w2", Label: "☁  bot"} // this plugin's
+
+	for _, order := range [][]herdrcli.Workspace{{mine, ours}, {ours, mine}} {
+		got, ok := pickWorkspace(order, "☁  bot", "bot")
+		if !ok || got != "w2" {
+			t.Errorf("listed as %v, picked %q; want the one named exactly", labelsOf(order), got)
+		}
+	}
+}
+
+func TestAGuessIsStillBetterThanMakingASecondSpace(t *testing.T) {
+	// With no exact match, the tolerant one is what keeps a machine's terminals
+	// where they are after its format changes -- which is the whole reason it
+	// is there.
+	for _, existing := range []string{"bot", "⚠  bot", "🔴 bot"} {
+		list := []herdrcli.Workspace{{WorkspaceID: "w9", Label: existing}}
+		got, ok := pickWorkspace(list, "☁  bot", "bot")
+		if !ok || got != "w9" {
+			t.Errorf("a space called %q was not recognised as the machine's", existing)
+		}
+	}
+
+	// And nothing that is not the machine's.
+	none := []herdrcli.Workspace{{WorkspaceID: "w1", Label: "~"}, {WorkspaceID: "w2", Label: "☁  other"}}
+	if id, ok := pickWorkspace(none, "☁  bot", "bot"); ok {
+		t.Errorf("claimed %q, which is not this machine's space", id)
+	}
+}
+
+func labelsOf(list []herdrcli.Workspace) []string {
+	out := make([]string, 0, len(list))
+	for _, ws := range list {
+		out = append(out, ws.Label)
+	}
+	return out
+}
