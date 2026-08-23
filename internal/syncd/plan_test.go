@@ -661,7 +661,7 @@ func TestLabelIsSafeToDraw(t *testing.T) {
 	// A terminal's name comes from whatever runs on the far machine, and ends
 	// up in the sidebar here. Anything that moves the cursor or changes how the
 	// rest is drawn has to go, and a long name has to be cut.
-	d := &Daemon{cfg: config.Defaults()}
+	d := withConfig(&Daemon{}, config.Defaults())
 	host := config.Host{Target: "bot"}
 
 	got := d.label(host, herdrcli.Pane{}, "build\nfake")
@@ -689,10 +689,7 @@ func TestStatusOrderIsStable(t *testing.T) {
 	// Ranging over the map of machines reshuffled the list between runs, so the
 	// same machines came back in a different order each time. Config order is
 	// what someone wrote down, so it is the order they expect to read back.
-	d := &Daemon{
-		cfg: config.Config{Hosts: []config.Host{
-			{Target: "bot"}, {Target: "prod"}, {Target: "staging"},
-		}},
+	d := withConfig(&Daemon{
 		hosts: map[string]*hostSync{
 			"staging": {host: config.Host{Target: "staging"}},
 			"bot":     {host: config.Host{Target: "bot"}},
@@ -700,8 +697,9 @@ func TestStatusOrderIsStable(t *testing.T) {
 			// Reached from ~/.ssh/config rather than named in the plugin config.
 			"zeta":  {host: config.Host{Target: "zeta"}},
 			"alpha": {host: config.Host{Target: "alpha"}},
-		},
-	}
+		}}, config.Config{Hosts: []config.Host{
+		{Target: "bot"}, {Target: "prod"}, {Target: "staging"},
+	}})
 
 	want := []string{"bot", "prod", "staging", "alpha", "zeta"}
 	// Repeat: map order is randomised per range, so one pass proves nothing.
@@ -724,15 +722,13 @@ func TestStatusOrderIsStable(t *testing.T) {
 func TestStatusSkipsMachinesThatAreNotConnected(t *testing.T) {
 	// A machine listed in the config but never connected has no state, and
 	// including it would report on something that is not being tracked.
-	d := &Daemon{
-		cfg: config.Config{Hosts: []config.Host{
-			{Target: "bot"}, {Target: "never-connected"}, {Target: "prod"},
-		}},
+	d := withConfig(&Daemon{
 		hosts: map[string]*hostSync{
 			"bot":  {host: config.Host{Target: "bot"}},
 			"prod": {host: config.Host{Target: "prod"}},
-		},
-	}
+		}}, config.Config{Hosts: []config.Host{
+		{Target: "bot"}, {Target: "never-connected"}, {Target: "prod"},
+	}})
 
 	var got []string
 	for _, state := range d.orderedHosts() {
@@ -746,12 +742,10 @@ func TestStatusSkipsMachinesThatAreNotConnected(t *testing.T) {
 func TestStatusToleratesADuplicateInTheConfig(t *testing.T) {
 	// The config can be edited by hand, and a machine listed twice should not
 	// be reported twice.
-	d := &Daemon{
-		cfg: config.Config{Hosts: []config.Host{
-			{Target: "bot"}, {Target: "bot"},
-		}},
-		hosts: map[string]*hostSync{"bot": {host: config.Host{Target: "bot"}}},
-	}
+	d := withConfig(&Daemon{
+		hosts: map[string]*hostSync{"bot": {host: config.Host{Target: "bot"}}}}, config.Config{Hosts: []config.Host{
+		{Target: "bot"}, {Target: "bot"},
+	}})
 
 	if got := d.orderedHosts(); len(got) != 1 {
 		t.Errorf("got %d entries, want 1", len(got))
@@ -764,10 +758,8 @@ func TestStatusIsSafeWhileMachinesChange(t *testing.T) {
 	// holding the lock is the kind of fault that shows up as a crash on a busy
 	// machine and never in a quiet test, so the race detector is pointed at it
 	// deliberately here.
-	d := &Daemon{
-		cfg:   config.Config{Hosts: []config.Host{{Target: "bot"}, {Target: "prod"}}},
-		hosts: map[string]*hostSync{},
-	}
+	d := withConfig(&Daemon{
+		hosts: map[string]*hostSync{}}, config.Config{Hosts: []config.Host{{Target: "bot"}, {Target: "prod"}}})
 
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
@@ -805,9 +797,9 @@ func TestStatusIsSafeWhileMachinesChange(t *testing.T) {
 			} else {
 				d.hosts[target] = &hostSync{host: config.Host{Target: target}}
 			}
-			d.cfg = config.Config{Hosts: []config.Host{
+			d.setConfig(config.Config{Hosts: []config.Host{
 				{Target: "bot"}, {Target: target},
-			}}
+			}})
 			d.mu.Unlock()
 		}
 	}()
@@ -873,4 +865,239 @@ func TestMarksArePrunedMoreThanOnce(t *testing.T) {
 	if !exists("w1-p2.pid") {
 		t.Error("a mark for a live pane was removed")
 	}
+}
+
+// index builds a pane listing the way Herdr would report it.
+func index(panes ...herdrcli.Pane) *paneIndex {
+	return newPaneIndex(panes)
+}
+
+func pane(id, workspace, tab string) herdrcli.Pane {
+	return herdrcli.Pane{PaneID: id, WorkspaceID: workspace, TabID: tab}
+}
+
+func TestStrayCaptureMovesALocalPaneOntoTheMachine(t *testing.T) {
+	// Opening a terminal while looking at a machine's space should put it on
+	// that machine. Herdr opens it locally, so the pane is spotted after the
+	// fact and moved.
+	d := withConfig(&Daemon{}, config.Defaults())
+	state := &hostSync{
+		host:        config.Host{Target: "bot"},
+		workspaceID: "w1",
+		mirrors:     map[string]string{},
+		seenStray:   map[string]bool{},
+	}
+
+	strays := d.planStrayCapture(state, index(
+		pane("w1:p1", "w1", "w1:t1"),
+		pane("w9:p1", "w9", "w9:t1"), // another space; not this machine's business
+	))
+
+	if len(strays) != 1 || strays[0].PaneID != "w1:p1" {
+		t.Fatalf("strays = %+v, want just w1:p1", strays)
+	}
+}
+
+func TestStrayCaptureLeavesItsOwnMirrorsAlone(t *testing.T) {
+	// A pane this plugin opened is already on the machine. Treating it as a
+	// stray would move it onto the machine again, and again, forever.
+	d := withConfig(&Daemon{}, config.Defaults())
+	state := &hostSync{
+		host:        config.Host{Target: "bot"},
+		workspaceID: "w1",
+		mirrors:     map[string]string{"term_1": "w1:p1"},
+		seenStray:   map[string]bool{},
+	}
+
+	if strays := d.planStrayCapture(state, index(pane("w1:p1", "w1", "w1:t1"))); len(strays) != 0 {
+		t.Errorf("strays = %+v, want none: that pane is already a mirror", strays)
+	}
+}
+
+func TestStrayCaptureActsOnAPaneOnlyOnce(t *testing.T) {
+	// Reconciling runs every couple of seconds. Without remembering what it has
+	// already acted on, one stray pane would be moved on every pass.
+	d := withConfig(&Daemon{}, config.Defaults())
+	state := &hostSync{
+		host:        config.Host{Target: "bot"},
+		workspaceID: "w1",
+		mirrors:     map[string]string{},
+		seenStray:   map[string]bool{},
+	}
+	listing := index(pane("w1:p1", "w1", "w1:t1"))
+
+	if strays := d.planStrayCapture(state, listing); len(strays) != 1 {
+		t.Fatalf("first pass found %d strays, want 1", len(strays))
+	}
+	if strays := d.planStrayCapture(state, listing); len(strays) != 0 {
+		t.Errorf("second pass found %+v, want none", strays)
+	}
+}
+
+func TestStrayCaptureJudgesAReusedPaneIDAfresh(t *testing.T) {
+	// Herdr reuses pane ids. Remembering "already handled w1:p1" forever would
+	// mean the next pane to land on that id is never moved onto the machine.
+	d := withConfig(&Daemon{}, config.Defaults())
+	state := &hostSync{
+		host:        config.Host{Target: "bot"},
+		workspaceID: "w1",
+		mirrors:     map[string]string{},
+		seenStray:   map[string]bool{},
+	}
+
+	d.planStrayCapture(state, index(pane("w1:p1", "w1", "w1:t1")))
+	// The pane goes away.
+	d.planStrayCapture(state, index())
+	if state.seenStray["w1:p1"] {
+		t.Fatal("a pane that no longer exists is still remembered")
+	}
+	// A different pane arrives on the same id.
+	if strays := d.planStrayCapture(state, index(pane("w1:p1", "w1", "w1:t1"))); len(strays) != 1 {
+		t.Errorf("a reused pane id was not judged afresh: %+v", strays)
+	}
+}
+
+func TestStrayCaptureDoesNothingForAPlainSSHMachine(t *testing.T) {
+	// Without mirroring there is no machine-side space to move anything onto,
+	// and the terminals in that space are plain SSH sessions already.
+	d := withConfig(&Daemon{}, config.Defaults())
+	state := &hostSync{
+		host:        config.Host{Target: "bot"},
+		workspaceID: "w1",
+		sshOnly:     true,
+		mirrors:     map[string]string{},
+		seenStray:   map[string]bool{},
+	}
+
+	if strays := d.planStrayCapture(state, index(pane("w1:p1", "w1", "w1:t1"))); len(strays) != 0 {
+		t.Errorf("strays = %+v, want none for a plain SSH machine", strays)
+	}
+}
+
+func TestStrayCaptureRespectsTheSetting(t *testing.T) {
+	// capture_new_panes exists for people who would rather a local pane stayed
+	// local, and turning it off must actually stop the moving.
+	cfg := config.Defaults()
+	off := false
+	cfg.CaptureNewPanes = &off
+	d := withConfig(&Daemon{}, cfg)
+	state := &hostSync{
+		host:        config.Host{Target: "bot"},
+		workspaceID: "w1",
+		mirrors:     map[string]string{},
+		seenStray:   map[string]bool{},
+	}
+
+	if strays := d.planStrayCapture(state, index(pane("w1:p1", "w1", "w1:t1"))); len(strays) != 0 {
+		t.Errorf("strays = %+v, want none when capture_new_panes is off", strays)
+	}
+}
+
+func TestHostConfigFindsAMachineByEitherName(t *testing.T) {
+	d := withConfig(&Daemon{}, config.Config{Hosts: []config.Host{
+		{Target: "bot.example.com", Label: "bot"},
+		{Target: "ci"},
+	}})
+
+	// Both the thing typed after ssh and the name shown here should work: the
+	// menu offers the label, the config and the command line use the target.
+	for _, name := range []string{"bot.example.com", "bot"} {
+		got, ok := d.hostConfig(name)
+		if !ok || got.Target != "bot.example.com" {
+			t.Errorf("hostConfig(%q) = %+v, %v; want the configured machine", name, got, ok)
+		}
+	}
+}
+
+func TestHostConfigAcceptsAnUnconfiguredMachine(t *testing.T) {
+	// Everything in ~/.ssh/config is offered in the menu, so connecting must
+	// work for a machine that was never written into the plugin's own config.
+	d := withConfig(&Daemon{}, config.Defaults())
+
+	got, ok := d.hostConfig("some-laptop")
+	if !ok || got.Target != "some-laptop" {
+		t.Errorf("hostConfig = %+v, %v; want an ad-hoc machine", got, ok)
+	}
+
+	// Nothing at all is still nothing.
+	if _, ok := d.hostConfig(""); ok {
+		t.Error("an empty name was accepted as a machine")
+	}
+}
+
+func TestConfigWarningSaysWhichProblemItIs(t *testing.T) {
+	// A config that cannot be read at all and a config with a typo in it need
+	// different things done about them, so they should not read alike.
+	unreadable := &Daemon{configErr: errors.New("unexpected end of JSON input")}
+	got := unreadable.configWarning()
+	if !strings.Contains(got, "could not be read") || !strings.Contains(got, "JSON") {
+		t.Errorf("warning = %q, want it to say the file could not be read and why", got)
+	}
+
+	typo := withConfig(&Daemon{}, config.Config{Mode: "shh", Hosts: []config.Host{{Target: "bot"}}})
+	got = typo.configWarning()
+	if !strings.Contains(got, "shh") {
+		t.Errorf("warning = %q, want it to name the bad value", got)
+	}
+	if strings.Contains(got, "could not be read") {
+		t.Errorf("warning = %q, a readable file should not be reported as unreadable", got)
+	}
+
+	if got := (withConfig(&Daemon{}, config.Defaults())).configWarning(); got != "" {
+		t.Errorf("a good config warned: %q", got)
+	}
+}
+
+// withConfig sets a daemon's configuration. It is held atomically rather than
+// as a plain field, so that a command changing it and a command reading it can
+// run at the same time without one seeing half of the other's write.
+func withConfig(d *Daemon, cfg config.Config) *Daemon {
+	d.setConfig(cfg)
+	return d
+}
+
+func TestConfigCanBeReadWhileItIsBeingReplaced(t *testing.T) {
+	// Toggling mirroring from the menu replaces the whole configuration, and
+	// every control connection is handled in its own goroutine, so that write
+	// runs alongside commands that read it. It used to be a plain field read
+	// without the lock: the race detector caught a command changing the
+	// configuration while another was walking the list of machines in it.
+	//
+	// Guarding it with the lock would have meant auditing three dozen call
+	// sites for which ones already held it, and getting one wrong is a
+	// deadlock, so it is held atomically instead and safe to read anywhere.
+	d := withConfig(&Daemon{hosts: map[string]*hostSync{}}, config.Defaults())
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					_, _ = d.hostConfig("bot")
+					_ = d.configWarning()
+					_ = d.status()
+				}
+			}
+		}()
+	}
+
+	written := make(chan struct{})
+	go func() {
+		defer close(written)
+		for i := 0; i < 500; i++ {
+			d.setConfig(config.Config{Hosts: []config.Host{
+				{Target: "bot"}, {Target: "prod"},
+			}})
+		}
+	}()
+
+	<-written
+	close(stop)
+	wg.Wait()
 }

@@ -31,7 +31,14 @@ const paneEntrypoint = "mirror"
 
 // Daemon reconciles remote panes into local mirror panes.
 type Daemon struct {
-	cfg config.Config
+	// cfg is replaced wholesale when a mode is toggled from the menu. Control
+	// connections are each handled in their own goroutine, so a command that
+	// changes it runs alongside commands that read it. Holding it atomically
+	// rather than under the lock means a read is safe from anywhere, including
+	// the reconcile paths that already hold the lock -- guarding it with the
+	// lock instead would have meant auditing three dozen call sites for which
+	// ones already held it, and getting one wrong is a deadlock.
+	cfg atomic.Pointer[config.Config]
 
 	mu    sync.Mutex
 	hosts map[string]*hostSync
@@ -181,6 +188,19 @@ func (p *paneIndex) add(pane herdrcli.Pane) {
 }
 
 // New builds a daemon from the on-disk configuration.
+// config reports the current configuration.
+func (d *Daemon) config() config.Config {
+	if cfg := d.cfg.Load(); cfg != nil {
+		return *cfg
+	}
+	return config.Config{}
+}
+
+// setConfig replaces the configuration, for when a mode is toggled.
+func (d *Daemon) setConfig(cfg config.Config) {
+	d.cfg.Store(&cfg)
+}
+
 func New(cfg config.Config) *Daemon {
 	return NewWithConfigError(cfg, nil)
 }
@@ -188,14 +208,15 @@ func New(cfg config.Config) *Daemon {
 // NewWithConfigError builds a daemon that knows its configuration was not
 // readable, so it can report that instead of behaving as if none was set.
 func NewWithConfigError(cfg config.Config, configErr error) *Daemon {
-	return &Daemon{
-		cfg:              cfg,
+	d := &Daemon{
 		hosts:            map[string]*hostSync{},
 		rootPanes:        map[string]string{},
 		markedWorkspaces: map[string]string{},
 		snapshot:         loadSnapshot(),
 		configErr:        configErr,
 	}
+	d.setConfig(cfg)
+	return d
 }
 
 // Run starts the control listener and blocks, polling every connected host.
@@ -213,7 +234,7 @@ func (d *Daemon) Run() error {
 
 	go d.serveControl(listener)
 
-	for _, h := range d.cfg.Hosts {
+	for _, h := range d.config().Hosts {
 		if h.Disabled {
 			continue
 		}
@@ -222,7 +243,7 @@ func (d *Daemon) Run() error {
 		}
 	}
 
-	ticker := time.NewTicker(d.cfg.Interval())
+	ticker := time.NewTicker(d.config().Interval())
 	defer ticker.Stop()
 	for range ticker.C {
 		d.reconcileAll()
@@ -345,9 +366,7 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		if err != nil {
 			return Reply{Message: err.Error()}
 		}
-		d.mu.Lock()
-		d.cfg = cfg
-		d.mu.Unlock()
+		d.setConfig(cfg)
 
 		// The mechanism changed, so the machine's panes here no longer match
 		// how it is reached. Drop them and connect again under the new mode.
@@ -460,7 +479,7 @@ func (d *Daemon) closeRemoteTerminals(state *hostSync, terminalIDs []string, rem
 // findRemoteWorkspace looks up this machine's space on the remote without
 // creating it, for the reconcile path, which should not open terminals.
 func (d *Daemon) findRemoteWorkspace(state *hostSync) (bool, error) {
-	label := d.cfg.RemoteWorkspaceLabel()
+	label := d.config().RemoteWorkspaceLabel()
 	result, err := state.client.Run("workspace", "list")
 	if err != nil {
 		return false, err
@@ -485,7 +504,7 @@ func (d *Daemon) findRemoteWorkspace(state *hostSync) (bool, error) {
 // The bool reports whether the workspace was created just now, in which case
 // its root pane is already the terminal that was asked for.
 func (d *Daemon) ensureRemoteWorkspace(state *hostSync) (string, bool, error) {
-	label := d.cfg.RemoteWorkspaceLabel()
+	label := d.config().RemoteWorkspaceLabel()
 
 	result, err := state.client.Run("workspace", "list")
 	if err != nil {
@@ -528,8 +547,8 @@ func (d *Daemon) resolveOpenTarget(cmd Command) (config.Host, bool) {
 	if label == "" {
 		return config.Host{}, false
 	}
-	for _, h := range d.cfg.Hosts {
-		if d.cfg.WorkspaceFor(h) == label {
+	for _, h := range d.config().Hosts {
+		if d.config().WorkspaceFor(h) == label {
 			return h, true
 		}
 	}
@@ -537,7 +556,7 @@ func (d *Daemon) resolveOpenTarget(cmd Command) (config.Host, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, state := range d.hosts {
-		if d.cfg.WorkspaceFor(state.host) == label {
+		if d.config().WorkspaceFor(state.host) == label {
 			return state.host, true
 		}
 	}
@@ -559,7 +578,7 @@ func (d *Daemon) openShellPane(state *hostSync) error {
 
 	name := planShellName(d.liveTerminalCount(state.host.Target))
 
-	shellTarget := planPaneTarget(d.cfg.PlacementFor(state.host), workspaceID, index.anyInWorkspace[workspaceID])
+	shellTarget := planPaneTarget(d.config().PlacementFor(state.host), workspaceID, index.anyInWorkspace[workspaceID])
 	opts := herdrcli.OpenOptions{
 		PluginID:   PluginID,
 		Entrypoint: paneEntrypoint,
@@ -590,7 +609,7 @@ func (d *Daemon) configWarning() string {
 	if d.configErr != nil {
 		return fmt.Sprintf("the plugin config could not be read, so no machines are configured: %v", d.configErr)
 	}
-	if problems := d.cfg.Problems(); len(problems) > 0 {
+	if problems := d.config().Problems(); len(problems) > 0 {
 		return "check the plugin config: " + strings.Join(problems, "; ")
 	}
 	return ""
@@ -598,7 +617,7 @@ func (d *Daemon) configWarning() string {
 
 // hostConfig finds a configured host by target or label.
 func (d *Daemon) hostConfig(name string) (config.Host, bool) {
-	for _, h := range d.cfg.Hosts {
+	for _, h := range d.config().Hosts {
 		if h.Target == name || h.Label == name {
 			return h, true
 		}
@@ -612,9 +631,9 @@ func (d *Daemon) hostConfig(name string) (config.Host, bool) {
 }
 
 func (d *Daemon) connect(host config.Host) error {
-	client := remote.NewWithBin(host.Target, d.cfg.SessionFor(host), d.cfg.BinFor(host))
+	client := remote.NewWithBin(host.Target, d.config().SessionFor(host), d.config().BinFor(host))
 
-	sshOnly := !d.cfg.Mirrors(host)
+	sshOnly := !d.config().Mirrors(host)
 	var connectErr error
 	if sshOnly {
 		// Without this an unreachable machine reports "ok", because nothing
@@ -690,7 +709,7 @@ func (d *Daemon) prepareRemote(client *remote.Client, host config.Host) error {
 	if err := client.Ping(); err != nil {
 		// The host is reachable but its session is not up yet. Start one and
 		// retry before treating this as a failure.
-		if !d.cfg.ShouldAutoStart() {
+		if !d.config().ShouldAutoStart() {
 			return err
 		}
 		if startErr := client.Start(); startErr != nil {
@@ -833,7 +852,7 @@ func (d *Daemon) liveTerminalCount(target string) int {
 func (d *Daemon) connectAll() ([]string, error) {
 	var connected []string
 	var lastErr error
-	for _, host := range d.cfg.Hosts {
+	for _, host := range d.config().Hosts {
 		if host.Disabled {
 			continue
 		}
@@ -860,7 +879,7 @@ func (d *Daemon) orderedHosts() []*hostSync {
 	out := make([]*hostSync, 0, len(d.hosts))
 	seen := make(map[string]bool, len(d.hosts))
 
-	for _, host := range d.cfg.Hosts {
+	for _, host := range d.config().Hosts {
 		if state, ok := d.hosts[host.Target]; ok && !seen[host.Target] {
 			seen[host.Target] = true
 			out = append(out, state)
@@ -897,7 +916,7 @@ func (d *Daemon) status() []HostInfo {
 			Mirrors:   len(state.mirrors),
 			SSHOnly:   state.sshOnly,
 			Terminals: len(state.shellPanes),
-			Mirroring: d.cfg.Mirrors(state.host),
+			Mirroring: d.config().Mirrors(state.host),
 			GaveUp:    state.gaveUp,
 		}
 		if state.lastErr != nil {
@@ -1176,7 +1195,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	// Restrict to this machine's own space on the remote, and put the panes in
 	// the order they appear there so the tabs line up on both ends.
 	sharedWorkspace := state.remoteWorkspaceID
-	if d.cfg.SharedOnly() && sharedWorkspace == "" {
+	if d.config().SharedOnly() && sharedWorkspace == "" {
 		if found, lookupErr := d.findRemoteWorkspace(state); lookupErr != nil {
 			return lookupErr
 		} else if found {
@@ -1187,12 +1206,12 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	if err != nil {
 		return err
 	}
-	remotePanes = planSharedPanes(remotePanes, sharedWorkspace, tabOrder, d.cfg.SharedOnly())
+	remotePanes = planSharedPanes(remotePanes, sharedWorkspace, tabOrder, d.config().SharedOnly())
 
 	// Closing a mirrored tab closes the terminal on the machine too. Without
 	// this, mirroring is two-way for everything except closing: the tab goes
 	// and the work quietly carries on over there.
-	if d.cfg.ShouldClosePropagate() {
+	if d.config().ShouldClosePropagate() {
 		d.closeRemoteTerminals(state, closedHere, remotePanes)
 	}
 
@@ -1210,11 +1229,11 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		Mirrored:  state.mirrors,
 		Dismissed: state.dismissed,
 		BackedOff: backedOff,
-		Max:       d.cfg.MaxMirrors,
+		Max:       d.config().MaxMirrors,
 	})
 	if plan.AtCapacity {
 		log.Printf("%s: mirror limit of %d reached, skipping the rest",
-			state.host.Target, d.cfg.MaxMirrors)
+			state.host.Target, d.config().MaxMirrors)
 	}
 
 	for _, rp := range plan.Existing {
@@ -1320,7 +1339,7 @@ func (d *Daemon) findLocalWorkspace(state *hostSync) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	label := d.cfg.WorkspaceFor(state.host)
+	label := d.config().WorkspaceFor(state.host)
 	for _, ws := range workspaces {
 		if ws.Label == label || sameWorkspace(ws.Label, state.host.DisplayLabel()) {
 			state.workspaceID = ws.WorkspaceID
@@ -1349,7 +1368,7 @@ func (d *Daemon) planStrayCapture(state *hostSync, index *paneIndex) []strayPane
 
 	var strays []strayPane
 	for _, paneID := range index.panesIn[state.workspaceID] {
-		if planStrayPane(d.cfg.ShouldCaptureNewPanes(), mirrors[paneID], state.seenStray[paneID]) {
+		if planStrayPane(d.config().ShouldCaptureNewPanes(), mirrors[paneID], state.seenStray[paneID]) {
 			strays = append(strays, strayPane{
 				PaneID:    paneID,
 				Placement: planStrayPlacement(index.panesPerTab[index.tabOf[paneID]]),
@@ -1501,7 +1520,7 @@ func (d *Daemon) label(host config.Host, rp herdrcli.Pane, name string) string {
 		"{agent}", rp.Agent,
 		"{pane}", rp.PaneID,
 	)
-	return replacer.Replace(d.cfg.LabelFormat)
+	return replacer.Replace(d.config().LabelFormat)
 }
 
 // openMirror creates the local pane that bridges one remote terminal.
@@ -1513,19 +1532,19 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, ind
 
 	env := map[string]string{
 		mirror.EnvTarget:   state.host.Target,
-		mirror.EnvSession:  d.cfg.SessionFor(state.host),
+		mirror.EnvSession:  d.config().SessionFor(state.host),
 		mirror.EnvTerminal: rp.TerminalID,
-		mirror.EnvMode:     string(d.cfg.EffectiveMode(state.host)),
+		mirror.EnvMode:     string(d.config().EffectiveMode(state.host)),
 		mirror.EnvName:     label,
 	}
-	if bin := d.cfg.BinFor(state.host); bin != "" {
+	if bin := d.config().BinFor(state.host); bin != "" {
 		env[mirror.EnvBin] = bin
 	}
-	if !d.cfg.ShouldTakeover() {
+	if !d.config().ShouldTakeover() {
 		env[mirror.EnvTakeover] = "false"
 	}
 
-	placement := d.cfg.PlacementFor(state.host)
+	placement := d.config().PlacementFor(state.host)
 	if requested, ok := state.pendingPlacement[rp.TerminalID]; ok {
 		placement = requested
 		delete(state.pendingPlacement, rp.TerminalID)
@@ -1562,7 +1581,7 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, ind
 // The id is looked up each time rather than cached: a workspace the user closed
 // must be recreated, not remembered.
 func (d *Daemon) ensureWorkspace(state *hostSync, index *paneIndex) (string, error) {
-	label := d.cfg.WorkspaceFor(state.host)
+	label := d.config().WorkspaceFor(state.host)
 
 	result, err := herdrcli.Run("workspace", "list")
 	if err != nil {
@@ -1644,7 +1663,7 @@ func (d *Daemon) markWorkspaceState(state *hostSync, connected bool) {
 	// The marker also lives in the space's name, because Herdr puts " · "
 	// between sidebar tokens and a name is the only place a marker can sit
 	// directly beside it.
-	if label := d.cfg.WorkspaceLabelFor(state.host, connected); label != "" {
+	if label := d.config().WorkspaceLabelFor(state.host, connected); label != "" {
 		if _, err := herdrcli.Run("workspace", "rename", workspaceID, label); err != nil {
 			log.Printf("rename workspace %s: %v", workspaceID, err)
 		}
