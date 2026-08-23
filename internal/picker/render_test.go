@@ -293,3 +293,64 @@ func TestAnUnreachableMachineStillSaysHowItIsReached(t *testing.T) {
 		}
 	}
 }
+
+func TestAPageMovesExactlyOneScreenful(t *testing.T) {
+	// The step used to be the popup height less a constant, which stopped
+	// matching when the frame learned to give up its parts as room ran short.
+	// It was two rows out at every size, so paging through a long list stepped
+	// over two machines each time without ever showing them.
+	for _, rows := range []int{8, 10, 16, 24, 40} {
+		for _, warning := range []string{"", "check the plugin config: mode \"shh\" is unknown"} {
+			entries := machines(60)
+			frame := planLayout(len(entries), 0, rows, len(warningLines(76, warning)))
+			onScreen := frame.last - frame.first
+
+			// Everything the layout shows, and nothing it does not.
+			drawn := 0
+			for _, line := range lines(entries, 0, 76, rows, warning) {
+				// The heading says "Connect to a machine" as well, and only the
+				// first nine entries carry a number, so neither is a way to
+				// pick them out.
+				plain := visible(line)
+				if strings.Contains(plain, "machine") && !strings.Contains(plain, "Connect to a") {
+					drawn++
+				}
+			}
+			if drawn != onScreen {
+				t.Errorf("rows=%d: layout says %d on screen, %d were drawn", rows, onScreen, drawn)
+			}
+			if onScreen < 1 {
+				t.Errorf("rows=%d: nothing is visible", rows)
+			}
+		}
+	}
+}
+
+func TestPagingReachesEveryMachine(t *testing.T) {
+	// The point of the step matching the screenful: paging from the top must
+	// eventually land on every machine rather than jumping past some.
+	entries := machines(37)
+	rows := 24
+	step := planLayout(len(entries), 0, rows, 0)
+	onScreen := step.last - step.first
+
+	seen := map[int]bool{}
+	selected := 0
+	for i := 0; i < len(entries)*2; i++ {
+		frame := planLayout(len(entries), selected, rows, 0)
+		for j := frame.first; j < frame.last; j++ {
+			seen[j] = true
+		}
+		next := move(selected, onScreen, len(entries))
+		if next == selected {
+			break
+		}
+		selected = next
+	}
+
+	for i := range entries {
+		if !seen[i] {
+			t.Errorf("machine %d was never shown while paging through", i)
+		}
+	}
+}

@@ -74,9 +74,9 @@ func Run(connect Connect, setMode SetMode) error {
 		case keyDown:
 			selected = (selected + 1) % len(entries)
 		case keyPageUp:
-			selected = move(selected, -pageStep(), len(entries))
+			selected = move(selected, -pageStep(entries, selected, warning), len(entries))
 		case keyPageDown:
-			selected = move(selected, pageStep(), len(entries))
+			selected = move(selected, pageStep(entries, selected, warning), len(entries))
 		case keyTop:
 			selected = 0
 		case keyBottom:
@@ -244,14 +244,26 @@ func move(selected, n, count int) int {
 	return next
 }
 
-// pageStep is how far a page key moves, derived from the popup height.
-func pageStep() int {
-	_, rows := windowSize()
-	step := rows - 4
-	if step < 1 {
-		step = 1
+// pageStep is how far a page key moves: exactly what is on screen.
+//
+// It used to subtract a constant from the popup height, which stopped matching
+// when the frame learned to give up its parts as room ran short. It was two
+// rows out at every size, so paging through a long list stepped over two
+// machines each time without showing them. Asking the layout is the only way
+// these two stay in agreement.
+func pageStep(entries []Entry, selected int, warning string) int {
+	cols, rows := windowSize()
+	frame := planLayout(len(entries), selected, rows, len(warningLines(cols, warning)))
+	if step := frame.last - frame.first; step > 0 {
+		return step
 	}
-	return step
+	return 1
+}
+
+// warningLines wraps a warning to the popup, or returns nothing when there is
+// none to draw.
+func warningLines(cols int, warning string) []string {
+	return text.Wrap(text.Sanitize(warning), cols-4, maxWarningLines)
 }
 
 // nameWidth is how much room the machine column gets, leaving space for the
@@ -406,7 +418,7 @@ func render(entries []Entry, selected, cols, rows int, warning string) string {
 	// Wrapped rather than cut to one line: a warning that explains why
 	// something failed keeps the reason at the end, which is the half worth
 	// reading.
-	warned := text.Wrap(text.Sanitize(warning), cols-4, maxWarningLines)
+	warned := warningLines(cols, warning)
 	frame := planLayout(len(entries), selected, rows, len(warned))
 	first, last := frame.first, frame.last
 
