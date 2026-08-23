@@ -81,25 +81,17 @@ func run(command string, args []string) error {
 		return err
 
 	case "picker":
-		return picker.Run(func(target string) (string, error) {
-			reply, err := syncd.Ask(syncd.Command{Cmd: "connect", Host: target})
-			if err != nil {
-				return "", err
-			}
-			if !reply.OK {
-				return "", fmt.Errorf("%s", reply.Message)
-			}
-			return reply.Message, nil
-		}, func(target, mode string) (string, error) {
-			reply, err := syncd.Ask(syncd.Command{Cmd: "set-mode", Host: target, Mode: mode})
-			if err != nil {
-				return "", err
-			}
-			if !reply.OK {
-				return "", fmt.Errorf("%s", reply.Message)
-			}
-			return reply.Message, nil
-		})
+		return picker.Run(
+			func(target string) (string, error) {
+				return ask(syncd.Command{Cmd: "connect", Host: target})
+			},
+			func(target, mode string) (string, error) {
+				return ask(syncd.Command{Cmd: "set-mode", Host: target, Mode: mode})
+			},
+			func(target string) (string, error) {
+				return ask(syncd.Command{Cmd: "disconnect", Host: target})
+			},
+		)
 
 	case "connect":
 		// A host is optional: with none, every configured host reconnects.
@@ -243,4 +235,17 @@ func daemonLog() func() {
 		log.SetOutput(os.Stderr)
 		_ = f.Close()
 	}
+}
+
+// ask sends one command to the daemon and reports what it said, treating a
+// refusal as an error so the menu has one thing to check rather than two.
+func ask(cmd syncd.Command) (string, error) {
+	reply, err := syncd.Ask(cmd)
+	if err != nil {
+		return "", err
+	}
+	if !reply.OK {
+		return "", fmt.Errorf("%s", reply.Message)
+	}
+	return reply.Message, nil
 }

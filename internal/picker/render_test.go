@@ -423,3 +423,15 @@ func TestWidestStatusMatchesWhatIsDrawn(t *testing.T) {
 		}
 	}
 }
+
+func TestTheMenuOffersDisconnectAtEveryWidth(t *testing.T) {
+	// The menu could connect a machine and never let go of one, so the only way
+	// to close a machine's panes was to bind the action separately or invoke it
+	// by hand. A key that is not mentioned is a key nobody presses.
+	for _, cols := range []int{40, 56, 80, 120} {
+		drawn := strings.Join(lines(machines(3), 0, cols, 24), "\n")
+		if !strings.Contains(visible(drawn), "d ") {
+			t.Errorf("cols=%d: the hints do not mention d:\n%s", cols, visible(drawn))
+		}
+	}
+}

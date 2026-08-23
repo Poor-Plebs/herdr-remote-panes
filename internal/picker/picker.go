@@ -45,9 +45,13 @@ type Connect func(target string) (string, error)
 // SetMode asks the daemon to change how a machine is reached.
 type SetMode func(target, mode string) (string, error)
 
+// Disconnect closes a machine's panes here. The work on the machine is left
+// running, so this undoes the view rather than the session.
+type Disconnect func(target string) (string, error)
+
 // Run draws the menu and connects to whatever the user picks. It returns when
 // the user chooses or cancels; the pane closes as soon as it returns.
-func Run(connect Connect, setMode SetMode) error {
+func Run(connect Connect, setMode SetMode, disconnect Disconnect) error {
 	entries, warning := collect()
 	if len(entries) == 0 {
 		// With no menu to put it in, a warning still has to be said somewhere.
@@ -86,6 +90,23 @@ func Run(connect Connect, setMode SetMode) error {
 			return nil
 		case keyEnter:
 			return choose(entries[selected], connect)
+		case keyDisconnect:
+			// Closing the panes here, not the work there, so this is
+			// recoverable: enter brings the machine back with its terminals.
+			entry := entries[selected]
+			if !entry.Connected && !entry.GaveUp {
+				break
+			}
+			if _, err := disconnect(entry.Target); err != nil {
+				notice("Could not disconnect "+text.Sanitize(entry.Target),
+					err.Error(), "Press any key.")
+				readKey()
+			}
+			entries, warning = collect()
+			if selected >= len(entries) {
+				selected = 0
+			}
+
 		case keyToggle:
 			// Toggling in place, rather than closing the menu, so the change
 			// and its effect are visible together.
@@ -276,13 +297,13 @@ func hintLines(cols int) []string {
 	room := cols - 4
 	full := []string{
 		"↑↓ jk move · pgup/pgdn g/G jump · 1-9 pick · enter connect",
-		"m toggle mirroring (experimental) · q cancel",
+		"d disconnect · m toggle mirroring (experimental) · q cancel",
 	}
 	short := []string{
 		"↑↓ jk move · 1-9 pick · enter connect",
-		"m mirroring · q cancel",
+		"d disconnect · m mirroring · q cancel",
 	}
-	shortest := []string{"↑↓ enter", "m · q"}
+	shortest := []string{"↑↓ enter", "d · m · q"}
 
 	for _, pair := range [][]string{full, short, shortest} {
 		if text.Width(pair[0]) <= room && text.Width(pair[1]) <= room {
@@ -627,16 +648,17 @@ func windowSize() (cols, rows int) {
 type key rune
 
 const (
-	keyUp       key = 0xE000
-	keyDown     key = 0xE001
-	keyEnter    key = 0xE002
-	keyQuit     key = 0xE003
-	keyNone     key = 0xE004
-	keyToggle   key = 0xE005
-	keyPageUp   key = 0xE006
-	keyPageDown key = 0xE007
-	keyTop      key = 0xE008
-	keyBottom   key = 0xE009
+	keyUp         key = 0xE000
+	keyDown       key = 0xE001
+	keyEnter      key = 0xE002
+	keyQuit       key = 0xE003
+	keyNone       key = 0xE004
+	keyToggle     key = 0xE005
+	keyPageUp     key = 0xE006
+	keyPageDown   key = 0xE007
+	keyTop        key = 0xE008
+	keyBottom     key = 0xE009
+	keyDisconnect key = 0xE00A
 )
 
 // readKey reads one keypress from the popup.
@@ -669,6 +691,8 @@ func parseKey(r io.Reader) key {
 		return keyQuit
 	case 'm', 'M':
 		return keyToggle
+	case 'd', 'D':
+		return keyDisconnect
 	case 'k':
 		return keyUp
 	case 'j':

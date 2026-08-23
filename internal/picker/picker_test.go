@@ -185,3 +185,26 @@ func TestMove(t *testing.T) {
 		t.Errorf("paging down = %d, want 4", got)
 	}
 }
+
+func TestParseKeyReadsDisconnect(t *testing.T) {
+	for _, in := range []string{"d", "D"} {
+		if got := parseKey(strings.NewReader(in)); got != keyDisconnect {
+			t.Errorf("parseKey(%q) = %v, want keyDisconnect", in, got)
+		}
+	}
+	// Every key must be its own value, or one case shadows another. This was
+	// caught by the compiler on the way in: the new key was given a number
+	// another already had.
+	seen := map[key]string{}
+	for name, k := range map[string]key{
+		"up": keyUp, "down": keyDown, "enter": keyEnter, "quit": keyQuit,
+		"none": keyNone, "toggle": keyToggle, "pageUp": keyPageUp,
+		"pageDown": keyPageDown, "top": keyTop, "bottom": keyBottom,
+		"disconnect": keyDisconnect,
+	} {
+		if other, clash := seen[k]; clash {
+			t.Errorf("%s and %s are the same key", name, other)
+		}
+		seen[k] = name
+	}
+}

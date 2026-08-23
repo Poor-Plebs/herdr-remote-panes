@@ -64,7 +64,7 @@ The key you bound opens this:
    4. gh-runner          from ~/.ssh/config · ssh
 
   ↑↓ jk move · pgup/pgdn g/G jump · 1-9 pick · enter connect
-  m toggle mirroring (experimental) · q cancel
+  d disconnect · m toggle mirroring (experimental) · q cancel
 ```
 
 Every machine you can reach is listed, whether or not this plugin knows about
@@ -72,9 +72,10 @@ it: the ones you have configured come first, then everything else in your
 `~/.ssh/config`. Each says how it is reached and how it is doing.
 
 `enter` connects and gives you a terminal — on a machine that has been given up
-on, it is also how you say "try again now". `m` turns
-[mirroring](#mirroring-experimental) on or off for the machine under the
-cursor. The list scrolls, so a long SSH config is fine.
+on, it is also how you say "try again now". `d` closes a machine's panes here,
+leaving the work on the machine running, so `enter` brings it straight back.
+`m` turns [mirroring](#mirroring-experimental) on or off for the machine under
+the cursor. The list scrolls, so a long SSH config is fine.
 
 ## Everyday use
 
@@ -83,6 +84,7 @@ cursor. The list scrolls, so a long SSH config is fine.
 | A terminal on a machine | Open the menu, pick it |
 | Another terminal on it | Open a tab while in its space |
 | That machine's space back | Open the menu, pick it again |
+| To close a machine's panes | Open the menu, press `d` |
 | To see what is connected | `herdr plugin action invoke poorplebs.remote-panes.status` |
 
 Picking a machine takes you to its space, whether it had just been connected or
