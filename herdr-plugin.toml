@@ -15,35 +15,35 @@ command = ["./bin/herdr-remote-panes", "daemon"]
 [[actions]]
 id = "connect"
 title = "Remote panes: connect"
-description = "Mirror a machine's panes again after closing its space. With no target, reconnects every configured host."
+description = "Connect to a machine and go to its space. With no machine named, reconnects every one you have configured."
 contexts = ["global", "selection"]
 command = ["./bin/herdr-remote-panes", "connect"]
 
 [[actions]]
 id = "disconnect"
-title = "Remote panes: disconnect host"
-description = "Stop mirroring an SSH target and close its mirror panes."
+title = "Remote panes: disconnect"
+description = "Close a machine's terminals here. The work on the machine keeps running, so connecting again brings it back."
 contexts = ["global", "selection"]
 command = ["./bin/herdr-remote-panes", "disconnect"]
 
 [[actions]]
 id = "open"
 title = "Remote panes: new terminal"
-description = "Open a terminal on the machine whose workspace you are in; opens a local pane elsewhere."
+description = "New terminal on the machine whose space you are in, and go to it; an ordinary local pane anywhere else."
 contexts = ["global", "workspace", "selection"]
 command = ["./bin/herdr-remote-panes", "open"]
 
 [[actions]]
 id = "menu"
 title = "Remote panes: machine menu"
-description = "Pick a machine to connect to, from your SSH config and this plugin's hosts."
+description = "Pick a machine to connect to, from your SSH config and this plugin's own. Also disconnects one, or turns mirroring on and off."
 contexts = ["global"]
 command = ["./bin/herdr-remote-panes", "menu"]
 
 [[actions]]
 id = "open-tab"
 title = "Remote panes: new tab"
-description = "New terminal on the machine whose space you are in, as a tab; a local tab elsewhere."
+description = "New tab on the machine whose space you are in, and go to it; an ordinary local tab anywhere else."
 contexts = ["global", "workspace", "selection"]
 command = ["./bin/herdr-remote-panes", "open-tab"]
 
@@ -57,7 +57,7 @@ command = ["./bin/herdr-remote-panes", "refresh"]
 [[actions]]
 id = "status"
 title = "Remote panes: status"
-description = "Show connected hosts and how many panes each one is mirroring."
+description = "List the machines you are connected to and what each of them has open."
 contexts = ["global"]
 command = ["./bin/herdr-remote-panes", "status"]
 
@@ -84,6 +84,6 @@ command = ["./bin/herdr-remote-panes", "picker"]
 [[panes]]
 id = "mirror"
 title = "Remote pane"
-description = "A pane bridged from a remote Herdr server."
+description = "A terminal on another machine: an SSH session, or a live bridge to a terminal there when mirroring."
 placement = "tab"
 command = ["./bin/herdr-remote-panes", "mirror"]
