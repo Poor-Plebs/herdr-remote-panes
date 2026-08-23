@@ -51,7 +51,6 @@ func status() error {
 		report("no hosts connected")
 		return nil
 	}
-	summary := make([]string, 0, len(reply.Hosts))
 	for _, h := range reply.Hosts {
 		state := "ok"
 		switch {
@@ -65,10 +64,33 @@ func status() error {
 			count, kind = h.Terminals, "ssh"
 		}
 		fmt.Printf("  %-22s %2d %-9s %s\n", h.Label, count, kind, state)
-		summary = append(summary, fmt.Sprintf("%s (%d)", h.Label, count))
 	}
 	if os.Getenv("HERDR_PLUGIN_ACTION_ID") != "" {
-		herdrcli.Notify("mirroring " + strings.Join(summary, ", "))
+		herdrcli.Notify(statusSummary(reply.Hosts))
 	}
 	return nil
+}
+
+// statusSummary is the one line Herdr shows as a notification.
+//
+// It used to begin with "mirroring" and list every machine with a count, which
+// described a machine on a plain SSH terminal -- the default, and most of them
+// -- as doing something it was not. The count was right; the word was left over
+// from when mirroring was the only thing this did.
+func statusSummary(hosts []syncd.HostInfo) string {
+	if len(hosts) == 0 {
+		return "no machines connected"
+	}
+	parts := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		switch {
+		case h.GaveUp || !h.Connected:
+			parts = append(parts, h.Label+" unreachable")
+		case h.SSHOnly:
+			parts = append(parts, fmt.Sprintf("%s %d open", h.Label, h.Terminals))
+		default:
+			parts = append(parts, fmt.Sprintf("%s %d mirrored", h.Label, h.Mirrors))
+		}
+	}
+	return strings.Join(parts, " · ")
 }
