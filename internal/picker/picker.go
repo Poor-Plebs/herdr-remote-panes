@@ -703,6 +703,47 @@ func readKey() key {
 // Both cursor-key encodings are handled: a terminal in application mode sends
 // ESC O A for Up rather than ESC [ A, and reading only the second form leaves
 // the arrow keys dead with no clue why.
+// swallowPaste reads to the end of a bracketed paste and reports that nothing
+// was pressed.
+//
+// The end marker is ESC [ 201 ~. Anything before it is pasted text, which is
+// not a decision somebody made in this menu -- and left as keystrokes it is
+// several: "d" disconnects the machine under the cursor and a digit connects to
+// one.
+func swallowPaste(read func() (byte, bool)) key {
+	// Matched byte by byte rather than by reading a fixed tail, because pasted
+	// text can contain an escape of its own: pasting an arrow key put ESC [ A
+	// in the middle, and reading six bytes to test for the end marker consumed
+	// the start of the real one.
+	const end = "\x1b[201~"
+	matched := 0
+
+	// Bounded: something claiming to be a paste and never finishing is a stream
+	// to stop reading, not one to keep waiting on.
+	for i := 0; i < maxPasteBytes; i++ {
+		b, ok := read()
+		if !ok {
+			return keyQuit
+		}
+		switch {
+		case b == end[matched]:
+			matched++
+			if matched == len(end) {
+				return keyNone
+			}
+		case b == end[0]:
+			matched = 1
+		default:
+			matched = 0
+		}
+	}
+	return keyNone
+}
+
+// maxPasteBytes bounds how much pasted text is read before giving up on finding
+// the end of it.
+const maxPasteBytes = 1 << 16
+
 // maxEscapeParams bounds how much of an escape sequence is read before giving
 // up on it, so a stream that never ends one cannot be read forever.
 const maxEscapeParams = 16
@@ -771,6 +812,12 @@ func parseKey(r io.Reader) key {
 			params = append(params, b)
 		}
 
+		// A paste, which is not typing and should not press anything. Read to
+		// the end of it and say nothing happened.
+		if final == '~' && string(params) == "200" {
+			return swallowPaste(read)
+		}
+
 		switch final {
 		case 'A':
 			return keyUp
@@ -812,7 +859,16 @@ func rawMode() func() {
 	if _, err := sttyOutput("raw", "-echo"); err != nil {
 		return func() {}
 	}
-	return func() { _, _ = sttyOutput("sane") }
+	// Ask for pastes to arrive wrapped in markers, so they can be told from
+	// typing and ignored. Without that a paste is a run of keystrokes: pasting
+	// the word "prod" presses p, r, o and then d, which disconnects the machine
+	// under the cursor, and any digit in what follows picks a machine and
+	// connects to it.
+	fmt.Print(esc + "[?2004h")
+	return func() {
+		fmt.Print(esc + "[?2004l")
+		_, _ = sttyOutput("sane")
+	}
 }
 
 func sttyOutput(args ...string) ([]byte, error) {

@@ -277,7 +277,8 @@ func TestParseKeyConsumesWholeEscapeSequences(t *testing.T) {
 		{"page down", "\x1b[6~", keyPageDown},
 		{"page up with a modifier", "\x1b[5;5~", keyPageUp},
 		{"delete is not a key here", "\x1b[3~", keyNone},
-		{"a paste beginning", "\x1b[200~", keyNone},
+		// A paste beginning with nothing after it is a paste that never ends,
+		// which is covered with the other truncated sequences below.
 		{"something unrecognised", "\x1b[99;99;99R", keyNone},
 	}
 
@@ -301,7 +302,7 @@ func TestParseKeyConsumesWholeEscapeSequences(t *testing.T) {
 func TestParseKeyOnATruncatedSequence(t *testing.T) {
 	// A sequence that stops halfway means the input has gone, which is the same
 	// as being told to quit.
-	for _, in := range []string{"\x1b", "\x1b[", "\x1b[1", "\x1b[1;5"} {
+	for _, in := range []string{"\x1b", "\x1b[", "\x1b[1", "\x1b[1;5", "\x1b[200~", "\x1b[200~half"} {
 		if got := parseKey(strings.NewReader(in)); got != keyQuit {
 			t.Errorf("parseKey(%q) = %v, want keyQuit", in, got)
 		}
@@ -314,5 +315,57 @@ func TestParseKeyDoesNotReadForever(t *testing.T) {
 	endless := strings.NewReader("\x1b[" + strings.Repeat("1;", 4096) + "A")
 	if got := parseKey(endless); got != keyNone {
 		t.Errorf("parseKey on an endless sequence = %v, want keyNone", got)
+	}
+}
+
+func TestAPasteDoesNotPressAnything(t *testing.T) {
+	// A paste is not typing. Left as keystrokes it is several decisions:
+	// pasting the word "prod" presses p, r, o and then d, which disconnects the
+	// machine under the cursor, and any digit that follows picks a machine and
+	// connects to it.
+	r := strings.NewReader("\x1b[200~prod 3\x1b[201~")
+	if got := parseKey(r); got != keyNone {
+		t.Errorf("a paste = %v, want nothing pressed", got)
+	}
+	if r.Len() != 0 {
+		rest := make([]byte, r.Len())
+		_, _ = r.Read(rest)
+		t.Errorf("the pasted text was left to be read as keys: %q", rest)
+	}
+
+	// Whatever is typed after it still works.
+	r = strings.NewReader("\x1b[200~anything at all\x1b[201~q")
+	if got := parseKey(r); got != keyNone {
+		t.Errorf("a paste = %v, want nothing pressed", got)
+	}
+	if got := parseKey(r); got != keyQuit {
+		t.Errorf("the keypress after a paste = %v, want it to still work", got)
+	}
+}
+
+func TestAPasteContainingEscapesIsStillSwallowed(t *testing.T) {
+	// Pasted text can hold anything, including something that looks like the
+	// end marker without being it.
+	for _, in := range []string{
+		"\x1b[200~\x1b[A\x1b[201~",    // an arrow key, pasted
+		"\x1b[200~\x1b[999~\x1b[201~", // something unrecognised
+		"\x1b[200~ESC[201~\x1b[201~",  // the marker as text
+	} {
+		r := strings.NewReader(in)
+		if got := parseKey(r); got != keyNone {
+			t.Errorf("parseKey(%q) = %v, want nothing pressed", in, got)
+		}
+		if r.Len() != 0 {
+			t.Errorf("parseKey(%q) left %d bytes unread", in, r.Len())
+		}
+	}
+}
+
+func TestAPasteThatNeverEnds(t *testing.T) {
+	// Something claiming to be a paste and never finishing is a stream to stop
+	// reading, not one to keep waiting on.
+	r := strings.NewReader("\x1b[200~" + strings.Repeat("x", 1<<17))
+	if got := parseKey(r); got != keyNone {
+		t.Errorf("an unfinished paste = %v, want nothing pressed", got)
 	}
 }
