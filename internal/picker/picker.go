@@ -335,10 +335,29 @@ type span struct {
 	colour string
 }
 
+// isMirroring reports whether a machine is actually being mirrored, rather than
+// whether it was asked to be.
+//
+// A machine without Herdr falls back to a plain SSH terminal rather than
+// refusing to connect, which is the documented behaviour and the point of the
+// default mode. The menu read the setting rather than what happened, so such a
+// machine sat there saying "connected · 0 mirrored" while running a terminal it
+// declined to count. The field recording what happened was carried all the way
+// here and then not looked at.
+//
+// Only meaningful once connected: before that, what was asked for is all there
+// is to go on.
+func isMirroring(entry Entry) bool {
+	if entry.Connected && entry.SSHOnly {
+		return false
+	}
+	return entry.Mirroring
+}
+
 // statusSpans is what a machine's line says after its name.
 func statusSpans(entry Entry) []span {
 	mode := "ssh"
-	if entry.Mirroring {
+	if isMirroring(entry) {
 		mode = "mirrored"
 	}
 	switch {
@@ -347,11 +366,11 @@ func statusSpans(entry Entry) []span {
 		// before pressing m, and without it there is no telling which way the
 		// toggle would go.
 		out := []span{{"unreachable", red}}
-		if entry.Mirroring {
+		if isMirroring(entry) {
 			out = append(out, span{" · mirrored", dim})
 		}
 		return append(out, span{" · enter to retry", dim})
-	case entry.Connected && entry.Mirroring:
+	case entry.Connected && isMirroring(entry):
 		return []span{{fmt.Sprintf("connected · %d mirrored", entry.Mirrors), green}}
 	case entry.Connected && entry.Terminals > 0:
 		return []span{{fmt.Sprintf("connected · %d open", entry.Terminals), green}}
@@ -412,6 +431,7 @@ const chromeWidth = 8
 func widestStatus() int {
 	worst := []Entry{
 		{GaveUp: true, Mirroring: true},
+		{Connected: true, Mirroring: true, SSHOnly: true, Terminals: 99},
 		{GaveUp: true},
 		{Connected: true, Mirroring: true, Mirrors: 99},
 		{Connected: true, Terminals: 99},

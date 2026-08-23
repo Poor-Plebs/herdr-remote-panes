@@ -435,3 +435,52 @@ func TestTheMenuOffersDisconnectAtEveryWidth(t *testing.T) {
 		}
 	}
 }
+
+func TestAMachineThatFellBackReadsAsWhatItIs(t *testing.T) {
+	// A machine without Herdr falls back to a plain SSH terminal rather than
+	// refusing to connect. The menu read the setting rather than what happened,
+	// so such a machine sat there saying "connected · 0 mirrored" while running
+	// a terminal it declined to count.
+	fellBack := Entry{
+		Target: "workbox", Configured: true, Connected: true,
+		Mirroring: true, // asked for
+		SSHOnly:   true, // what happened
+		Terminals: 2,
+	}
+	drawn := visible(strings.Join(lines([]Entry{fellBack}, 0, 76, 24), "\n"))
+
+	if strings.Contains(drawn, "mirrored") {
+		t.Errorf("a machine on plain SSH is described as mirrored:\n%s", drawn)
+	}
+	if !strings.Contains(drawn, "2 open") {
+		t.Errorf("the terminals it actually has are not counted:\n%s", drawn)
+	}
+
+	// One that really is mirroring still says so.
+	really := Entry{
+		Target: "ci", Configured: true, Connected: true,
+		Mirroring: true, Mirrors: 3,
+	}
+	drawn = visible(strings.Join(lines([]Entry{really}, 0, 76, 24), "\n"))
+	if !strings.Contains(drawn, "3 mirrored") {
+		t.Errorf("a machine that is mirroring does not say so:\n%s", drawn)
+	}
+}
+
+func TestBeforeConnectingTheSettingIsAllThereIs(t *testing.T) {
+	// SSHOnly means nothing until a machine has been reached, so what was asked
+	// for is what to show.
+	asked := Entry{Target: "workbox", Configured: true, Mirroring: true}
+	drawn := visible(strings.Join(lines([]Entry{asked}, 0, 76, 24), "\n"))
+	if !strings.Contains(drawn, "mirrored") {
+		t.Errorf("a machine set to mirror should say so before it is reached:\n%s", drawn)
+	}
+
+	// And one given up on says how it was meant to be reached, which is the
+	// line somebody reads before pressing m.
+	gaveUp := Entry{Target: "prod", Configured: true, GaveUp: true, Mirroring: true}
+	drawn = visible(strings.Join(lines([]Entry{gaveUp}, 0, 76, 24), "\n"))
+	if !strings.Contains(drawn, "mirrored") {
+		t.Errorf("an unreachable machine should still say how it is reached:\n%s", drawn)
+	}
+}
