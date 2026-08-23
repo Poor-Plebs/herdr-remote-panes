@@ -47,8 +47,11 @@ jobs:
           go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
           "$(go env GOPATH)/bin/staticcheck" ./...
 
+      # Shuffled so a test that only passes because of the order it runs in is
+      # caught here rather than becoming something everyone works around. The
+      # seed is printed on failure, so a shuffle-only failure can be repeated.
       - name: Test
-        run: go test -race ./...
+        run: go test -race -shuffle=on ./...
 
       - name: Build
         run: go build -trimpath -o bin/herdr-remote-panes .

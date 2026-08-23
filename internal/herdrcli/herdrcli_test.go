@@ -408,3 +408,27 @@ func TestRunErrorKeepsTheCodeHerdrGave(t *testing.T) {
 		t.Errorf("error %q should still name the failure", err)
 	}
 }
+
+func TestIgnoreNotFound(t *testing.T) {
+	// Closing a pane is asked for when the pane should not exist, and a
+	// reconciling daemon races with Herdr over which of them removes a thing
+	// first. Reporting the loser of that race as a failure filled the log with
+	// the daemon complaining that something it wanted gone was gone.
+	gone := &APIError{Command: "pane close w1:p2", Code: "pane_not_found", Message: "pane w1:p2 not found"}
+	if err := ignoreNotFound(gone); err != nil {
+		t.Errorf("a pane already gone was reported as a failure: %v", err)
+	}
+
+	// Anything else is still a failure and must not be swallowed.
+	refused := &APIError{Command: "pane close w1:p2", Code: "invalid_params", Message: "bad id"}
+	if err := ignoreNotFound(refused); err == nil {
+		t.Error("a refusal was swallowed")
+	}
+	other := errors.New("herdr is not installed")
+	if err := ignoreNotFound(other); err == nil {
+		t.Error("an unrelated failure was swallowed")
+	}
+	if err := ignoreNotFound(nil); err != nil {
+		t.Errorf("ignoreNotFound(nil) = %v", err)
+	}
+}

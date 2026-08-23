@@ -270,3 +270,26 @@ func TestNoticeSurvivesAnAbsurdlyNarrowPopup(t *testing.T) {
 		}()
 	}
 }
+
+func TestAnUnreachableMachineStillSaysHowItIsReached(t *testing.T) {
+	// This is the line someone reads before pressing m, and without the mode
+	// there is no telling which way the toggle would go.
+	drawn := strings.Join(lines([]Entry{
+		{Target: "staging", Configured: true, GaveUp: true, Mirroring: true},
+		{Target: "prod", Configured: true, GaveUp: true},
+	}, 0, 76, 24), "\n")
+
+	if !strings.Contains(drawn, "mirrored") {
+		t.Errorf("a mirroring machine does not say so:\n%s", visible(drawn))
+	}
+	// Both still say what to do about it.
+	if strings.Count(drawn, "enter to retry") != 2 {
+		t.Errorf("both should offer a retry:\n%s", visible(drawn))
+	}
+	// The plain one is not labelled as mirroring.
+	for _, line := range lines([]Entry{{Target: "prod", Configured: true, GaveUp: true}}, 0, 76, 24) {
+		if strings.Contains(line, "prod") && strings.Contains(line, "mirrored") {
+			t.Errorf("a plain SSH machine was labelled as mirroring: %q", visible(line))
+		}
+	}
+}

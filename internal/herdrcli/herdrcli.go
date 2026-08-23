@@ -158,6 +158,20 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("herdr %s: %s: %s", e.Command, e.Code, e.Message)
 }
 
+// ignoreNotFound treats "it is not there" as success for the operations that
+// were asking for exactly that.
+//
+// Closing a pane is asked for when the pane should not exist, and a reconciling
+// daemon races with Herdr over which of them removes a thing first. Reporting
+// the loser of that race as a failure filled the log with the daemon
+// complaining that something it wanted gone was gone.
+func ignoreNotFound(err error) error {
+	if IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
 // IsNotFound reports whether Herdr refused because the thing asked about does
 // not exist -- a workspace closed, a pane already gone.
 func IsNotFound(err error) bool {
@@ -369,7 +383,7 @@ func RenamePane(paneID, label string) error {
 // ClosePane closes a plugin-owned pane.
 func ClosePane(paneID string) error {
 	_, err := Run("plugin", "pane", "close", paneID)
-	return err
+	return ignoreNotFound(err)
 }
 
 // Notify shows a Herdr notification.
@@ -393,7 +407,7 @@ func ReportAgent(paneID, source, agent, state string) error {
 // stops running an agent.
 func ReleaseAgent(paneID, source, agent string) error {
 	_, err := Run("pane", "release-agent", paneID, "--source", source, "--agent", agent)
-	return err
+	return ignoreNotFound(err)
 }
 
 // AgentState maps a remote pane's agent status onto the states pane
@@ -415,7 +429,7 @@ func AgentState(status string) string {
 // alongside a new workspace.
 func ClosePaneByID(paneID string) error {
 	_, err := Run("pane", "close", paneID)
-	return err
+	return ignoreNotFound(err)
 }
 
 // WorkspaceLabel returns the label of a workspace, or "" when it is unknown.

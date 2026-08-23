@@ -449,7 +449,14 @@ func render(entries []Entry, selected, cols, rows int, warning string) string {
 		}
 		switch {
 		case entry.GaveUp:
-			line = red + "unreachable" + reset + dim + " · enter to retry" + reset
+			// The mode is worth saying even here: this is the line someone
+			// reads before pressing m, and without it there is no telling
+			// which way the toggle would go.
+			detail := " · enter to retry"
+			if entry.Mirroring {
+				detail = " · mirrored · enter to retry"
+			}
+			line = red + "unreachable" + reset + dim + detail + reset
 		case entry.Connected && entry.Mirroring:
 			line = green + fmt.Sprintf("connected · %d mirrored", entry.Mirrors) + reset
 		case entry.Connected && entry.Terminals > 0:
