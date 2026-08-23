@@ -203,3 +203,37 @@ func TestSaveKeepsThePermissionsPrivate(t *testing.T) {
 		t.Errorf("permissions are %o, want 600", perm)
 	}
 }
+
+func TestSaveWritesThroughASymlink(t *testing.T) {
+	// Configs are often symlinked into a dotfiles repo. Writing atomically by
+	// renaming a new file into place replaces the link with a regular file,
+	// silently detaching it from the repo -- so the link has to be resolved
+	// first and the real file written through.
+	dir := t.TempDir()
+	real := t.TempDir() + "/config.json"
+	if err := os.WriteFile(real, []byte(`{"hosts":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, dir+"/config.json"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+
+	cfg := Defaults()
+	cfg.Hosts = []Host{{Target: "bot"}}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Lstat(dir + "/config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Error("the symlink was replaced by a regular file; a dotfiles setup would be broken")
+	}
+	raw, err := os.ReadFile(real)
+	if err != nil || len(raw) == 0 {
+		t.Errorf("the real file was not written through: %v", err)
+	}
+}

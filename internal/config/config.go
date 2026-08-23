@@ -221,6 +221,22 @@ func Save(cfg Config) error {
 // whenever mirroring is toggled from the menu, so losing it that way is a real
 // prospect rather than a theoretical one.
 func writeFileAtomically(path string, data []byte) error {
+	// A config symlinked into a dotfiles repo has to be written through rather
+	// than replaced: renaming onto the link itself would swap it for a regular
+	// file and quietly detach it from the repo it belongs to. Resolving first
+	// also keeps the temporary file on the same filesystem as its target, which
+	// is what lets the rename be atomic at all.
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+
+	// Keep whatever permissions the file already had; only a file being created
+	// for the first time gets the private default.
+	perm := os.FileMode(0o600)
+	if info, err := os.Stat(path); err == nil {
+		perm = info.Mode().Perm()
+	}
+
 	dir := filepath.Dir(path)
 	temp, err := os.CreateTemp(dir, filepath.Base(path)+".*")
 	if err != nil {
@@ -242,7 +258,7 @@ func writeFileAtomically(path string, data []byte) error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tempName, 0o600); err != nil {
+	if err := os.Chmod(tempName, perm); err != nil {
 		return err
 	}
 	return os.Rename(tempName, path)
