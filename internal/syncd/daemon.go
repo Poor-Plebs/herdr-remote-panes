@@ -1546,14 +1546,20 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 			}
 			if planLostPane(mirror.Failed(paneID)) {
 				state.shellFailures++
-				// No ssh failure to weigh here -- the terminals are dropping,
-				// not the connection -- so this is the count alone.
-				if planGiveUp(state.shellFailures, nil) {
+				// What killed the pane, when the bridge managed to record it.
+				reason := mirror.FailureReason(paneID)
+				switch planLostPaneAction(state.shellFailures, reason) {
+				case stopUntilFixed:
+					state.gaveUp = true
+					state.lastErr = errors.New(reason)
+					log.Printf("%s: terminal %s went — not reopening: %s",
+						state.host.Target, paneID, summarizeError(state.lastErr))
+				case stopForNow:
 					state.gaveUp = true
 					state.lastErr = fmt.Errorf("terminals keep dropping on %s", state.host.Target)
 					log.Printf("%s: giving up after %d dropped terminals; connect again to retry",
 						state.host.Target, state.shellFailures)
-				} else {
+				default:
 					log.Printf("%s: terminal %s dropped, reopening", state.host.Target, paneID)
 					state.reopenShell = true
 				}

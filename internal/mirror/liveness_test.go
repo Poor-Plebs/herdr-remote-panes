@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -89,7 +90,7 @@ func TestFailureMarks(t *testing.T) {
 	if Failed("w1:p2") {
 		t.Error("a pane with no record must not read as failed")
 	}
-	MarkFailed("w1:p2")
+	MarkFailed("w1:p2", "ssh: connect to host bot port 22: Connection refused")
 	if !Failed("w1:p2") {
 		t.Error("a recorded failure should read as failed")
 	}
@@ -103,7 +104,7 @@ func TestFailureAndLivenessAreSeparate(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 
 	clear := markLive("w1:p3", "term_x")
-	MarkFailed("w1:p3")
+	MarkFailed("w1:p3", "ssh: connect to host bot port 22: Connection refused")
 	clear()
 
 	// Clearing liveness on exit must not erase why the pane went away.
@@ -133,7 +134,7 @@ func TestMarksArePerSession(t *testing.T) {
 	}
 
 	// And a failure in one session must not be seen by the other.
-	MarkFailed("w1:p2")
+	MarkFailed("w1:p2", "ssh: connect to host bot port 22: Connection refused")
 	t.Setenv("HERDR_SESSION", "hub")
 	if Failed("w1:p2") {
 		t.Error("another session's failure should not be seen here")
@@ -149,8 +150,8 @@ func TestPruneRemovesMarksForPanesThatAreGone(t *testing.T) {
 	t.Setenv("HERDR_SESSION", "hub")
 
 	markLive("w1:p2", "term_x")()
-	MarkFailed("w1:p9")
-	MarkFailed("w1:p2")
+	MarkFailed("w1:p9", "ssh: connect to host bot port 22: Connection refused")
+	MarkFailed("w1:p2", "ssh: connect to host bot port 22: Connection refused")
 
 	Prune(map[string]bool{"w1:p2": true})
 
@@ -169,7 +170,7 @@ func TestPruneKeepsEverythingWhenNothingIsKnown(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	t.Setenv("HERDR_SESSION", "hub")
 
-	MarkFailed("w1:p2")
+	MarkFailed("w1:p2", "ssh: connect to host bot port 22: Connection refused")
 	Prune(map[string]bool{})
 	if Failed("w1:p2") {
 		t.Log("marks are cleared when no panes exist, which is consistent")
@@ -194,7 +195,7 @@ func TestPruneClearsTheOldSharedLayout(t *testing.T) {
 		}
 	}
 	// A mark in this session's own directory that is still claimed.
-	MarkFailed("w1:p2")
+	MarkFailed("w1:p2", "ssh: connect to host bot port 22: Connection refused")
 
 	Prune(map[string]bool{"w1:p2": true})
 
@@ -281,5 +282,62 @@ func TestSameProgramRejectsARecycledProcessID(t *testing.T) {
 	// An id that does not exist at all.
 	if sameProgram(0x7FFFFFFF) {
 		t.Error("a process id that cannot exist was accepted")
+	}
+}
+
+func TestAFailureRecordsWhatKilledIt(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	const reason = "bot is not reachable over ssh: exit status 255: Host key verification failed."
+	MarkFailed("w1:p2", reason)
+
+	if !Failed("w1:p2") {
+		t.Fatal("the pane should be marked as failed")
+	}
+	if got := FailureReason("w1:p2"); got != reason {
+		t.Errorf("FailureReason = %q, want %q", got, reason)
+	}
+
+	// Cleared along with the mark, so a machine that comes back does not read
+	// as still broken.
+	ClearFailed("w1:p2")
+	if got := FailureReason("w1:p2"); got != "" {
+		t.Errorf("a cleared failure still reports %q", got)
+	}
+}
+
+func TestAFailureWithNothingToSayIsNotAnError(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("HERDR_SESSION", "hub")
+
+	// What an older build wrote: the timestamp alone, no reason. It must read
+	// as "failed, cause unknown" rather than as a corrupt file, because the
+	// daemon's fallback for an unknown cause is the behaviour that build had.
+	MarkFailed("w1:p2", "")
+	if !Failed("w1:p2") {
+		t.Fatal("a failure with no reason is still a failure")
+	}
+	if got := FailureReason("w1:p2"); got != "" {
+		t.Errorf("FailureReason = %q, want empty", got)
+	}
+
+	// And a pane that was never marked at all.
+	if got := FailureReason("w9:p9"); got != "" {
+		t.Errorf("an unmarked pane reports %q", got)
+	}
+}
+
+func TestALongFailureIsNotKeptWhole(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	// This file is read only to decide whether reopening could help, and the
+	// phrase that says so is in the first line or two. A remote that prints a
+	// megabyte of banner should not have it written to disk on every attempt.
+	MarkFailed("w1:p2", strings.Repeat("x", 4*maxFailureReason))
+	if got := len(FailureReason("w1:p2")); got > maxFailureReason {
+		t.Errorf("kept %d bytes of the reason, want at most %d", got, maxFailureReason)
 	}
 }

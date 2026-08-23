@@ -2437,3 +2437,46 @@ func TestATerminalNobodyAskedForGetsTheMachinesUsualPlacement(t *testing.T) {
 		t.Error("forgetting a request nobody made left something behind")
 	}
 }
+
+func TestPlanLostPaneAction(t *testing.T) {
+	// The real thing, as ssh prints it, banner and all -- this is what the
+	// bridge records and what the daemon has to recognise.
+	hostKey := `bot is not reachable over ssh: exit status 255: @@@@@@@@@@@@@@@@
+@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
+@@@@@@@@@@@@@@@@
+IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!
+Host key verification failed.`
+	dropped := "bot is not reachable over ssh: exit status 255: Connection reset by peer"
+
+	t.Run("a dropped link is reopened", func(t *testing.T) {
+		if got := planLostPaneAction(0, dropped); got != reopenPane {
+			t.Errorf("got %v, want the terminal reopened", got)
+		}
+	})
+
+	t.Run("a failure that needs a person costs no second terminal", func(t *testing.T) {
+		// Reopening was the only way to find out why a pane went, so a machine
+		// whose host key had changed opened a second terminal to fail in
+		// exactly the same way, and put a second banner in the log doing it.
+		if got := planLostPaneAction(0, hostKey); got != stopUntilFixed {
+			t.Errorf("got %v, want the machine left alone until it is fixed", got)
+		}
+	})
+
+	t.Run("enough dropped links still stop", func(t *testing.T) {
+		if got := planLostPaneAction(maxHostAttempts, dropped); got != stopForNow {
+			t.Errorf("got %v, want the machine left alone for now", got)
+		}
+	})
+
+	t.Run("an unrecorded reason goes by the count, as it always did", func(t *testing.T) {
+		// A pane marked by an older build wrote no reason, and one killed
+		// rather than failed leaves nothing to read.
+		if got := planLostPaneAction(0, ""); got != reopenPane {
+			t.Errorf("got %v, want the terminal reopened", got)
+		}
+		if got := planLostPaneAction(maxHostAttempts, ""); got != stopForNow {
+			t.Errorf("got %v, want the machine left alone for now", got)
+		}
+	})
+}

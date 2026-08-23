@@ -220,3 +220,25 @@ func TestTakeoverIsOnUnlessTurnedOff(t *testing.T) {
 		}
 	}
 }
+
+func TestDescribeCommandKeepsTheMachineWhenTheRemoteCommandHasASeparator(t *testing.T) {
+	// ssh's own "--" is the one before the destination. Taking the last one
+	// instead dropped the destination and everything up to whatever separator
+	// the remote command happened to use -- and the destination is the one
+	// thing this function exists to show.
+	argv := []string{
+		"ssh", "-o", "ControlMaster=auto", "-o", "ControlPersist=60", "-tt",
+		"--", "bot",
+		"sh", "-c", "runner", "--", "inner-argument",
+	}
+	got := describeCommand(argv)
+	if !strings.Contains(got, "bot") {
+		t.Errorf("describeCommand = %q, want the machine in it", got)
+	}
+	if strings.Contains(got, "ControlMaster") {
+		t.Errorf("describeCommand = %q, want the ssh options left out", got)
+	}
+	if !strings.Contains(got, "inner-argument") {
+		t.Errorf("describeCommand = %q, want what is run on the machine kept", got)
+	}
+}

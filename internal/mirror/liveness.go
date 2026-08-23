@@ -198,8 +198,20 @@ func failurePath(paneID string) string {
 	return filepath.Join(dir, sanitizePaneID(paneID)+".failed")
 }
 
-// MarkFailed records that a pane's bridge died of an error.
-func MarkFailed(paneID string) {
+// maxFailureReason bounds what is kept of a failure. SSH prints fifteen lines
+// of banner for a changed host key, and this file is only ever read to decide
+// whether reopening the pane could help -- the phrase that says so is in the
+// first line or two.
+const maxFailureReason = 2048
+
+// MarkFailed records that a pane's bridge died, and of what.
+//
+// The reason is kept because the daemon's only other option is to reopen the
+// pane and see. That is the right guess for a dropped connection and the wrong
+// one for a changed host key, where the second pane fails exactly as the first
+// did -- two terminals flashing open and shut, and two more copies of the
+// banner in the log, before anything says what is actually wrong.
+func MarkFailed(paneID, reason string) {
 	path := failurePath(paneID)
 	if path == "" {
 		return
@@ -207,7 +219,11 @@ func MarkFailed(paneID string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return
 	}
-	_ = os.WriteFile(path, []byte(strconv.FormatInt(time.Now().Unix(), 10)), 0o600)
+	if len(reason) > maxFailureReason {
+		reason = reason[:maxFailureReason]
+	}
+	body := strconv.FormatInt(time.Now().Unix(), 10) + "\n" + reason
+	_ = os.WriteFile(path, []byte(body), 0o600)
 }
 
 // Failed reports whether a pane's bridge died of an error.
@@ -218,6 +234,27 @@ func Failed(paneID string) bool {
 	}
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// FailureReason is what killed a pane's bridge, or empty if that is not known.
+//
+// Empty is a real answer, not only an error: a pane marked by an older build
+// wrote the timestamp alone, and one killed rather than failed leaves no file.
+// Both mean the same thing here -- decide by reopening.
+func FailureReason(paneID string) string {
+	path := failurePath(paneID)
+	if path == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	_, reason, found := strings.Cut(string(raw), "\n")
+	if !found {
+		return ""
+	}
+	return strings.TrimSpace(reason)
 }
 
 // ClearFailed forgets a recorded failure, once it has been acted on.

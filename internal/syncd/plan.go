@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"errors"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 )
 
@@ -200,6 +201,39 @@ func planSharedPanes(panes []herdrcli.Pane, sharedWorkspace string, tabOrder map
 // records a failure on its way out, which tells them apart.
 func planLostPane(failed bool) bool {
 	return failed
+}
+
+// lostPaneAction is what to do about a terminal that has gone.
+type lostPaneAction int
+
+const (
+	// reopenPane opens another, which is right for a link that dropped.
+	reopenPane lostPaneAction = iota
+	// stopForNow leaves the machine alone after too many have dropped.
+	stopForNow
+	// stopUntilFixed leaves it alone because the failure needs a person.
+	stopUntilFixed
+)
+
+// planLostPaneAction decides what a terminal going away means.
+//
+// Reopening used to be the only way to find out why one went, which is the
+// right guess for a dropped connection and the wrong one for a changed host
+// key: the replacement fails exactly as the first did. Two terminals flash open
+// and shut, two more copies of a fifteen-line banner land in the log, and only
+// then does anything say what is wrong. The bridge now records what killed it,
+// so that case can be recognised without spending a pane on it.
+//
+// An unknown reason -- a pane marked by an older build, or one that left no
+// trace -- still goes by the count, which is what it did before.
+func planLostPaneAction(consecutiveFailures int, reason string) lostPaneAction {
+	if reason != "" && settledFailure(errors.New(reason)) {
+		return stopUntilFixed
+	}
+	if planGiveUp(consecutiveFailures, nil) {
+		return stopForNow
+	}
+	return reopenPane
 }
 
 // planRestoreShell decides whether another plain SSH terminal should be opened

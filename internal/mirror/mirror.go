@@ -105,7 +105,11 @@ func describeCommand(argv []string) string {
 	if len(argv) == 0 {
 		return ""
 	}
-	for i := len(argv) - 1; i > 0; i-- {
+	// The first "--", not the last: ssh's own separator is the one before the
+	// destination, and anything further along belongs to the command being run
+	// on the machine. Scanning from the end took that one instead, which threw
+	// away the destination -- the single thing this is here to show.
+	for i := 1; i < len(argv); i++ {
 		if argv[i] == "--" {
 			return strings.Join(append([]string{argv[0]}, argv[i+1:]...), " ")
 		}
@@ -115,7 +119,7 @@ func describeCommand(argv []string) string {
 
 // reportFailure leaves a trace a user can actually find.
 func reportFailure(err error) {
-	MarkFailed(os.Getenv("HERDR_PANE_ID"))
+	MarkFailed(os.Getenv("HERDR_PANE_ID"), err.Error())
 
 	// A plain SSH pane has neither a name nor a remote terminal, so this read
 	// as "[herdr-remote-panes] : exit status 255" -- a colon introducing
