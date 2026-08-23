@@ -197,18 +197,24 @@ func selectedText() string {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `herdr-remote-panes — mirror remote Herdr panes into this session
+	fmt.Fprint(os.Stderr, `herdr-remote-panes — work on other machines from this Herdr
 
   daemon                     run the reconciler (Herdr [[startup]] hook)
-  mirror                     bridge one remote terminal (Herdr pane entrypoint)
-  connect [ssh-target]       start mirroring a host, or all configured hosts
-  open [ssh-target]          new terminal on the machine you are looking at
-  open-tab [ssh-target]      the same, placed as a tab
-  disconnect <ssh-target>    stop mirroring a host and close its panes
+  mirror                     run a machine's terminal in a pane (pane entrypoint)
   menu                       open the machine menu (Herdr popup)
   picker                     draw the machine menu (popup entrypoint)
-  refresh                    reconcile every connected host now
-  status                     show connected hosts and mirror counts
+
+  connect [ssh-target]       connect to a machine and go to its space;
+                             with no machine, reconnects every configured one
+  disconnect <ssh-target>    close a machine's terminals here
+  open [ssh-target]          new terminal on the machine you are looking at
+  open-tab [ssh-target]      the same, placed as a tab
+  refresh                    reconcile every connected machine now
+  status                     list the machines connected and what each has open
+
+Machines get a plain SSH terminal by default, which needs nothing installed on
+them. Mirroring, which keeps both ends showing the same terminals, is
+experimental and turned on per machine.
 `)
 }
 
