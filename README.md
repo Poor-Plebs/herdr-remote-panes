@@ -1,5 +1,9 @@
 # herdr-remote-panes
 
+[![CI](https://github.com/Poor-Plebs/herdr-remote-panes/actions/workflows/ci.yml/badge.svg)](https://github.com/Poor-Plebs/herdr-remote-panes/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/github/go-mod/go-version/Poor-Plebs/herdr-remote-panes?logo=go&label=Go)](go.mod)
+[![License](https://img.shields.io/github/license/Poor-Plebs/herdr-remote-panes)](LICENSE)
+
 Work on other machines from the [Herdr](https://herdr.dev) in front of you.
 
 Press a key, pick a machine, and a terminal on it opens here — in its own space
