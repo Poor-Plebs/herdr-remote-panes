@@ -222,7 +222,14 @@ warning: the running daemon is 427e2ad but 9fcc667 is installed;
 restart Herdr to pick up the update
 ```
 
-**A keybinding does nothing.** It probably clashes with a built-in. Taken:
+**A keybinding does nothing.** First check the config itself is being read:
+
+```bash
+herdr config check
+```
+
+If that is happy, the binding probably clashes with a built-in, which wins
+silently. Taken:
 `b c e g h j k l n o p q r s v w x z tab minus alt+g shift+d shift+g shift+n
 shift+p shift+r shift+t shift+w shift+x shift+tab`.
 
