@@ -18,9 +18,13 @@ import (
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/logfile"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/mirror"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/picker"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/version"
+	"io"
+	"path/filepath"
 )
 
 func main() {
@@ -56,6 +60,12 @@ func run(command string, args []string) error {
 		// spelled wrong quietly turned mirroring on.
 		for _, problem := range cfg.Problems() {
 			log.Printf("config: %s", problem)
+		}
+		// Herdr shows a plugin command's output once it has finished, and the
+		// daemon does not finish, so everything it has to say would otherwise
+		// go somewhere nobody can read it.
+		if closeLog := daemonLog(); closeLog != nil {
+			defer closeLog()
 		}
 		return syncd.NewWithConfigError(cfg, err).Run()
 
@@ -208,4 +218,29 @@ func usage() {
   refresh                    reconcile every connected host now
   status                     show connected hosts and mirror counts
 `)
+}
+
+// maxDaemonLog bounds the daemon's log. It is quiet in ordinary use -- a line
+// when a machine is connected or given up on -- so this is generous.
+const maxDaemonLog = 256 * 1024
+
+// daemonLog also writes the daemon's diagnostics to a file, and returns a
+// function that closes it. Standard error is kept as well, so nothing is lost
+// if the file cannot be opened.
+func daemonLog() func() {
+	dir, err := syncd.StateDir()
+	if err != nil {
+		return nil
+	}
+	f, err := logfile.Open(filepath.Join(dir, "daemon.log"), maxDaemonLog)
+	if err != nil {
+		log.Printf("could not open the daemon log: %v", err)
+		return nil
+	}
+	log.SetOutput(io.MultiWriter(os.Stderr, f))
+	log.Printf("herdr-remote-panes %s starting", version.Short())
+	return func() {
+		log.SetOutput(os.Stderr)
+		_ = f.Close()
+	}
 }

@@ -183,8 +183,15 @@ closes, and recorded:
 
 ```bash
 herdr plugin log list --plugin poorplebs.remote-panes
-cat ~/.local/state/herdr/plugins/poorplebs.remote-panes/mirror.log
+cd ~/.local/state/herdr/plugins/poorplebs.remote-panes
+cat mirror.log   # why a terminal would not open
+cat daemon.log   # what the background daemon has been doing
 ```
+
+`herdr plugin log list` shows a command's output once it has finished, and the
+daemon does not finish, so `daemon.log` is where its side of the story is. It
+begins with the build it is running, which is worth checking against the one
+installed. Both files roll over rather than growing without end.
 
 **A setting seems to be ignored.** Settings that read fine but mean something
 else are reported when the daemon starts, in `status`, and in the menu:
