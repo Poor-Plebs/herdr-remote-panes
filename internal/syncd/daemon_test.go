@@ -14,7 +14,6 @@ func newTestHost() *hostSync {
 		labels:           map[string]string{},
 		reportedAgents:   map[string]agentReport{},
 		shellPanes:       map[string]bool{},
-		seenStray:        map[string]bool{},
 		pendingPlacement: map[string]string{},
 		pendingFocus:     map[string]bool{},
 	}
@@ -31,12 +30,13 @@ func TestForgetPane(t *testing.T) {
 	state.labels["w1:p2"] = "build@bot"
 	state.reportedAgents["w1:p2"] = agentReport{agent: "claude", state: "idle"}
 	state.shellPanes["w1:p2"] = true
-	state.seenStray["w1:p2"] = true
 
 	// Another pane's bookkeeping must survive.
 	state.labels["w1:p3"] = "tests@bot"
 
-	d := &Daemon{}
+	// Which panes have been considered for moving is the daemon's record, not
+	// a machine's: a pane belongs to one machine at most.
+	d := &Daemon{seenStray: map[string]bool{"w1:p2": true}}
 	d.forgetPane(state, "w1:p2")
 
 	if got, ok := state.labels["w1:p2"]; ok {
@@ -48,7 +48,7 @@ func TestForgetPane(t *testing.T) {
 	if state.shellPanes["w1:p2"] {
 		t.Error("terminal still tracked for a pane that is gone")
 	}
-	if state.seenStray["w1:p2"] {
+	if d.seenStray["w1:p2"] {
 		t.Error("stray mark remembered for a pane that is gone")
 	}
 	if state.labels["w1:p3"] != "tests@bot" {
@@ -122,7 +122,9 @@ func TestForgetPaneClearsMirrorBookkeeping(t *testing.T) {
 	state.labels["w1:p2"] = "build@bot"
 	state.reportedAgents["w1:p2"] = agentReport{agent: "claude", state: "idle"}
 
-	d := &Daemon{}
+	// Which panes have been considered for moving is the daemon's record, not
+	// a machine's: a pane belongs to one machine at most.
+	d := &Daemon{seenStray: map[string]bool{"w1:p2": true}}
 	d.forgetPane(state, "w1:p2")
 	delete(state.mirrors, "t1")
 

@@ -944,7 +944,6 @@ func TestStrayCaptureMovesALocalPaneOntoTheMachine(t *testing.T) {
 		host:        config.Host{Target: "bot"},
 		workspaceID: "w1",
 		mirrors:     map[string]string{},
-		seenStray:   map[string]bool{},
 	}
 
 	strays := d.planStrayCapture(state, index(
@@ -965,7 +964,6 @@ func TestStrayCaptureLeavesItsOwnMirrorsAlone(t *testing.T) {
 		host:        config.Host{Target: "bot"},
 		workspaceID: "w1",
 		mirrors:     map[string]string{"term_1": "w1:p1"},
-		seenStray:   map[string]bool{},
 	}
 
 	if strays := d.planStrayCapture(state, index(pane("w1:p1", "w1", "w1:t1"))); len(strays) != 0 {
@@ -981,7 +979,6 @@ func TestStrayCaptureActsOnAPaneOnlyOnce(t *testing.T) {
 		host:        config.Host{Target: "bot"},
 		workspaceID: "w1",
 		mirrors:     map[string]string{},
-		seenStray:   map[string]bool{},
 	}
 	listing := index(pane("w1:p1", "w1", "w1:t1"))
 
@@ -1001,13 +998,12 @@ func TestStrayCaptureJudgesAReusedPaneIDAfresh(t *testing.T) {
 		host:        config.Host{Target: "bot"},
 		workspaceID: "w1",
 		mirrors:     map[string]string{},
-		seenStray:   map[string]bool{},
 	}
 
 	d.planStrayCapture(state, index(pane("w1:p1", "w1", "w1:t1")))
 	// The pane goes away.
 	d.planStrayCapture(state, index())
-	if state.seenStray["w1:p1"] {
+	if d.seenStray["w1:p1"] {
 		t.Fatal("a pane that no longer exists is still remembered")
 	}
 	// A different pane arrives on the same id.
@@ -1025,7 +1021,6 @@ func TestStrayCaptureDoesNothingForAPlainSSHMachine(t *testing.T) {
 		workspaceID: "w1",
 		sshOnly:     true,
 		mirrors:     map[string]string{},
-		seenStray:   map[string]bool{},
 	}
 
 	if strays := d.planStrayCapture(state, index(pane("w1:p1", "w1", "w1:t1"))); len(strays) != 0 {
@@ -1044,7 +1039,6 @@ func TestStrayCaptureRespectsTheSetting(t *testing.T) {
 		host:        config.Host{Target: "bot"},
 		workspaceID: "w1",
 		mirrors:     map[string]string{},
-		seenStray:   map[string]bool{},
 	}
 
 	if strays := d.planStrayCapture(state, index(pane("w1:p1", "w1", "w1:t1"))); len(strays) != 0 {
@@ -1112,6 +1106,15 @@ func TestConfigWarningSaysWhichProblemItIs(t *testing.T) {
 // run at the same time without one seeing half of the other's write.
 func withConfig(d *Daemon, cfg config.Config) *Daemon {
 	d.setConfig(cfg)
+	// Filled in here so a test does not have to remember to: the real
+	// constructor does it, and forgetting produces a nil map panic rather than
+	// a readable failure.
+	if d.seenStray == nil {
+		d.seenStray = map[string]bool{}
+	}
+	if d.markedWorkspaces == nil {
+		d.markedWorkspaces = map[string]string{}
+	}
 	return d
 }
 
@@ -1820,5 +1823,69 @@ func TestChangingAModeIsNotUndoneByAnUnreachableMachine(t *testing.T) {
 	}
 	if len(reply) > 200 {
 		t.Errorf("reply is %d characters, too long for a menu screen", len(reply))
+	}
+}
+
+func TestMachinesSharingASpaceDoNotStealEachOther(t *testing.T) {
+	// "workspace" puts every machine in one space instead of giving each its
+	// own. Stray capture asked only "is this pane mine", so every other
+	// machine's terminal in that space looked like a local pane to be moved
+	// onto this machine and closed here -- each of them doing it to the
+	// others, in turn.
+	shared := config.Defaults()
+	shared.Workspace = "remote"
+
+	bot := &hostSync{
+		host:        config.Host{Target: "bot"},
+		workspaceID: "w1",
+		mirrors:     map[string]string{"term_b": "w1:p1"},
+		shellPanes:  map[string]bool{},
+	}
+	prod := &hostSync{
+		host:        config.Host{Target: "prod"},
+		workspaceID: "w1",
+		mirrors:     map[string]string{"term_p": "w1:p2"},
+		shellPanes:  map[string]bool{},
+	}
+	d := withConfig(&Daemon{hosts: map[string]*hostSync{"bot": bot, "prod": prod}}, shared)
+
+	listing := index(
+		pane("w1:p1", "w1", "w1:t1"), // bot's
+		pane("w1:p2", "w1", "w1:t2"), // prod's
+		pane("w1:p3", "w1", "w1:t3"), // genuinely nobody's
+	)
+
+	strays := d.planStrayCapture(bot, listing)
+	if len(strays) != 1 || strays[0].PaneID != "w1:p3" {
+		t.Errorf("bot claimed %+v, want only the pane nobody owns", strays)
+	}
+
+	// And prod does not claim it a second time, having been marked as seen by
+	// whichever machine looked first.
+	if got := d.planStrayCapture(prod, listing); len(got) != 0 {
+		t.Errorf("prod also claimed %+v", got)
+	}
+}
+
+func TestClaimedPanesCoversEveryMachineAndBothKinds(t *testing.T) {
+	d := withConfig(&Daemon{hosts: map[string]*hostSync{
+		"bot": {
+			mirrors:    map[string]string{"term_1": "w1:p1"},
+			shellPanes: map[string]bool{"w1:p2": true},
+		},
+		"ci": {
+			mirrors:    map[string]string{"term_2": "w2:p1"},
+			shellPanes: map[string]bool{},
+		},
+	}}, config.Defaults())
+
+	claimed := d.claimedPanes(nil)
+	for _, want := range []string{"w1:p1", "w1:p2", "w2:p1"} {
+		if !claimed[want] {
+			t.Errorf("%s is a machine's pane but is not claimed", want)
+		}
+	}
+	if claimed["w9:p9"] {
+		t.Error("a pane nobody has was claimed")
 	}
 }

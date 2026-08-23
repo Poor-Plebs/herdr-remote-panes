@@ -59,6 +59,13 @@ type Daemon struct {
 	// not changed is not written again.
 	lastSaved []byte
 
+	// seenStray records local panes already considered for moving onto a
+	// machine, so one is acted on once rather than on every pass. Held here
+	// rather than per machine: a pane belongs to one machine at most, and when
+	// several share a space each of them used to claim the same stray pane and
+	// open a terminal of its own for it.
+	seenStray map[string]bool
+
 	// reconciles folds overlapping reconcile requests into one.
 	reconciles coalescer
 
@@ -111,9 +118,6 @@ type hostSync struct {
 	pendingFocus map[string]bool
 	// labels is the name last applied to each of this host's panes.
 	labels map[string]string
-	// seenStray records local panes in this host's space that were noticed and
-	// left alone, so a pane is only considered for capture once.
-	seenStray map[string]bool
 	// strays is what the last pass decided to move onto the machine, each with
 	// the placement to recreate it as. Acted on after the lock is released.
 	strays []strayPane
@@ -227,6 +231,7 @@ func NewWithConfigError(cfg config.Config, configErr error) *Daemon {
 		hosts:            map[string]*hostSync{},
 		rootPanes:        map[string]string{},
 		markedWorkspaces: map[string]string{},
+		seenStray:        map[string]bool{},
 		snapshot:         loadSnapshot(),
 		configErr:        configErr,
 	}
@@ -786,7 +791,6 @@ func (d *Daemon) connect(host config.Host) error {
 			pendingPlacement: map[string]string{},
 			pendingFocus:     map[string]bool{},
 			labels:           map[string]string{},
-			seenStray:        map[string]bool{},
 			shellPanes:       map[string]bool{},
 		}
 		if saved, ok := d.snapshot.Hosts[host.Target]; ok {
@@ -1638,31 +1642,62 @@ func (d *Daemon) findLocalWorkspace(state *hostSync) (bool, error) {
 //
 // This only decides. Acting on the list needs the host lock released, because
 // opening a terminal on the machine takes that lock again.
+// hostList is the tracked machines as a slice. Callers hold d.mu.
+func (d *Daemon) hostList() []*hostSync {
+	out := make([]*hostSync, 0, len(d.hosts))
+	for _, state := range d.hosts {
+		out = append(out, state)
+	}
+	return out
+}
+
+// claimedPanes lists every local pane that any machine has, of either kind.
+//
+// The machine being asked about is included whether or not it is registered
+// yet, so this does not depend on the caller having got that far. Callers hold
+// d.mu.
+func (d *Daemon) claimedPanes(also *hostSync) map[string]bool {
+	claimed := make(map[string]bool)
+	for _, other := range append([]*hostSync{also}, d.hostList()...) {
+		if other == nil {
+			continue
+		}
+		for _, paneID := range other.mirrors {
+			claimed[paneID] = true
+		}
+		for paneID := range other.shellPanes {
+			claimed[paneID] = true
+		}
+	}
+	return claimed
+}
+
 func (d *Daemon) planStrayCapture(state *hostSync, index *paneIndex) []strayPane {
 	if state.sshOnly || state.workspaceID == "" {
 		return nil
 	}
 
-	mirrors := make(map[string]bool, len(state.mirrors))
-	for _, paneID := range state.mirrors {
-		mirrors[paneID] = true
-	}
+	// Every machine's panes, not just this one's. A space named outright holds
+	// all of them, and asking only "is this one mine" made every other
+	// machine's terminal look like a stray to be moved onto this machine and
+	// closed here -- each of them doing that to the others, in turn.
+	claimed := d.claimedPanes(state)
 
 	var strays []strayPane
 	for _, paneID := range index.panesIn[state.workspaceID] {
-		if planStrayPane(d.config().ShouldCaptureNewPanes(), mirrors[paneID], state.seenStray[paneID]) {
+		if planStrayPane(d.config().ShouldCaptureNewPanes(), claimed[paneID], d.seenStray[paneID]) {
 			strays = append(strays, strayPane{
 				PaneID:    paneID,
 				Placement: planStrayPlacement(index.panesPerTab[index.tabOf[paneID]]),
 			})
 		}
-		state.seenStray[paneID] = true
+		d.seenStray[paneID] = true
 	}
 
 	// Forget panes that are gone, so ids reused later are judged afresh.
-	for paneID := range state.seenStray {
+	for paneID := range d.seenStray {
 		if !index.alive[paneID] {
-			delete(state.seenStray, paneID)
+			delete(d.seenStray, paneID)
 		}
 	}
 	return strays
@@ -1760,7 +1795,7 @@ func (d *Daemon) forgetPane(state *hostSync, paneID string) {
 	delete(state.labels, paneID)
 	delete(state.reportedAgents, paneID)
 	delete(state.shellPanes, paneID)
-	delete(state.seenStray, paneID)
+	delete(d.seenStray, paneID)
 	mirror.ClearLive(paneID)
 	mirror.ClearFailed(paneID)
 }
