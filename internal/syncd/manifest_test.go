@@ -22,10 +22,12 @@ func TestManifestDescriptionsDoNotClaimMirroring(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	descriptions := 0
 	for _, line := range strings.Split(string(raw), "\n") {
 		if !strings.HasPrefix(line, "description = ") {
 			continue
 		}
+		descriptions++
 		lower := strings.ToLower(line)
 		// Mirroring is off by default, so a description that only describes
 		// mirroring describes what most people will not be doing. Saying it is
@@ -37,6 +39,12 @@ func TestManifestDescriptionsDoNotClaimMirroring(t *testing.T) {
 		if mentions && !hedged {
 			t.Errorf("description describes mirroring as though it were the usual thing:\n  %s", line)
 		}
+	}
+
+	// A test that finds no descriptions checks nothing while passing, which is
+	// the failure mode of reading a file in a test.
+	if descriptions < 5 {
+		t.Fatalf("found %d descriptions in the manifest; the format has moved", descriptions)
 	}
 }
 
@@ -53,6 +61,7 @@ func TestManifestListsWhatTheCodeImplements(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	found := 0
 	for _, line := range strings.Split(string(manifest), "\n") {
 		if !strings.HasPrefix(line, "id = ") {
 			continue
@@ -61,12 +70,18 @@ func TestManifestListsWhatTheCodeImplements(t *testing.T) {
 		if strings.Contains(id, ".") {
 			continue // the plugin's own id, not an action
 		}
+		found++
 		// Looked for as a quoted word rather than as "case X", because several
 		// share a case: open and open-tab differ only in the placement they
 		// ask for.
 		if !strings.Contains(string(main), `"`+id+`"`) {
 			t.Errorf("the manifest offers %q but nothing handles it", id)
 		}
+	}
+
+	// As above: finding nothing must not read as finding nothing wrong.
+	if found < 5 {
+		t.Fatalf("found %d actions in the manifest; the format has moved", found)
 	}
 }
 
