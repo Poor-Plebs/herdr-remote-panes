@@ -113,3 +113,68 @@ func TestPadToWidth(t *testing.T) {
 		t.Errorf("got %q, want it untouched", got)
 	}
 }
+
+func TestWrap(t *testing.T) {
+	// Cutting a message to one line loses whatever is at the end, which for a
+	// message explaining why something failed is the half worth reading.
+	msg := "Could not read the plugin config, so only ~/.ssh/config machines are listed: unexpected end of JSON input"
+
+	one := Wrap(msg, 72, 1)
+	if len(one) != 1 {
+		t.Fatalf("Wrap(...,1) = %d lines, want 1", len(one))
+	}
+	if !strings.HasSuffix(one[0], "…") {
+		t.Errorf("a message that did not fit should say so: %q", one[0])
+	}
+
+	two := Wrap(msg, 72, 2)
+	if len(two) != 2 {
+		t.Fatalf("Wrap(...,2) = %d lines, want 2", len(two))
+	}
+	if !strings.Contains(strings.Join(two, " "), "unexpected end of JSON input") {
+		t.Errorf("the reason was lost: %q", two)
+	}
+	for _, line := range two {
+		if Width(line) > 72 {
+			t.Errorf("line is %d columns wide: %q", Width(line), line)
+		}
+	}
+
+	// A message that fits is left whole, with nothing added to it.
+	short := `mode "shh" is not one of ssh, attach or observe`
+	if got := Wrap(short, 72, 2); len(got) != 1 || got[0] != short {
+		t.Errorf("Wrap(short) = %q, want it unchanged", got)
+	}
+
+	// Nothing to say, nothing drawn.
+	for _, empty := range []string{"", "   ", "\t"} {
+		if got := Wrap(empty, 72, 2); got != nil {
+			t.Errorf("Wrap(%q) = %q, want nothing", empty, got)
+		}
+	}
+
+	// Degenerate sizes must not loop or panic.
+	for _, width := range []int{-1, 0, 1, 2} {
+		for _, max := range []int{0, 1, 2} {
+			for _, line := range Wrap(msg, width, max) {
+				if Width(line) > width {
+					t.Errorf("width=%d produced %q", width, line)
+				}
+			}
+		}
+	}
+}
+
+func TestWrapKeepsAWordTogetherWhereItCan(t *testing.T) {
+	got := Wrap("alpha beta gamma delta", 11, 3)
+	want := []string{"alpha beta", "gamma delta"}
+	if len(got) != len(want) {
+		t.Fatalf("Wrap = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("Wrap = %q, want %q", got, want)
+			break
+		}
+	}
+}

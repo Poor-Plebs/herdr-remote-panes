@@ -182,3 +182,28 @@ func TestAWarningIsMadeSafeToDraw(t *testing.T) {
 		t.Error("an escape from the config reached the screen")
 	}
 }
+
+func TestAWarningKeepsItsReason(t *testing.T) {
+	// The reason a config could not be read sits at the end of the message,
+	// where cutting it to one line threw it away.
+	warning := "Could not read the plugin config, so only ~/.ssh/config machines are listed: unexpected end of JSON input"
+	joined := strings.Join(lines(machines(4), 0, 76, 24, warning), "\n")
+
+	if !strings.Contains(joined, "unexpected end of JSON input") {
+		t.Errorf("the reason was cut off:\n%s", joined)
+	}
+}
+
+func TestAShortPopupKeepsSomeOfTheWarning(t *testing.T) {
+	// Half a warning is worth more than none, so the second line goes before
+	// the first one does.
+	warning := "Could not read the plugin config, so only ~/.ssh/config machines are listed: unexpected end of JSON input"
+	drawn := lines(machines(20), 0, 76, 9, warning)
+
+	if len(drawn) > 9 {
+		t.Errorf("drew %d lines in a 9 row popup", len(drawn))
+	}
+	if !strings.Contains(strings.Join(drawn, "\n"), "Could not read") {
+		t.Errorf("the warning went entirely:\n%s", strings.Join(drawn, "\n"))
+	}
+}

@@ -118,3 +118,58 @@ func Pad(s string, width int) string {
 	}
 	return s
 }
+
+// Wrap breaks a message into at most maxLines lines of the given width, on
+// spaces where it can. The last line is cut with an ellipsis when there is more
+// than will fit.
+//
+// Cutting a message to one line loses whatever is at the end, which for a
+// message explaining why something failed is the half worth reading.
+func Wrap(s string, width, maxLines int) []string {
+	if width <= 0 || maxLines <= 0 {
+		return nil
+	}
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return nil
+	}
+
+	var lines []string
+	line := ""
+	for i := 0; i < len(words); i++ {
+		word := words[i]
+		switch {
+		case line == "":
+			line = word
+		case Width(line)+1+Width(word) <= width:
+			line += " " + word
+		default:
+			lines = append(lines, line)
+			line = ""
+			if len(lines) == maxLines {
+				// Out of room, and there are words left to place.
+				return cut(lines, width, true)
+			}
+			i-- // Place this word on the next line.
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return cut(lines, width, false)
+}
+
+// cut holds the wrapped lines to the width, marking the last one when the
+// message did not fit.
+func cut(lines []string, width int, more bool) []string {
+	for i, l := range lines {
+		lines[i] = Truncate(l, width)
+	}
+	if more && len(lines) > 0 {
+		last := len(lines) - 1
+		if !strings.HasSuffix(lines[last], "…") {
+			lines[last] = Truncate(lines[last]+" …", width)
+		}
+	}
+	return lines
+}

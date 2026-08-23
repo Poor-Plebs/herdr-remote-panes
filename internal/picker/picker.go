@@ -274,13 +274,17 @@ func nameWidth(cols int) int {
 // The menu runs in a popup whose height it does not control, and writing more
 // lines than fit scrolls the top away — taking the first machine, and the
 // heading, with it. So the list is windowed rather than assumed to fit.
+// maxWarningLines bounds how much of the popup a warning may take.
+const maxWarningLines = 2
+
 // layout is what fits in a popup of a given height: which slice of the machines
 // to draw, and which of the surrounding lines there is room for.
 type layout struct {
 	first, last int
 	counter     bool
 	hints       bool
-	warning     bool
+	// warning is how many lines of the warning there is room for.
+	warning int
 }
 
 // planLayout decides the whole frame in one place. It used to be split between
@@ -291,22 +295,37 @@ type layout struct {
 // When everything will not fit, the key hints go first and the warning second.
 // The machines are what the menu is for, and a warning is worth more than a
 // reminder of which keys move the selection.
-func planLayout(count, selected, rows int, warn bool) layout {
+func planLayout(count, selected, rows, warnLines int) layout {
 	if rows < 1 {
 		rows = 1
 	}
 	// The heading and the blank line under it are always drawn.
 	const heading = 2
 
-	for _, opt := range []struct{ hints, warning bool }{
-		{true, warn}, {false, warn}, {false, false},
-	} {
+	// What to give up, in order. The key hints go first, then the warning a
+	// line at a time: the machines are what the menu is for, a warning is worth
+	// more than a reminder of which keys move the selection, and half a warning
+	// is worth more than none.
+	options := []struct {
+		hints   bool
+		warning int
+	}{
+		{true, warnLines}, {false, warnLines},
+	}
+	for lines := warnLines - 1; lines >= 0; lines-- {
+		options = append(options, struct {
+			hints   bool
+			warning int
+		}{false, lines})
+	}
+
+	for _, opt := range options {
 		chrome := heading
 		if opt.hints {
 			chrome += 3 // a blank separator and two lines of hints
 		}
-		if opt.warning {
-			chrome += 2 // the warning and the blank line under it
+		if opt.warning > 0 {
+			chrome += opt.warning + 1 // the warning and the blank line under it
 		}
 
 		if visible := rows - chrome; visible >= 1 && visible >= count {
@@ -349,18 +368,24 @@ func draw(entries []Entry, selected int, warning string) {
 // is printed to is what makes the layout checkable: alignment, truncation and
 // the wide characters in a host name are otherwise only ever seen by eye.
 func render(entries []Entry, selected, cols, rows int, warning string) string {
-	warning = text.Sanitize(warning)
-	frame := planLayout(len(entries), selected, rows, warning != "")
+	// Wrapped rather than cut to one line: a warning that explains why
+	// something failed keeps the reason at the end, which is the half worth
+	// reading.
+	warned := text.Wrap(text.Sanitize(warning), cols-4, maxWarningLines)
+	frame := planLayout(len(entries), selected, rows, len(warned))
 	first, last := frame.first, frame.last
 
 	var b strings.Builder
 	b.WriteString(esc + "[2J" + esc + "[H")
 	b.WriteString("  " + bold + "Connect to a machine" + reset + "\r\n\r\n")
-	if frame.warning {
+	if frame.warning > 0 {
 		// Shown in the menu rather than on a screen that has to be dismissed
 		// first: a problem worth mentioning every time is not worth
 		// interrupting every time.
-		b.WriteString("  " + yellow + text.Truncate(warning, cols-4) + reset + "\r\n\r\n")
+		for _, line := range warned[:frame.warning] {
+			b.WriteString("  " + yellow + line + reset + "\r\n")
+		}
+		b.WriteString("\r\n")
 	}
 
 	for i := first; i < last; i++ {
