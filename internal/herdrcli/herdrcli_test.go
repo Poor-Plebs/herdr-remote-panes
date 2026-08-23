@@ -442,3 +442,20 @@ func TestFocusingASpaceThatHasGoneIsNotAFailure(t *testing.T) {
 		t.Errorf("a space already gone was reported as a failure: %v", err)
 	}
 }
+
+func TestOpenPaneArgsAsksForFocusOrRefusesIt(t *testing.T) {
+	// A pane opened because someone asked for it should be the one they end up
+	// looking at; one opened because a link came back should not take the
+	// screen from under them. Both have to be said explicitly -- leaving the
+	// flag off entirely would let Herdr decide, and it decides differently for
+	// different placements.
+	wanted := strings.Join(openPaneArgs(OpenOptions{PluginID: "p", Entrypoint: "e", Focus: true}), " ")
+	if !strings.Contains(wanted, "--focus") || strings.Contains(wanted, "--no-focus") {
+		t.Errorf("args = %q, want --focus", wanted)
+	}
+
+	unwanted := strings.Join(openPaneArgs(OpenOptions{PluginID: "p", Entrypoint: "e"}), " ")
+	if !strings.Contains(unwanted, "--no-focus") {
+		t.Errorf("args = %q, want --no-focus", unwanted)
+	}
+}

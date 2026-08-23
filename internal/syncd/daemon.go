@@ -462,7 +462,11 @@ func (d *Daemon) openRemotePane(host config.Host, placement string, focus bool) 
 	}
 
 	if state.sshOnly {
-		return d.openShellPane(state)
+		// A plain SSH machine has no remote pane to open, so this is the
+		// terminal. The focus asked for used to stop at this line, which meant
+		// "open a terminal on this machine" left you looking at somewhere else
+		// -- for the default mode, which is most people.
+		return d.openShellPane(state, focus)
 	}
 
 	workspaceID, created, err := d.ensureRemoteWorkspace(state)
@@ -622,7 +626,7 @@ func (d *Daemon) resolveOpenTarget(cmd Command) (config.Host, bool) {
 
 // openShellPane opens a plain SSH pane for a host that is not running Herdr.
 // There is no remote pane to mirror, so the pane is the session itself.
-func (d *Daemon) openShellPane(state *hostSync) error {
+func (d *Daemon) openShellPane(state *hostSync, focus bool) error {
 	index := newPaneIndex(nil)
 	if local, err := herdrcli.PaneList(); err == nil {
 		index = newPaneIndex(local)
@@ -647,6 +651,7 @@ func (d *Daemon) openShellPane(state *hostSync) error {
 		Placement:  shellTarget.Placement,
 		Workspace:  shellTarget.Workspace,
 		TargetPane: shellTarget.TargetPane,
+		Focus:      focus,
 		Env: map[string]string{
 			mirror.EnvTarget: state.host.Target,
 			mirror.EnvMode:   string(config.ModeSSH),
@@ -919,7 +924,7 @@ func (d *Daemon) ensureRemotePresence(host config.Host) (bool, error) {
 		if !planNeedsTerminal(d.liveTerminalCount(host.Target)) {
 			return false, nil
 		}
-		return true, d.openShellPane(state)
+		return true, d.openShellPane(state, false)
 	}
 
 	_, created, err := d.ensureRemoteWorkspace(state)
@@ -1211,7 +1216,9 @@ func (d *Daemon) reconcileOnce() {
 
 		d.captureStrayPanes(state, strays)
 		if reopen {
-			if err := d.openShellPane(state); err != nil {
+			// Never focused: a link coming back is not a request to go
+			// there, and somebody may be working elsewhere.
+			if err := d.openShellPane(state, false); err != nil {
 				log.Printf("reopen terminal on %s: %v", state.host.Target, err)
 			}
 		}
