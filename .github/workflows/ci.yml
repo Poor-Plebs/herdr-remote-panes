@@ -55,3 +55,31 @@ jobs:
 
       - name: Build
         run: go build -trimpath -o bin/herdr-remote-panes .
+
+  # go.mod advertises Go 1.22, and Herdr builds this plugin from source on the
+  # machine it is installed on -- so a call to something added to the standard
+  # library since then does not inconvenience someone on that version, it stops
+  # them installing it at all. The language version is already held to go.mod by
+  # any toolchain; the standard library is not, and that is what this checks.
+  #
+  # No -race here: Go 1.22 cannot link race binaries on current macOS runners,
+  # and the matrix above covers that on a current toolchain anyway.
+  floor:
+    name: oldest supported Go
+    runs-on: ubuntu-latest
+    env:
+      # Fail rather than quietly fetching a newer toolchain, which would make
+      # this job agree with everything and check nothing.
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build, vet and test on the floor
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
