@@ -82,6 +82,11 @@ type hostSync struct {
 	// dismissed remembers mirrors the user closed by hand, so the next poll
 	// does not immediately reopen them.
 	dismissed map[string]bool
+	// abandoned are terminals whose mirror failed too many times. Kept apart
+	// from dismissed, which means someone closed the pane: the two block
+	// mirroring alike but deserve different treatment across a restart, since
+	// restarting is exactly when a mirror that kept failing is worth another go.
+	abandoned map[string]bool
 	// failures and retryAt back off a terminal that will not mirror, so a
 	// persistent error cannot spawn a new pane on every tick.
 	failures map[string]int
@@ -470,6 +475,7 @@ func (d *Daemon) closeRemoteTerminals(state *hostSync, terminalIDs []string, rem
 		if !ok {
 			// Already gone on the machine; nothing to close.
 			delete(state.dismissed, terminalID)
+			delete(state.abandoned, terminalID)
 			continue
 		}
 		if _, err := state.client.Run("pane", "close", paneID); err != nil {
@@ -478,6 +484,7 @@ func (d *Daemon) closeRemoteTerminals(state *hostSync, terminalIDs []string, rem
 		}
 		log.Printf("%s: closed terminal %s to match", state.host.Target, paneID)
 		delete(state.dismissed, terminalID)
+		delete(state.abandoned, terminalID)
 	}
 }
 
@@ -671,6 +678,7 @@ func (d *Daemon) connect(host config.Host) error {
 		state.host = host
 		state.sshOnly = sshOnly
 		clear(state.dismissed)
+		clear(state.abandoned)
 		// The settings can have moved on since this host was first connected:
 		// toggling a mode from the menu rereads the whole config file, so an
 		// edit to any other machine's session or Herdr path lands then too.
@@ -690,6 +698,7 @@ func (d *Daemon) connect(host config.Host) error {
 			sshOnly:   sshOnly,
 			mirrors:   map[string]string{},
 			dismissed: map[string]bool{},
+			abandoned: map[string]bool{},
 			failures:  map[string]int{},
 			retryAt:   map[string]time.Time{},
 
@@ -1275,6 +1284,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	plan := planMirrors(remotePanes, mirrorState{
 		Mirrored:  state.mirrors,
 		Dismissed: state.dismissed,
+		Abandoned: state.abandoned,
 		BackedOff: backedOff,
 		Max:       d.config().MaxMirrors,
 	})
@@ -1320,6 +1330,13 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	for terminalID := range state.dismissed {
 		if !seen[terminalID] {
 			delete(state.dismissed, terminalID)
+		}
+	}
+	// Its own loop: a terminal given up on need not also have been closed by
+	// hand, and iterating only the other set would leave it here for good.
+	for terminalID := range state.abandoned {
+		if !seen[terminalID] {
+			delete(state.abandoned, terminalID)
 		}
 	}
 	for terminalID := range state.retryAt {
@@ -1461,7 +1478,7 @@ func (d *Daemon) backOff(state *hostSync, terminalID string, cause error) {
 		state.host.Target, terminalID, attempts, cause)
 
 	if attempts >= maxMirrorAttempts {
-		state.dismissed[terminalID] = true
+		state.abandoned[terminalID] = true
 		delete(state.retryAt, terminalID)
 		return
 	}

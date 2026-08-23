@@ -1227,3 +1227,65 @@ func TestDismissedTerminalsSurviveARestart(t *testing.T) {
 		t.Errorf("restoreShells = %d, want 2", state.restoreShells)
 	}
 }
+
+func TestGivingUpOnAMirrorIsNotRememberedAcrossARestart(t *testing.T) {
+	// Both a pane someone closed and a mirror that failed too often stop the
+	// terminal being mirrored again, and they used to share one set. Only the
+	// first is worth remembering across a restart: restarting is exactly when a
+	// mirror that kept failing deserves another go.
+	d := withConfig(&Daemon{hosts: map[string]*hostSync{
+		"bot": {
+			host:      config.Host{Target: "bot"},
+			mirrors:   map[string]string{},
+			dismissed: map[string]bool{"closed-by-hand": true},
+			abandoned: map[string]bool{"kept-failing": true},
+		},
+	}}, config.Defaults())
+
+	d.mu.Lock()
+	state := d.hosts["bot"]
+	saved := hostSnapshot{}
+	for terminalID := range state.dismissed {
+		saved.Dismissed = append(saved.Dismissed, terminalID)
+	}
+	d.mu.Unlock()
+
+	if len(saved.Dismissed) != 1 || saved.Dismissed[0] != "closed-by-hand" {
+		t.Fatalf("snapshot holds %v, want only the pane closed by hand", saved.Dismissed)
+	}
+
+	// After a restart the one that was closed stays closed, and the one that
+	// kept failing is tried again.
+	fresh := &hostSync{
+		mirrors:   map[string]string{},
+		dismissed: map[string]bool{},
+		abandoned: map[string]bool{},
+	}
+	restoreFromSnapshot(fresh, saved)
+
+	if !fresh.dismissed["closed-by-hand"] {
+		t.Error("a pane closed by hand came back after a restart")
+	}
+	if fresh.dismissed["kept-failing"] || fresh.abandoned["kept-failing"] {
+		t.Error("a mirror that kept failing is still given up on after a restart")
+	}
+}
+
+func TestBothSetsStopATerminalBeingMirrored(t *testing.T) {
+	// Separating them must not let either through.
+	panes := []herdrcli.Pane{
+		{TerminalID: "closed-by-hand"},
+		{TerminalID: "kept-failing"},
+		{TerminalID: "fine"},
+	}
+	plan := planMirrors(panes, mirrorState{
+		Mirrored:  map[string]string{},
+		Dismissed: map[string]bool{"closed-by-hand": true},
+		Abandoned: map[string]bool{"kept-failing": true},
+		Max:       32,
+	})
+
+	if len(plan.Open) != 1 || plan.Open[0].TerminalID != "fine" {
+		t.Errorf("plan opens %+v, want only the untouched terminal", plan.Open)
+	}
+}

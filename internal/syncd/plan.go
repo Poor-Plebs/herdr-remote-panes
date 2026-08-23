@@ -327,8 +327,13 @@ type mirrorPlan struct {
 // mirrorState is what the planner needs to know about a machine, kept as plain
 // values so the decision can be exercised without a daemon or a network.
 type mirrorState struct {
-	Mirrored  map[string]string
+	Mirrored map[string]string
+	// Dismissed are terminals whose pane someone closed by hand.
 	Dismissed map[string]bool
+	// Abandoned are terminals whose mirror failed too many times to keep
+	// trying. Separate from Dismissed because only one of the two is worth
+	// remembering across a restart.
+	Abandoned map[string]bool
 	// BackedOff are terminals whose mirror failed recently and should be left
 	// until their retry is due.
 	BackedOff map[string]bool
@@ -356,7 +361,8 @@ func planMirrors(remote []herdrcli.Pane, state mirrorState) mirrorPlan {
 			plan.Existing = append(plan.Existing, pane)
 			continue
 		}
-		if state.Dismissed[pane.TerminalID] || state.BackedOff[pane.TerminalID] {
+		if state.Dismissed[pane.TerminalID] || state.Abandoned[pane.TerminalID] ||
+			state.BackedOff[pane.TerminalID] {
 			continue
 		}
 		if state.Max > 0 && len(state.Mirrored)+len(plan.Open) >= state.Max {
