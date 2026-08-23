@@ -264,6 +264,11 @@ when it starts, so edits apply from the next time Herdr starts. Toggling
 mirroring from the menu also rereads it, which is a quick way to apply an edit
 — though it applies every other pending edit in the file at the same time.
 
+**The file grew after using `m`.** Toggling rewrites it, and settings you had
+left out are written back with the value they were defaulting to. Nothing
+changes today; it does mean those settings stop following the default if it
+ever changes, so delete any line you would rather keep following it.
+
 **An update does not seem to have changed anything.** Installing replaces the
 files on disk but leaves the already-running daemon alone, so its fixes take
 effect when Herdr next starts. `status` says so when it notices:
