@@ -101,6 +101,9 @@ type Reply struct {
 	// such as a configuration file that could not be read.
 	Warning string     `json:"warning,omitempty"`
 	Hosts   []HostInfo `json:"hosts,omitempty"`
+	// Revision is the build the daemon itself is running. Installing an update
+	// leaves the running daemon alone, so this is how a stale one is spotted.
+	Revision string `json:"revision,omitempty"`
 }
 
 // HostInfo summarises one connected host for the status action.

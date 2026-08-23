@@ -208,6 +208,15 @@ someone sitting between you and it. Check the fingerprint against the machine
 itself before removing the old entry — the whole point of the warning is that
 you cannot tell the two cases apart from here.
 
+**An update does not seem to have changed anything.** Installing replaces the
+files on disk but leaves the already-running daemon alone, so its fixes take
+effect when Herdr next starts. `status` says so when it notices:
+
+```
+warning: the running daemon is 427e2ad but 9fcc667 is installed;
+restart Herdr to pick up the update
+```
+
 **A keybinding does nothing.** It probably clashes with a built-in. Taken:
 `b c e g h j k l n o p q r s v w x z tab minus alt+g shift+d shift+g shift+n
 shift+p shift+r shift+t shift+w shift+x shift+tab`.

@@ -19,6 +19,7 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/mirror"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/version"
 )
 
 // PluginID must match the id in herdr-plugin.toml.
@@ -365,7 +366,7 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		return Reply{OK: true, Message: "refreshed"}
 
 	case "status":
-		return Reply{OK: true, Hosts: d.status(), Warning: d.configWarning()}
+		return Reply{OK: true, Hosts: d.status(), Warning: d.configWarning(), Revision: version.Short()}
 
 	default:
 		return Reply{Message: "unknown command " + cmd.Cmd}
