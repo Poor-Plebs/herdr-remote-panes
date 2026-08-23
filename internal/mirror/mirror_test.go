@@ -46,3 +46,49 @@ func TestShouldReportFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestDescribeCommand(t *testing.T) {
+	// The ssh options are the same on every call -- control socket, keepalive,
+	// timeouts -- and printing them buried the one part that differs, the
+	// machine, behind a hundred and fifty characters of noise in a pane that is
+	// about to close.
+	argv := []string{
+		"ssh", "-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/hrp-abc.sock",
+		"-o", "ControlPersist=120", "-o", "ServerAliveInterval=15",
+		"-o", "ConnectTimeout=10", "-tt", "-o", "BatchMode=no",
+		"--", "bot",
+	}
+	if got := describeCommand(argv); got != "ssh bot" {
+		t.Errorf("describeCommand = %q, want %q", got, "ssh bot")
+	}
+
+	// Whatever is being run on the machine is worth keeping.
+	withCommand := append(append([]string{}, argv...), "herdr pane list")
+	if got := describeCommand(withCommand); got != "ssh bot herdr pane list" {
+		t.Errorf("describeCommand = %q, want the remote command kept", got)
+	}
+
+	// Anything not built that way is left as it is rather than mangled.
+	plain := []string{"stty", "size"}
+	if got := describeCommand(plain); got != "stty size" {
+		t.Errorf("describeCommand = %q, want it unchanged", got)
+	}
+	if got := describeCommand(nil); got != "" {
+		t.Errorf("describeCommand(nil) = %q", got)
+	}
+}
+
+func TestFirstNonEmpty(t *testing.T) {
+	// A plain SSH pane has neither a name nor a remote terminal, and the
+	// message read as "[herdr-remote-panes] : exit status 255" -- a colon
+	// introducing nothing. The machine identifies the pane in that case.
+	if got := firstNonEmpty("", "", "bot"); got != "bot" {
+		t.Errorf("firstNonEmpty = %q, want the machine", got)
+	}
+	if got := firstNonEmpty("shell@bot", "term_1", "bot"); got != "shell@bot" {
+		t.Errorf("firstNonEmpty = %q, want the name", got)
+	}
+	if got := firstNonEmpty("", "", ""); got != "" {
+		t.Errorf("firstNonEmpty = %q, want nothing", got)
+	}
+}

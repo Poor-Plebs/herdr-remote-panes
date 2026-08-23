@@ -89,14 +89,38 @@ func watchForStop(proc *os.Process) func() {
 }
 
 // reportFailure leaves a trace a user can actually find.
+// describeCommand names a command for an error message without repeating every
+// option it was given.
+//
+// The ssh options here are the same on every call -- control socket, keepalive,
+// timeouts -- and printing them buried the one part that differs, the machine,
+// behind a hundred and fifty characters of noise in a pane that is about to
+// close. Everything after "--" is the destination and whatever is being run on
+// it, which is the part worth reading.
+func describeCommand(argv []string) string {
+	if len(argv) == 0 {
+		return ""
+	}
+	for i := len(argv) - 1; i > 0; i-- {
+		if argv[i] == "--" {
+			return strings.Join(append([]string{argv[0]}, argv[i+1:]...), " ")
+		}
+	}
+	return strings.Join(argv, " ")
+}
+
 func reportFailure(err error) {
 	MarkFailed(os.Getenv("HERDR_PANE_ID"))
 
-	name := os.Getenv(EnvName)
-	if name == "" {
-		name = os.Getenv(EnvTerminal)
+	// A plain SSH pane has neither a name nor a remote terminal, so this read
+	// as "[herdr-remote-panes] : exit status 255" -- a colon introducing
+	// nothing. The machine is what identifies the pane in that case.
+	name := firstNonEmpty(
+		os.Getenv(EnvName), os.Getenv(EnvTerminal), os.Getenv(EnvTarget))
+	message := fmt.Sprintf("[herdr-remote-panes] %v", err)
+	if name != "" {
+		message = fmt.Sprintf("[herdr-remote-panes] %s: %v", name, err)
 	}
-	message := fmt.Sprintf("[herdr-remote-panes] %s: %v", name, err)
 
 	if dir := os.Getenv("HERDR_PLUGIN_STATE_DIR"); dir != "" {
 		if f, ferr := os.OpenFile(filepath.Join(dir, "mirror.log"),
@@ -149,13 +173,13 @@ func shell(client *remote.Client) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("%w running: %s", err, strings.Join(argv, " "))
+		return fmt.Errorf("%w running: %s", err, describeCommand(argv))
 	}
 	stop := watchForStop(cmd.Process)
 	defer stop()
 
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("%w running: %s", err, strings.Join(argv, " "))
+		return fmt.Errorf("%w running: %s", err, describeCommand(argv))
 	}
 	return nil
 }
@@ -185,13 +209,13 @@ func attach(client *remote.Client, terminal string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("%w running: %s", err, strings.Join(argv, " "))
+		return fmt.Errorf("%w running: %s", err, describeCommand(argv))
 	}
 	stop := watchForStop(cmd.Process)
 	defer stop()
 
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("%w running: %s", err, strings.Join(argv, " "))
+		return fmt.Errorf("%w running: %s", err, describeCommand(argv))
 	}
 	return nil
 }
@@ -376,4 +400,14 @@ func sttyOutput(args ...string) ([]byte, error) {
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = nil
 	return cmd.Output()
+}
+
+// firstNonEmpty returns the first value that is not empty.
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
