@@ -258,7 +258,7 @@ machine over one reused SSH connection and opens a local pane for what it finds.
 A mirrored terminal is bridged with Herdr's own direct terminal attach, so it is
 a real live terminal rather than a copy of the screen.
 
-Requires Herdr 0.8.0+ and Go 1.22+.
+Requires Herdr 0.8.0+ and Go 1.25+.
 
 ## Trust
 

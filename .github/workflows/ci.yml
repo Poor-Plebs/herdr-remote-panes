@@ -22,9 +22,9 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          # go.mod pins the language floor at 1.22; CI builds with a current
-          # toolchain. Go 1.22 on current macOS runners fails to link -race
-          # test binaries ("missing LC_UUID load command").
+          # go.mod sets the floor; this matrix deliberately uses a current
+          # toolchain, so that what most people build with is what is tested.
+          # The floor itself is checked by the job below.
           go-version: stable
 
       - name: gofmt
@@ -56,14 +56,14 @@ jobs:
       - name: Build
         run: go build -trimpath -o bin/herdr-remote-panes .
 
-  # go.mod advertises Go 1.22, and Herdr builds this plugin from source on the
+  # go.mod advertises Go 1.25, and Herdr builds this plugin from source on the
   # machine it is installed on -- so a call to something added to the standard
   # library since then does not inconvenience someone on that version, it stops
   # them installing it at all. The language version is already held to go.mod by
   # any toolchain; the standard library is not, and that is what this checks.
   #
-  # No -race here: Go 1.22 cannot link race binaries on current macOS runners,
-  # and the matrix above covers that on a current toolchain anyway.
+  # Tested the same way as the matrix rather than more cheaply: a race is a
+  # property of a runtime as much as of the code, and this is a different one.
   floor:
     name: oldest supported Go
     runs-on: ubuntu-latest
@@ -76,10 +76,10 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.25"
 
       - name: Build, vet and test on the floor
         run: |
           go build ./...
           go vet ./...
-          go test ./...
+          go test -race -shuffle=on ./...
