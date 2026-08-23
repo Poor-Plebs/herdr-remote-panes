@@ -1,5 +1,9 @@
-// Package mirror is the plugin pane entrypoint: it bridges one remote Herdr
-// terminal into the local pane it is running in.
+// Package mirror is what runs inside a pane this plugin opens.
+//
+// By default that is an SSH session on the machine, and nothing needs to be
+// installed there for it. With mirroring turned on, which is experimental, it
+// bridges one of the machine's own Herdr terminals into the pane instead, so
+// what is on screen is a live terminal rather than a copy of one.
 package mirror
 
 import (

@@ -1,5 +1,10 @@
-// Package syncd runs the long-lived reconciler that keeps local mirror panes
-// in step with the panes on each configured remote host.
+// Package syncd runs the long-lived reconciler behind this plugin.
+//
+// It keeps one SSH connection per machine and makes sure the panes here match
+// what each machine should be showing. By default that is a plain SSH terminal
+// per machine, opened locally and talking to nothing on the far side; with
+// mirroring turned on, which is experimental, it is a pane for each terminal
+// the machine has, kept in step in both directions.
 package syncd
 
 import (
@@ -32,7 +37,7 @@ const PluginID = "poorplebs.remote-panes"
 // paneEntrypoint must match the [[panes]] id in herdr-plugin.toml.
 const paneEntrypoint = "mirror"
 
-// Daemon reconciles remote panes into local mirror panes.
+// Daemon keeps the panes here in step with the machines they belong to.
 type Daemon struct {
 	// cfg is replaced wholesale when a mode is toggled from the menu. Control
 	// connections are each handled in their own goroutine, so a command that
@@ -951,6 +956,10 @@ func panesToClose(state *hostSync) []string {
 	return out
 }
 
+// disconnect stops tracking a machine and closes its panes here.
+//
+// Its terminals go, of either kind; the work on the machine does not, which is
+// what lets connecting again pick up where it left off.
 func (d *Daemon) disconnect(target string) error {
 	d.mu.Lock()
 	state, ok := d.hosts[target]

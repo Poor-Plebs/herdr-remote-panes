@@ -1,7 +1,11 @@
-// Package remote talks to a Herdr server on another machine over SSH.
+// Package remote reaches another machine over SSH.
+//
+// Most of what it does asks Herdr on that machine something -- what terminals
+// it has, open another -- but the plain SSH terminal that is the default needs
+// nothing there beyond an ssh server.
 //
 // Every connection is multiplexed through an OpenSSH ControlMaster socket, so
-// polling a host costs one round trip rather than a full handshake.
+// polling a machine costs one round trip rather than a full handshake.
 package remote
 
 import (
