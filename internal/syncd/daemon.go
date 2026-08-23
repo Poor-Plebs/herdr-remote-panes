@@ -840,17 +840,26 @@ func waitForRemote(client *remote.Client) error {
 // somebody.
 func (d *Daemon) focusHost(target string) {
 	d.mu.Lock()
-	state, ok := d.hosts[target]
-	workspaceID := ""
-	if ok {
-		workspaceID = state.workspaceID
-	}
-	d.mu.Unlock()
+	defer d.mu.Unlock()
 
-	if workspaceID == "" {
+	state, ok := d.hosts[target]
+	if !ok {
 		return
 	}
-	if err := herdrcli.FocusWorkspace(workspaceID); err != nil {
+	// The id is learned along the way by whatever needed it, and for a plain
+	// SSH machine whose pane already exists nothing in a pass does, so it is
+	// often not known here. Looking it up is what makes this work for a machine
+	// that was already connected, which is most of the times someone picks one.
+	if state.workspaceID == "" {
+		if _, err := d.findLocalWorkspace(state); err != nil {
+			log.Printf("focus %s: %v", target, err)
+			return
+		}
+	}
+	if state.workspaceID == "" {
+		return
+	}
+	if err := herdrcli.FocusWorkspace(state.workspaceID); err != nil {
 		log.Printf("focus %s: %v", target, err)
 	}
 }
