@@ -1,17 +1,28 @@
 # herdr-remote-panes
 
-Work on other machines from one [Herdr](https://herdr.dev), without leaving it.
+Work on other machines from the [Herdr](https://herdr.dev) in front of you.
 
-Press a key, pick a machine, and you have a terminal on it — in its own space,
-named after it. Machines come from your `~/.ssh/config`, so there is usually
-nothing to configure.
+Press a key, pick a machine, and a terminal on it opens here — in its own space
+in the sidebar, named after the machine. It is an ordinary SSH session, so
+nothing has to be installed at the far end, and the machines are read from your
+`~/.ssh/config`, so there is usually nothing to configure either.
+
+Herdr cannot push panes from one machine to another, so this pulls: a small
+daemon runs beside your session, keeps one reused SSH connection per machine,
+and opens a local pane for each terminal that should be showing.
+
+That is the whole of it by default. There is also an experimental mode that
+keeps both ends in step — [mirroring](#mirroring-experimental) — which needs
+Herdr on the machine too.
+
+Your sidebar ends up looking like this, one space per machine:
 
 ```
-  ☁  workbox          ← a machine you are working on
-     shell@workbox
-  ☁  ci
-     shell@ci
-  ~                   ← your own local space
+☁  workbox         a machine you can reach
+   shell@workbox   a terminal on it
+   build@workbox   another one
+⚠  ci              a machine that is not answering
+~                  your own local space, untouched
 ```
 
 ## Install
@@ -20,8 +31,8 @@ nothing to configure.
 herdr plugin install Poor-Plebs/herdr-remote-panes
 ```
 
-You need Go on this machine to build it, SSH access to the machines, and Linux
-or macOS. Nothing needs installing on the far side.
+Herdr builds it from source, so this machine needs Go. The machines themselves
+need nothing but an SSH server you can already reach.
 
 Then bind the menu to a key in `~/.config/herdr/config.toml`:
 
@@ -38,19 +49,28 @@ Pick keys Herdr does not already use — a clash is silent, and the built-in win
 
 ## The menu
 
+The key you bound opens this:
+
 ```
   Connect to a machine
 
- > 1. workbox                  connected · ssh
-   2. ci                       from ~/.ssh/config · ssh
-   3. buildbox                 unreachable · enter to retry
+ > 1. workbox            connected · 2 open
+   2. ci                 unreachable · enter to retry
+   3. buildbox           unreachable · mirrored · enter to retry
+   4. gh-runner          from ~/.ssh/config · ssh
 
   ↑↓ jk move · pgup/pgdn g/G jump · 1-9 pick · enter connect
   m toggle mirroring (experimental) · q cancel
 ```
 
-`enter` connects and gives you a terminal. `m` turns mirroring on for a machine
-(see below). The list scrolls, so a long SSH config is fine.
+Every machine you can reach is listed, whether or not this plugin knows about
+it: the ones you have configured come first, then everything else in your
+`~/.ssh/config`. Each says how it is reached and how it is doing.
+
+`enter` connects and gives you a terminal — on a machine that has been given up
+on, it is also how you say "try again now". `m` turns
+[mirroring](#mirroring-experimental) on or off for the machine under the
+cursor. The list scrolls, so a long SSH config is fine.
 
 ## Everyday use
 
@@ -59,7 +79,7 @@ Pick keys Herdr does not already use — a clash is silent, and the built-in win
 | A terminal on a machine | Open the menu, pick it |
 | Another terminal on it | Open a tab while in its space |
 | That machine's space back | Open the menu, pick it again |
-| To see what is connected | Run the `status` action |
+| To see what is connected | `herdr plugin action invoke poorplebs.remote-panes.status` |
 
 Opening a tab inside a machine's space gives you one **on that machine**. Herdr's
 own new-tab key and the plus icon always open a local shell and cannot be
@@ -120,24 +140,22 @@ other spaces.
 
 ## Things worth knowing
 
-**Machines are marked.** A machine's space is `☁  workbox`, and `⚠  workbox`
-while it cannot be reached.
+**A dropped connection comes back; one you closed does not.** A terminal whose
+SSH link fails is reopened. One you deliberately closed stays closed, and is
+still closed after a restart.
 
-**A dropped connection comes back.** A terminal whose SSH link fails is
-reopened; one you close stays closed. Restarting Herdr restores the machines you
-had connected.
+**An unreachable machine is left alone after two tries** rather than retried
+forever in the background. Fix whatever is wrong and pick it from the menu,
+which is how you say "try now".
 
-**An unreachable machine is left alone after two tries**, rather than retried
-forever. Picking it from the menu is an explicit "try now".
-
-**Machines without Herdr just work.** They get a plain SSH terminal; mirroring
-is the only part that needs Herdr on both ends.
+**Machines without Herdr just work.** They get a plain SSH terminal. Mirroring
+is the only part that needs Herdr at both ends, and a machine that turns out not
+to have it falls back rather than refusing to connect.
 
 **Terminals you open on a machine stay on it.** Disconnecting closes the panes
-here, not the work there — a build running in one keeps running. With mirroring,
-that also means the space this creates on the machine outlives the session, and
-the terminals in it are still there next time. That is what makes reconnecting
-pick up where you left off, and it also means they accumulate if you never look:
+here, not the work there — a build running in one keeps running, which is what
+lets you reconnect and pick up where you left off. It also means they accumulate
+on the machine if you never look:
 
 ```bash
 ssh workbox 'herdr pane list'          # what is still open there
@@ -253,12 +271,16 @@ shift+p shift+r shift+t shift+w shift+x shift+tab`.
 
 ## How it works
 
-Herdr cannot push panes between machines, so this pulls: a daemon polls each
-machine over one reused SSH connection and opens a local pane for what it finds.
-A mirrored terminal is bridged with Herdr's own direct terminal attach, so it is
-a real live terminal rather than a copy of the screen.
+The daemon starts with your session and polls each connected machine every two
+seconds over one reused SSH connection, opening and closing local panes so that
+what you see here matches what should be there.
 
-Requires Herdr 0.8.0+ and Go 1.25+.
+A plain SSH pane simply runs `ssh` — the daemon does not talk to the machine at
+all, which is why that mode needs nothing installed on it. A mirrored terminal
+is bridged with Herdr's own direct terminal attach, so it is a live terminal
+rather than a picture of one: what you type goes to the process on the machine.
+
+Requires Herdr 0.8.0+ and Go 1.25+, on Linux or macOS.
 
 ## Trust
 
