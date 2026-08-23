@@ -1978,6 +1978,26 @@ func (d *Daemon) label(host config.Host, rp herdrcli.Pane, name string) string {
 }
 
 // openMirror creates the local pane that bridges one remote terminal.
+// takeRequest reports how somebody asked for a terminal to appear, and returns
+// a function that forgets the request.
+//
+// Forgetting is separate because opening a pane can fail and the mirror is
+// retried afterwards: spending the request on the attempt rather than on the
+// pane meant a "new tab on this machine" that failed once came back as whatever
+// that machine's usual placement is, and unfocused.
+func takeRequest(state *hostSync, terminalID, fallback string) (placement string, focus bool, done func()) {
+	placement = fallback
+	if requested, ok := state.pendingPlacement[terminalID]; ok {
+		placement = requested
+	}
+	focus = state.pendingFocus[terminalID]
+
+	return placement, focus, func() {
+		delete(state.pendingPlacement, terminalID)
+		delete(state.pendingFocus, terminalID)
+	}
+}
+
 func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, index *paneIndex) error {
 	workspaceID, err := d.ensureWorkspace(state, index)
 	if err != nil {
@@ -1998,13 +2018,7 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, ind
 		env[mirror.EnvTakeover] = "false"
 	}
 
-	placement := d.config().PlacementFor(state.host)
-	if requested, ok := state.pendingPlacement[rp.TerminalID]; ok {
-		placement = requested
-		delete(state.pendingPlacement, rp.TerminalID)
-	}
-	focus := state.pendingFocus[rp.TerminalID]
-	delete(state.pendingFocus, rp.TerminalID)
+	placement, focus, asked := takeRequest(state, rp.TerminalID, d.config().PlacementFor(state.host))
 
 	target := planPaneTarget(placement, workspaceID, index.anyInWorkspace[workspaceID])
 	opts := herdrcli.OpenOptions{
@@ -2021,6 +2035,8 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, ind
 	if err != nil {
 		return err
 	}
+
+	asked()
 
 	index.add(pane)
 	state.mirrors[rp.TerminalID] = pane.PaneID

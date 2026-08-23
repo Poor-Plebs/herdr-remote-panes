@@ -2341,3 +2341,51 @@ func labelsOf(list []herdrcli.Workspace) []string {
 	}
 	return out
 }
+
+func TestHowATerminalWasAskedForSurvivesAFailedOpen(t *testing.T) {
+	// Opening a pane can fail, and the mirror is retried afterwards. The
+	// placement and focus somebody asked for were spent on the attempt rather
+	// than on the pane, so a "new tab on this machine" that failed once came
+	// back as whatever that machine's usual placement is, unfocused.
+	state := &hostSync{
+		pendingPlacement: map[string]string{"term_1": "tab"},
+		pendingFocus:     map[string]bool{"term_1": true},
+	}
+
+	// An attempt that fails: the request is read and not spent.
+	placement, focus, _ := takeRequest(state, "term_1", "split")
+	if placement != "tab" || !focus {
+		t.Fatalf("first attempt got %q focus=%v, want the tab that was asked for", placement, focus)
+	}
+
+	// The retry still knows what was asked for.
+	placement, focus, done := takeRequest(state, "term_1", "split")
+	if placement != "tab" || !focus {
+		t.Errorf("the retry got %q focus=%v, want the tab that was asked for", placement, focus)
+	}
+	done()
+
+	// Spent now, so a later terminal is not opened as somebody else's request
+	// -- which matters because Herdr reuses ids.
+	placement, focus, _ = takeRequest(state, "term_1", "split")
+	if placement != "split" || focus {
+		t.Errorf("a later terminal got %q focus=%v, want the machine's usual placement", placement, focus)
+	}
+}
+
+func TestATerminalNobodyAskedForGetsTheMachinesUsualPlacement(t *testing.T) {
+	// Most terminals are discovered rather than requested: they appeared on the
+	// machine and are being mirrored here.
+	state := &hostSync{
+		pendingPlacement: map[string]string{},
+		pendingFocus:     map[string]bool{},
+	}
+	placement, focus, done := takeRequest(state, "term_9", "zoomed")
+	if placement != "zoomed" || focus {
+		t.Errorf("got %q focus=%v, want the machine's placement and no focus", placement, focus)
+	}
+	done() // forgetting nothing must not panic or disturb anything
+	if len(state.pendingPlacement) != 0 || len(state.pendingFocus) != 0 {
+		t.Error("forgetting a request nobody made left something behind")
+	}
+}
