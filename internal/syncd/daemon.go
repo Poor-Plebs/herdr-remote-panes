@@ -711,7 +711,7 @@ func (d *Daemon) connect(host config.Host) error {
 		// up later as terminals that will not stay open.
 		connectErr = client.Reachable()
 	} else {
-		if err := d.prepareRemote(client, host); err != nil {
+		if err := d.prepareRemote(client); err != nil {
 			// A machine without Herdr is still perfectly usable over plain SSH,
 			// so fall back instead of refusing to connect. Anything else — an
 			// unreachable host, a broken login — is a real failure, but the
@@ -795,7 +795,7 @@ func restoreFromSnapshot(state *hostSync, saved hostSnapshot) {
 
 // prepareRemote makes sure the host has a Herdr session answering, starting one
 // when it is allowed to.
-func (d *Daemon) prepareRemote(client *remote.Client, host config.Host) error {
+func (d *Daemon) prepareRemote(client *remote.Client) error {
 	// Establish that Herdr is usable here before trying to start or talk to a
 	// session, so a host without it is recognised as such rather than looking
 	// like an unreachable one.

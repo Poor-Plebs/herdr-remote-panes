@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"time"
 )
@@ -76,6 +78,10 @@ func (h Host) DisplayLabel() string {
 
 // Config is the whole plugin configuration.
 type Config struct {
+	// unknown holds settings read from the file that mean nothing here. Not a
+	// setting itself, so it is neither read from nor written back to JSON.
+	unknown []string
+
 	// PollInterval is how often each host is polled for pane changes.
 	PollInterval string `json:"poll_interval,omitempty"`
 	// Session is the Herdr session mirrored on each machine. It defaults to
@@ -194,7 +200,62 @@ func Load() (Config, error) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse %s: %w", path, err)
 	}
-	return cfg.normalized(), nil
+	cfg = cfg.normalized()
+	cfg.unknown = unknownKeys(raw)
+	return cfg, nil
+}
+
+// unknownKeys lists settings in the file that mean nothing here.
+//
+// Anything not recognised is dropped in silence by the decoder, so a setting
+// spelled wrong, or a per-machine one written at the top level, looks exactly
+// like one that is being obeyed. That is the same trouble as a value spelled
+// wrong, which is already reported.
+func unknownKeys(raw []byte) []string {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return nil
+	}
+
+	var out []string
+	known := jsonNames(reflect.TypeOf(Config{}))
+	for name := range top {
+		if !known[name] {
+			out = append(out, name)
+		}
+	}
+
+	if hosts, ok := top["hosts"]; ok {
+		var entries []map[string]json.RawMessage
+		if json.Unmarshal(hosts, &entries) == nil {
+			knownHost := jsonNames(reflect.TypeOf(Host{}))
+			seen := map[string]bool{}
+			for _, entry := range entries {
+				for name := range entry {
+					if !knownHost[name] && !seen[name] {
+						seen[name] = true
+						out = append(out, "hosts[]."+name)
+					}
+				}
+			}
+		}
+	}
+
+	sort.Strings(out)
+	return out
+}
+
+// jsonNames is the set of field names a struct accepts from JSON.
+func jsonNames(t reflect.Type) map[string]bool {
+	names := make(map[string]bool, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		names[strings.Split(tag, ",")[0]] = true
+	}
+	return names
 }
 
 // Save writes the config back to disk.

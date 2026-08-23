@@ -85,6 +85,11 @@ cursor. The list scrolls, so a long SSH config is fine.
 | That machine's space back | Open the menu, pick it again |
 | To see what is connected | `herdr plugin action invoke poorplebs.remote-panes.status` |
 
+Picking a machine takes you to its space, whether it had just been connected or
+was already there, and opening a terminal on one leaves you in the terminal. A
+pane that opens on its own — a dropped link coming back, or a terminal
+appearing on a mirrored machine — never takes the screen from you.
+
 Opening a tab inside a machine's space gives you one **on that machine**. Herdr's
 own new-tab key and the plus icon always open a local shell and cannot be
 intercepted by a plugin, so such a pane is moved onto the machine a moment
@@ -185,6 +190,10 @@ All optional, in `$(herdr plugin config-dir poorplebs.remote-panes)/config.json`
 | `hosts[].mode` | `ssh` | `ssh` plain terminal; `attach` or `observe` to mirror |
 | `hosts[].label` | the target | How it is named here |
 | `hosts[].disabled` | `false` | Skip it without removing it |
+| `hosts[].session` | the global one | Which Herdr session on *this* machine |
+| `hosts[].placement` | the global one | How *this* machine's terminals are placed |
+| `hosts[].workspace` | the global one | Which space *this* machine's terminals land in |
+| `hosts[].herdr_bin` | found automatically | Where `herdr` lives on *this* machine |
 | `mode` | `ssh` | Default mode for machines that do not set one |
 | `placement` | `split` | How terminals are placed here: `split`, `tab`, `zoomed` |
 | `workspace_format` | `☁  {host}` | How a machine's space is named |

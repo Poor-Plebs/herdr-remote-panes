@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -289,5 +290,74 @@ func TestProblemsReportsATargetThatIsAnOption(t *testing.T) {
 	problems := strings.Join(cfg.Problems(), "\n")
 	if !strings.Contains(problems, "dash") {
 		t.Errorf("problems %q should explain why the target is refused", problems)
+	}
+}
+
+func TestProblemsReportsSettingsThatAreNotSettings(t *testing.T) {
+	// Anything the decoder does not recognise is dropped in silence, so a
+	// setting spelled wrong, or a per-machine one written at the top level,
+	// looks exactly like one that is being obeyed.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	raw := `{
+	  "wokspace_format": "☁  {host}",
+	  "poll_interval": "2s",
+	  "herdr_bin": "/usr/bin/herdr",
+	  "hosts": [
+	    {"target": "bot", "auto_start": false},
+	    {"target": "ci", "mode": "ssh", "targt": "typo"}
+	  ]
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	problems := strings.Join(cfg.Problems(), "\n")
+
+	for _, want := range []string{
+		`"wokspace_format"`,    // misspelled
+		`"hosts[].auto_start"`, // real setting, wrong place
+		`"hosts[].targt"`,      // misspelled inside a machine
+	} {
+		if !strings.Contains(problems, want) {
+			t.Errorf("problems should mention %s:\n%s", want, problems)
+		}
+	}
+
+	// Settings that are real must not be reported, wherever they legitimately
+	// appear: herdr_bin is both a global and a per-machine setting.
+	for _, wrong := range []string{`"poll_interval"`, `"herdr_bin"`, `"target"`, `"mode"`} {
+		if strings.Contains(problems, wrong+" is not a setting") {
+			t.Errorf("%s is a real setting but was reported:\n%s", wrong, problems)
+		}
+	}
+
+	// A machine listing the same unknown key twice is said once.
+	if strings.Count(problems, `"hosts[].auto_start"`) > 1 {
+		t.Errorf("the same unknown setting was reported more than once:\n%s", problems)
+	}
+}
+
+func TestAGoodConfigReportsNoUnknownSettings(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	cfg := Defaults()
+	cfg.Hosts = []Host{{Target: "bot", Mode: ModeAttach, HerdrBin: "/usr/bin/herdr"}}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range loaded.Problems() {
+		if strings.Contains(p, "is not a setting") {
+			t.Errorf("a config this wrote itself was reported: %q", p)
+		}
 	}
 }
