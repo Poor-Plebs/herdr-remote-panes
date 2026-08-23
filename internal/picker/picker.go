@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"errors"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/sshconfig"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
@@ -147,6 +148,16 @@ func choose(entry Entry, connect Connect) error {
 	return nil
 }
 
+// configFault is the part of a config error that says what to fix, without the
+// path of the one file it can be about.
+func configFault(err error) string {
+	var parseErr *config.ParseError
+	if errors.As(err, &parseErr) {
+		return parseErr.Detail
+	}
+	return err.Error()
+}
+
 // collect merges the machines from the SSH config with those in the plugin
 // config, and marks which are already connected.
 func collect() ([]Entry, string) {
@@ -156,7 +167,10 @@ func collect() ([]Entry, string) {
 	cfg, err := config.Load()
 	if err != nil {
 		cfg = config.Defaults()
-		warning = fmt.Sprintf("Could not read the plugin config, so only ~/.ssh/config machines are listed: %v", err)
+		// What to fix goes first: the warning gets two lines in the popup, and
+		// a leading file path spends both of them.
+		warning = "Could not read the plugin config: " + configFault(err) +
+			". Only ~/.ssh/config machines are listed."
 	} else if problems := cfg.Problems(); len(problems) > 0 {
 		// A setting that reads fine but means something else is worth saying
 		// once, where the machines are chosen.

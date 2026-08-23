@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 )
 
@@ -206,11 +207,101 @@ func Load() (Config, error) {
 
 	cfg := Defaults()
 	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return Config{}, fmt.Errorf("parse %s: %w", path, err)
+		return Config{}, &ParseError{Path: path, Detail: describeJSONError(raw, err)}
 	}
 	cfg = cfg.normalized()
 	cfg.unknown = unknownKeys(raw)
 	return cfg, nil
+}
+
+// ParseError is a config file that could not be read, holding which file it
+// was and what is wrong with it separately.
+//
+// They are kept apart because the two are worth different amounts depending on
+// where the error is shown. In the daemon's log the path matters -- it says
+// which of several files to open. In the menu there is room for two lines and
+// only ever one plugin config, so a full path spends that room saying something
+// the reader already knows, and pushes the part that says what to fix off the
+// end.
+type ParseError struct {
+	Path   string
+	Detail string
+}
+
+func (e *ParseError) Error() string { return e.Path + ": " + e.Detail }
+
+// describeJSONError says what is wrong with the file in the terms somebody
+// editing it is thinking in.
+//
+// The decoder's own wording is accurate and about Go: "cannot unmarshal string
+// into Go struct field Config.max_mirrors of type int". That sentence ends up
+// in the menu and in the status listing, where nobody is thinking about Go
+// structs -- they are looking at a file they just edited and want to know which
+// line to change.
+func describeJSONError(raw []byte, err error) string {
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		return fmt.Sprintf("%s should be %s, not %s%s",
+			typeErr.Field, plainType(typeErr.Type), plainValue(typeErr.Value),
+			atLine(raw, typeErr.Offset))
+	}
+
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return fmt.Sprintf("%s%s", syntaxErr, atLine(raw, syntaxErr.Offset))
+	}
+	return err.Error()
+}
+
+// atLine says which line an offset falls on, since that is what an editor shows.
+func atLine(raw []byte, offset int64) string {
+	if offset <= 0 || int(offset) > len(raw) {
+		return ""
+	}
+	return fmt.Sprintf(" (line %d)", 1+bytes.Count(raw[:offset], []byte("\n")))
+}
+
+// plainType names a Go type the way the setting reads in the file.
+func plainType(t reflect.Type) string {
+	if t == nil {
+		return "something else"
+	}
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.String:
+		return "text"
+	case reflect.Bool:
+		return "true or false"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Float32, reflect.Float64:
+		return "a number"
+	case reflect.Slice, reflect.Array:
+		return "a list"
+	case reflect.Map, reflect.Struct:
+		return "a set of settings"
+	default:
+		return t.String()
+	}
+}
+
+// plainValue names what the decoder found, which it reports as a JSON word.
+func plainValue(found string) string {
+	switch found {
+	case "string":
+		return "text"
+	case "number":
+		return "a number"
+	case "bool":
+		return "true or false"
+	case "array":
+		return "a list"
+	case "object":
+		return "a set of settings"
+	default:
+		return found
+	}
 }
 
 // unknownKeys lists settings in the file that mean nothing here.
@@ -311,7 +402,7 @@ func loadRaw() (Config, error) {
 	}
 	var cfg Config
 	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return Config{}, fmt.Errorf("parse %s: %w", path, err)
+		return Config{}, &ParseError{Path: path, Detail: describeJSONError(raw, err)}
 	}
 	// Carried like Load does. Without it, toggling mirroring handed the daemon
 	// a configuration that had forgotten which of its settings mean nothing,

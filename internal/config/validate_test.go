@@ -728,3 +728,69 @@ func TestTheSameNameIsUsedForNamingAndForMatching(t *testing.T) {
 		t.Error("the space is named with something the pane names would not match")
 	}
 }
+
+func TestAMistakeInTheConfigIsDescribedInTheFilesTerms(t *testing.T) {
+	// The decoder's own wording is accurate and about Go: "cannot unmarshal
+	// string into Go struct field Config.max_mirrors of type int". That
+	// sentence ends up in the menu and in the status listing, where nobody is
+	// thinking about Go structs -- they are looking at a file they just edited
+	// and want to know which line to change.
+	cases := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{
+			name:    "a number written as text",
+			content: "{\n  \"max_mirrors\": \"lots\"\n}",
+			want:    []string{"max_mirrors", "should be a number", "not text", "line 2"},
+		},
+		{
+			name:    "text written as a number",
+			content: "{\n  \"poll_interval\": 2\n}",
+			want:    []string{"poll_interval", "should be text", "not a number", "line 2"},
+		},
+		{
+			name:    "a setting inside a machine",
+			content: "{\n  \"hosts\": [\n    {\"disabled\": \"yes\"}\n  ]\n}",
+			want:    []string{"hosts.disabled", "true or false", "not text", "line 3"},
+		},
+		{
+			name:    "a list written as one thing",
+			content: "{\n  \"hosts\": {\"target\": \"bot\"}\n}",
+			want:    []string{"hosts", "should be a list", "line 2"},
+		},
+		{
+			name:    "a trailing comma",
+			content: "{\n  \"hosts\": [\n    {\"target\": \"bot\"},\n  ]\n}",
+			want:    []string{"invalid character", "line 4"},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatal("a config this cannot read was read")
+			}
+			got := err.Error()
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("error %q should contain %q", got, want)
+				}
+			}
+			// None of Go's vocabulary.
+			for _, jargon := range []string{"unmarshal", "Go struct", "config.Host"} {
+				if strings.Contains(got, jargon) {
+					t.Errorf("error %q still talks about %q", got, jargon)
+				}
+			}
+		})
+	}
+}

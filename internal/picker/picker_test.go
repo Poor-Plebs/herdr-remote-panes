@@ -371,3 +371,32 @@ func TestAPasteThatNeverEnds(t *testing.T) {
 		t.Errorf("an unfinished paste = %v, want nothing pressed", got)
 	}
 }
+
+func TestAConfigWarningSaysWhatToFixInTheRoomItGets(t *testing.T) {
+	// The warning gets two lines of the popup. An error that opens with the
+	// full path of the config spends both of them on the one thing the reader
+	// already knows -- there is a single plugin config -- and the part naming
+	// the setting to fix falls off the end.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
+		[]byte("{\n  \"max_mirrors\": \"lots\"\n}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, warning := collect()
+	if warning == "" {
+		t.Fatal("a config that cannot be parsed should be reported")
+	}
+
+	// Not the warning as built, but the warning as drawn, at a popup width
+	// Herdr actually uses.
+	frame := render([]Entry{{Target: "bot"}}, 0, 80, 20, warning)
+	for _, want := range []string{"max_mirrors", "should be a number", "line 2"} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("the drawn menu never shows %q:\n%s", want, visible(frame))
+		}
+	}
+}
