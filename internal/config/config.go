@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 )
 
 // Mode selects how a remote pane is bridged into a local mirror pane.
@@ -70,10 +72,16 @@ type Host struct {
 
 // DisplayLabel is the suffix used when naming panes from this host.
 func (h Host) DisplayLabel() string {
+	// Made safe here rather than at each place it is drawn. It ends up in a
+	// pane's name, in the name of the machine's space, and in the suffix those
+	// are matched against -- and only the first of those was cleaning it, so a
+	// stray escape in a hand-edited label reached the sidebar by the other two.
+	// Doing it once also keeps the three agreeing, which is what lets a pane be
+	// recognised as belonging to its machine.
 	if h.Label != "" {
-		return h.Label
+		return text.Sanitize(h.Label)
 	}
-	return h.Target
+	return text.Sanitize(h.Target)
 }
 
 // Config is the whole plugin configuration.

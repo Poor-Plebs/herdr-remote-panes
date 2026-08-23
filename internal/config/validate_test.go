@@ -676,3 +676,55 @@ func TestHubNameAlwaysNamesSomething(t *testing.T) {
 			Defaults().RemoteWorkspaceLabel(), hub)
 	}
 }
+
+func TestADisplayLabelIsSafeWhereverItIsDrawn(t *testing.T) {
+	// A machine's name here reaches three places: a pane's name, the name of
+	// the machine's space, and the suffix those are matched against to decide
+	// which panes belong to it. Only the first was cleaning it, so an escape or
+	// a newline in a hand-edited label reached the sidebar by the other two.
+	cfg := Defaults()
+	host := Host{Target: "bot", Label: "my\x1b[31mbot\nlabel"}
+
+	label := host.DisplayLabel()
+	for _, bad := range []string{"\x1b", "\n", "\r", "\x00"} {
+		if strings.Contains(label, bad) {
+			t.Errorf("DisplayLabel() = %q, still carries %q", label, bad)
+		}
+	}
+
+	// The space named after it is safe for the same reason, without needing to
+	// know to do it again.
+	for _, reachable := range []bool{true, false} {
+		space := cfg.WorkspaceLabelFor(host, reachable)
+		for _, bad := range []string{"\x1b", "\n"} {
+			if strings.Contains(space, bad) {
+				t.Errorf("the space is named %q, which carries %q", space, bad)
+			}
+		}
+		if !strings.Contains(space, "bot") {
+			t.Errorf("the space is named %q, which no longer says which machine", space)
+		}
+	}
+
+	// And a target with nothing wrong with it is untouched, so the name in the
+	// sidebar is the name somebody typed.
+	if got := (Host{Target: "build-01.example.com"}).DisplayLabel(); got != "build-01.example.com" {
+		t.Errorf("DisplayLabel() = %q, want it unchanged", got)
+	}
+}
+
+func TestTheSameNameIsUsedForNamingAndForMatching(t *testing.T) {
+	// Panes are recognised as a machine's by the suffix on their name, so the
+	// name used to build them and the name used to match them have to be the
+	// same string -- which is the other reason to clean it once.
+	host := Host{Target: "bot", Label: "b\x1bot"}
+
+	naming := host.DisplayLabel()
+	matching := host.DisplayLabel()
+	if naming != matching {
+		t.Errorf("naming uses %q and matching uses %q", naming, matching)
+	}
+	if strings.Contains(Defaults().WorkspaceFor(host), "\x1b") {
+		t.Error("the space is named with something the pane names would not match")
+	}
+}
