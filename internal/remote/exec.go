@@ -24,25 +24,30 @@ var commandTimeout = 30 * time.Second
 // system's own timeout.
 const connectTimeout = 10
 
-func runCommand(argv []string) ([]byte, error) {
+// runCommand runs one SSH invocation and returns what it printed.
+//
+// Both streams come back even when the command failed: Herdr signals a refusal
+// by exiting non-zero and printing the error envelope, so a caller that only
+// gets an exit status has been handed the least useful part of the answer.
+func runCommand(argv []string) (stdout, stderr []byte, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
 
-	err := cmd.Run()
+	runErr := cmd.Run()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return nil, fmt.Errorf("timed out after %s", commandTimeout)
+		return out.Bytes(), errOut.Bytes(), fmt.Errorf("timed out after %s", commandTimeout)
 	}
-	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
+	if runErr != nil {
+		msg := strings.TrimSpace(errOut.String())
 		if msg == "" {
-			msg = err.Error()
+			msg = runErr.Error()
 		}
-		return nil, fmt.Errorf("%w: %s", err, msg)
+		return out.Bytes(), errOut.Bytes(), fmt.Errorf("%w: %s", runErr, msg)
 	}
-	return stdout.Bytes(), nil
+	return out.Bytes(), errOut.Bytes(), nil
 }

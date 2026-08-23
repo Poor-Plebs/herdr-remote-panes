@@ -118,13 +118,13 @@ type envelope struct {
 	} `json:"error"`
 }
 
-// runError makes sense of a Herdr command that exited non-zero.
+// RunError makes sense of a Herdr command that exited non-zero.
 //
 // Herdr signals a refusal by exiting non-zero and printing the error envelope,
 // so returning the exit status alone threw away the code it had just given --
 // which is the part a caller can act on. Callers were left matching on the
 // words, or more often not noticing at all.
-func runError(runErr error, args []string, outputs ...[]byte) error {
+func RunError(runErr error, args []string, outputs ...[]byte) error {
 	for _, out := range outputs {
 		if _, err := Decode(out, args); err != nil {
 			var api *APIError
@@ -195,7 +195,7 @@ func RunWith(env []string, args ...string) (json.RawMessage, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, runError(err, args, stderr.Bytes(), stdout.Bytes())
+		return nil, RunError(err, args, stderr.Bytes(), stdout.Bytes())
 	}
 	return Decode(stdout.Bytes(), args)
 }

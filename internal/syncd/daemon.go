@@ -545,8 +545,13 @@ func (d *Daemon) closeRemoteTerminals(state *hostSync, terminalIDs []string, rem
 			continue
 		}
 		if _, err := state.client.Run("pane", "close", paneID); err != nil {
-			log.Printf("close %s on %s: %v", paneID, state.host.Target, err)
-			continue
+			// Already gone at the far end is the outcome, not a failure: the
+			// listing this works from is a moment old, and somebody may have
+			// closed it there in between.
+			if !herdrcli.IsNotFound(err) {
+				log.Printf("close %s on %s: %s", paneID, state.host.Target, summarizeError(err))
+				continue
+			}
 		}
 		log.Printf("%s: closed terminal %s to match", state.host.Target, paneID)
 		delete(state.dismissed, terminalID)

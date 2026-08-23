@@ -16,7 +16,7 @@ func TestRunCommandBoundsAHangingCommand(t *testing.T) {
 	defer func() { commandTimeout = original }()
 
 	start := time.Now()
-	_, err := runCommand([]string{"sleep", "30"})
+	_, _, err := runCommand([]string{"sleep", "30"})
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -31,7 +31,7 @@ func TestRunCommandBoundsAHangingCommand(t *testing.T) {
 }
 
 func TestRunCommandReturnsOutput(t *testing.T) {
-	out, err := runCommand([]string{"echo", "hello"})
+	out, _, err := runCommand([]string{"echo", "hello"})
 	if err != nil {
 		t.Fatalf("runCommand: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestRunCommandReturnsOutput(t *testing.T) {
 func TestRunCommandReportsStderr(t *testing.T) {
 	// The reason a command failed is in its stderr, and losing it leaves
 	// "exit status 255" as the only clue.
-	_, err := runCommand([]string{"sh", "-c", "echo the reason >&2; exit 3"})
+	_, _, err := runCommand([]string{"sh", "-c", "echo the reason >&2; exit 3"})
 	if err == nil {
 		t.Fatal("a failing command should error")
 	}

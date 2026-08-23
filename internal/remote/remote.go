@@ -88,7 +88,7 @@ func (c *Client) Bin() (string, error) {
 	argv := []string{"ssh"}
 	argv = append(argv, c.SSHArgs(false)...)
 	argv = append(argv, probeScript)
-	out, err := runCommand(argv)
+	out, _, err := runCommand(argv)
 	if err != nil {
 		if reachErr := c.Reachable(); reachErr != nil {
 			return "", reachErr
@@ -167,8 +167,20 @@ func (c *Client) Run(args ...string) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := runCommand(argv)
+	out, errOut, err := runCommand(argv)
 	if err != nil {
+		// Herdr on the machine signals a refusal by exiting non-zero and
+		// printing the error envelope, exactly as it does here. Returning the
+		// exit status alone threw away the code it had just given, so nothing
+		// could tell "that pane is already gone" from "that went wrong" at the
+		// far end -- the same hole that was open on this side.
+		var api *herdrcli.APIError
+		if errors.As(herdrcli.RunError(err, args, errOut, out), &api) {
+			return nil, fmt.Errorf("%s: %w", c.Target, api)
+		}
+		// No envelope in what it printed, so the exit status and whatever it
+		// did say is all there is -- and runCommand has already made that
+		// readable, including the wording for a machine that never answered.
 		return nil, fmt.Errorf("%s: %w", c.Target, err)
 	}
 	return herdrcli.Decode(out, args)
@@ -185,7 +197,7 @@ func (c *Client) CheckHerdr() error {
 	argv := []string{"ssh"}
 	argv = append(argv, c.SSHArgs(false)...)
 	argv = append(argv, shellQuote(bin)+" --version")
-	if _, err := runCommand(argv); err != nil {
+	if _, _, err := runCommand(argv); err != nil {
 		if reachErr := c.Reachable(); reachErr != nil {
 			return reachErr
 		}
@@ -200,7 +212,7 @@ func (c *Client) Reachable() error {
 	argv := []string{"ssh"}
 	argv = append(argv, c.SSHArgs(false)...)
 	argv = append(argv, "true")
-	if _, err := runCommand(argv); err != nil {
+	if _, _, err := runCommand(argv); err != nil {
 		return fmt.Errorf("%s is not reachable over ssh: %w", c.Target, err)
 	}
 	return nil
@@ -250,7 +262,7 @@ func (c *Client) Start() error {
 	argv := []string{"ssh"}
 	argv = append(argv, c.SSHArgs(false)...)
 	argv = append(argv, c.startCommand(bin))
-	if _, err := runCommand(argv); err != nil {
+	if _, _, err := runCommand(argv); err != nil {
 		return fmt.Errorf("%s: could not start a remote Herdr session: %w", c.Target, err)
 	}
 	return nil
@@ -287,7 +299,7 @@ func (c *Client) startCommand(bin string) string {
 // Close tears down the shared ControlMaster connection.
 func (c *Client) Close() {
 	argv := []string{"ssh", "-o", "ControlPath=" + c.controlPath, "-O", "exit", "--", c.Target}
-	_, _ = runCommand(argv)
+	_, _, _ = runCommand(argv)
 }
 
 func shellQuote(s string) string {

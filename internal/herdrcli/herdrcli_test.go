@@ -380,19 +380,19 @@ func TestRunErrorKeepsTheCodeHerdrGave(t *testing.T) {
 	exit := errors.New("exit status 1")
 
 	// Herdr prints it to stderr.
-	err := runError(exit, []string{"workspace", "rename", "w2Y"}, envelope, nil)
+	err := RunError(exit, []string{"workspace", "rename", "w2Y"}, envelope, nil)
 	if !IsNotFound(err) {
 		t.Errorf("%v does not carry the code", err)
 	}
 
 	// And to stdout in some versions, so both are looked at.
-	err = runError(exit, []string{"workspace", "rename", "w2Y"}, nil, envelope)
+	err = RunError(exit, []string{"workspace", "rename", "w2Y"}, nil, envelope)
 	if !IsNotFound(err) {
 		t.Errorf("%v does not carry the code when it is on stdout", err)
 	}
 
 	// A failure with no envelope still says what happened.
-	err = runError(exit, []string{"pane", "list"}, []byte("command not found"), nil)
+	err = RunError(exit, []string{"pane", "list"}, []byte("command not found"), nil)
 	if IsNotFound(err) {
 		t.Errorf("%v should not be read as a thing that is gone", err)
 	}
@@ -403,7 +403,7 @@ func TestRunErrorKeepsTheCodeHerdrGave(t *testing.T) {
 	}
 
 	// Nothing printed at all: the exit status is all there is.
-	err = runError(exit, []string{"pane", "list"}, nil, nil)
+	err = RunError(exit, []string{"pane", "list"}, nil, nil)
 	if !strings.Contains(err.Error(), "exit status 1") {
 		t.Errorf("error %q should still name the failure", err)
 	}

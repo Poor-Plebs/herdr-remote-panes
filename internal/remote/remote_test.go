@@ -1,6 +1,9 @@
 package remote
 
 import (
+	"errors"
+	"fmt"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -412,5 +415,26 @@ func TestStartCommandWithNoSessionNamed(t *testing.T) {
 		if !strings.Contains(command, want) {
 			t.Errorf("command %q should contain %q", command, want)
 		}
+	}
+}
+
+func TestARemoteRefusalKeepsItsCode(t *testing.T) {
+	// Herdr on the machine signals a refusal the same way it does here: exiting
+	// non-zero with the error envelope printed. Returning the exit status alone
+	// threw away the code, so nothing could tell "that pane is already gone"
+	// from "that went wrong" at the far end.
+	envelope := []byte(`{"error":{"code":"pane_not_found","message":"pane w1:p2 not found"}}`)
+	err := herdrcli.RunError(errors.New("exit status 1"), []string{"pane", "close", "w1:p2"}, envelope, nil)
+
+	if !herdrcli.IsNotFound(err) {
+		t.Errorf("%v does not carry the code", err)
+	}
+	// Wrapped with the machine's name, as Run does, and still recognisable.
+	wrapped := fmt.Errorf("%s: %w", "bot", err)
+	if !herdrcli.IsNotFound(wrapped) {
+		t.Errorf("%v stopped being recognisable once named", wrapped)
+	}
+	if !strings.Contains(wrapped.Error(), "bot") {
+		t.Errorf("error %q should name the machine", wrapped)
 	}
 }
