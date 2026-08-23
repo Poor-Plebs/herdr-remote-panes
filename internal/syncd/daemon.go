@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
@@ -47,9 +48,12 @@ type Daemon struct {
 	// markedWorkspaces avoids re-reporting the same workspace metadata.
 	markedWorkspaces map[string]string
 
-	// pruneOnce clears marks left by earlier runs, once the first pane listing
-	// says which panes actually exist.
-	pruneOnce sync.Once
+	// lastPrune is when marks left behind by vanished panes were last cleared,
+	// as Unix nanoseconds. This used to happen once, on the first pane listing
+	// after startup, which left every mark dropped later in the session in
+	// place until the daemon was restarted -- and Herdr reuses pane ids, so a
+	// stale mark is eventually read as belonging to a different pane.
+	lastPrune atomic.Int64
 
 	// rootPanes maps a workspace this daemon created to the shell Herdr opened
 	// with it, so that placeholder can be closed once a mirror replaces it.
@@ -904,6 +908,22 @@ func (d *Daemon) status() []HostInfo {
 	return out
 }
 
+// pruneInterval is how often marks left by vanished panes are cleared. A pane
+// that goes without the daemon noticing leaves one behind, which stays until
+// something clears it; reading a whole directory of a few small files is not
+// worth doing every couple of seconds, but leaving it until the next restart
+// is how a stale mark meets a reused pane id.
+const pruneInterval = time.Minute
+
+func (d *Daemon) maybePrune(alive map[string]bool) {
+	now := time.Now()
+	if last := d.lastPrune.Load(); last != 0 && now.Sub(time.Unix(0, last)) < pruneInterval {
+		return
+	}
+	d.lastPrune.Store(now.UnixNano())
+	mirror.Prune(alive)
+}
+
 func (d *Daemon) reconcileAll() {
 	d.mu.Lock()
 	states := make([]*hostSync, 0, len(d.hosts))
@@ -926,7 +946,7 @@ func (d *Daemon) reconcileAll() {
 	// Marks are left behind whenever a pane goes without the daemon noticing,
 	// and Herdr reuses pane ids, so a stale one would be read as belonging to
 	// whatever lands on that id next.
-	d.pruneOnce.Do(func() { mirror.Prune(index.alive) })
+	d.maybePrune(index.alive)
 
 	defer d.persist()
 

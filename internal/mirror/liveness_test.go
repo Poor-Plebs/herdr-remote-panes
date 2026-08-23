@@ -258,3 +258,28 @@ func TestLiveTerminalAcceptsMarksWithoutATerminal(t *testing.T) {
 		t.Errorf("terminal = %q, want empty for an older mark", terminal)
 	}
 }
+
+func TestSameProgramRejectsARecycledProcessID(t *testing.T) {
+	// A mark holds the mirror's process id, and signal 0 only proves something
+	// with that id exists. Process ids are reused, so after a mirror dies its
+	// id can be handed to something unrelated and the mark would read as live
+	// for as long as that process lives, leaving a pane nothing ever repairs.
+	if _, err := os.ReadFile("/proc/self/comm"); err != nil {
+		t.Skip("no /proc to check against; the id is taken at face value here")
+	}
+
+	if !sameProgram(os.Getpid()) {
+		t.Error("this process is not recognised as itself")
+	}
+
+	// Process 1 exists on every Unix and is emphatically not a mirror, which is
+	// what a recycled id looks like from here.
+	if sameProgram(1) {
+		t.Error("process 1 was accepted as a mirror of ours")
+	}
+
+	// An id that does not exist at all.
+	if sameProgram(0x7FFFFFFF) {
+		t.Error("a process id that cannot exist was accepted")
+	}
+}

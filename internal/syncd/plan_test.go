@@ -2,9 +2,12 @@ package syncd
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
@@ -813,4 +816,61 @@ func TestStatusIsSafeWhileMachinesChange(t *testing.T) {
 	<-written
 	close(stop)
 	wg.Wait()
+}
+
+func TestMarksArePrunedMoreThanOnce(t *testing.T) {
+	// Pruning used to happen once, on the first pane listing after startup.
+	// Every mark dropped later in the session then stayed until the daemon was
+	// restarted -- and Herdr reuses pane ids, so a stale ".failed" is
+	// eventually read as belonging to whatever lands on that id next, and a
+	// pane someone deliberately closed gets reopened.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("HERDR_SESSION", "default")
+
+	marks := filepath.Join(dir, "panes", "default")
+	if err := os.MkdirAll(marks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name string) {
+		if err := os.WriteFile(filepath.Join(marks, name), []byte("1\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exists := func(name string) bool {
+		_, err := os.Stat(filepath.Join(marks, name))
+		return err == nil
+	}
+
+	d := &Daemon{}
+
+	// First pass: a mark for a pane that is gone goes, one for a live pane stays.
+	write("w1-p1.failed")
+	write("w1-p2.pid")
+	d.maybePrune(map[string]bool{"w1:p2": true})
+	if exists("w1-p1.failed") {
+		t.Error("a mark for a vanished pane survived the first prune")
+	}
+	if !exists("w1-p2.pid") {
+		t.Error("a mark for a live pane was removed")
+	}
+
+	// A mark dropped later in the same session. Pruning again this soon would
+	// be wasted work, so it is left for now.
+	write("w1-p3.failed")
+	d.maybePrune(map[string]bool{"w1:p2": true})
+	if !exists("w1-p3.failed") {
+		t.Error("pruned again immediately; the interval is not being respected")
+	}
+
+	// Once the interval has passed it is cleared, rather than waiting for the
+	// daemon to be restarted.
+	d.lastPrune.Store(time.Now().Add(-2 * pruneInterval).UnixNano())
+	d.maybePrune(map[string]bool{"w1:p2": true})
+	if exists("w1-p3.failed") {
+		t.Error("a mark dropped after the first prune was never cleared")
+	}
+	if !exists("w1-p2.pid") {
+		t.Error("a mark for a live pane was removed")
+	}
 }

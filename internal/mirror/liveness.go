@@ -95,8 +95,6 @@ func livenessPath(paneID string) string {
 	return filepath.Join(dir, sanitizePaneID(paneID)+".pid")
 }
 
-// markLive records that this process is mirroring into the given pane, and
-// returns a function that clears the mark.
 // markLive records that this process is bridging the given terminal into the
 // given pane, and returns a function that clears the mark.
 //
@@ -154,7 +152,38 @@ func readMark(paneID string) (terminalID string, live bool) {
 	if syscall.Kill(pid, 0) != nil {
 		return "", false
 	}
+	if !sameProgram(pid) {
+		return "", false
+	}
 	return strings.TrimSpace(terminal), true
+}
+
+// sameProgram reports whether a process id belongs to this same program, as far
+// as the platform will say.
+//
+// Signal 0 only proves that something with that id exists. Process ids are
+// reused, so once a mirror has died its id can be handed to something
+// unrelated, and the mark would then read as live for as long as that process
+// lives -- leaving a pane nothing ever repairs, because everything downstream
+// believes a mirror is already running in it.
+//
+// Linux exposes the name through /proc. Comparing against this process rather
+// than a name written down here keeps the two in step, including the fifteen
+// characters /proc truncates to. Where /proc is not available, macOS included,
+// there is nothing cheap to check and the id is taken at face value, which is
+// what it was before.
+func sameProgram(pid int) bool {
+	self, err := os.ReadFile("/proc/self/comm")
+	if err != nil {
+		return true
+	}
+	other, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/comm")
+	if err != nil {
+		// It answered signal 0 a moment ago and cannot be read now: either it
+		// has just gone, or it belongs to somebody else. Neither is our mirror.
+		return false
+	}
+	return strings.TrimSpace(string(self)) == strings.TrimSpace(string(other))
 }
 
 // failurePath marks a pane whose bridge exited with an error, as opposed to
