@@ -23,7 +23,9 @@ func TestCollectListsSSHConfigMachines(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", t.TempDir())
 
 	entries, warning := collect()
-	if warning != "" {
+	// No daemon answers in a test, and the menu now says so. Anything else
+	// would be a warning about the config, which is what this cares about.
+	if warning != "" && !strings.Contains(warning, "daemon is not running") {
 		t.Errorf("unexpected warning: %s", warning)
 	}
 	found := map[string]bool{}
