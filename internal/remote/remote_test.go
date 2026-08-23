@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRemoteCommandClearsSocketOverrides(t *testing.T) {
@@ -323,5 +324,93 @@ func TestShellArgvOpensAnInteractiveLogin(t *testing.T) {
 	// Nothing to run: the point is the login shell itself.
 	if strings.Contains(joined, "herdr") {
 		t.Errorf("a plain SSH pane should not need Herdr on the machine: %v", argv)
+	}
+}
+
+func TestStartCommandDetachesAndCleansItsEnvironment(t *testing.T) {
+	// This runs on the far machine to bring a Herdr session up. It is checked
+	// by running it, because what matters about it is what a shell does with
+	// it rather than what it says.
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh to run it in")
+	}
+
+	dir := t.TempDir()
+	record := filepath.Join(dir, "record")
+	fake := filepath.Join(dir, "herdr")
+	// Stands in for Herdr: writes down how it was called, then lingers, as a
+	// server would.
+	script := "#!/bin/sh\n{ echo \"args=$*\"; echo \"session=${HERDR_SESSION-unset}\"; " +
+		"echo \"socket=${HERDR_SOCKET_PATH-unset}\"; echo \"client=${HERDR_CLIENT_SOCKET_PATH-unset}\"; } > " +
+		record + "\nsleep 5\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	command := New("bot", "work").startCommand(fake)
+
+	cmd := exec.Command("/bin/sh", "-c", command)
+	// Set the very variables the command is supposed to clear.
+	cmd.Env = append(os.Environ(),
+		"HERDR_SOCKET_PATH=/hub/herdr.sock",
+		"HERDR_CLIENT_SOCKET_PATH=/hub/client.sock")
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- cmd.Run() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("the command failed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		// ssh waits for the streams to close, so a background process holding
+		// one open leaves the connection hanging until it exits, which for a
+		// server is never.
+		t.Fatal("the command did not return; something is still holding a stream")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("the command took %s to return; it should not wait for the server", elapsed)
+	}
+
+	// It really did start, and detached rather than dying with its parent.
+	var raw []byte
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		if raw, _ = os.ReadFile(record); len(raw) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	got := string(raw)
+	if got == "" {
+		t.Fatal("the server was never started")
+	}
+
+	for _, want := range []string{
+		"args=server",
+		"session=work",
+		// SSH forwards this machine's sockets, and a Herdr started with those
+		// set would talk back to the session here instead of its own.
+		"socket=unset",
+		"client=unset",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the server saw %q, want %q", strings.TrimSpace(got), want)
+		}
+	}
+}
+
+func TestStartCommandWithNoSessionNamed(t *testing.T) {
+	// An unnamed session means Herdr's own default, so nothing should be set.
+	command := New("bot", "").startCommand("/usr/bin/herdr")
+	if strings.Contains(command, "HERDR_SESSION") {
+		t.Errorf("command sets a session when none was named: %q", command)
+	}
+	// The clearing still happens: that is not about the session.
+	for _, want := range []string{"-u HERDR_SOCKET_PATH", "-u HERDR_CLIENT_SOCKET_PATH", "nohup"} {
+		if !strings.Contains(command, want) {
+			t.Errorf("command %q should contain %q", command, want)
+		}
 	}
 }

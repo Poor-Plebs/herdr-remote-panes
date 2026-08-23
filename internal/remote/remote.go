@@ -247,15 +247,9 @@ func (c *Client) Start() error {
 		return err
 	}
 
-	launch := "nohup " + shellQuote(bin) + " server >/dev/null 2>&1 </dev/null &"
-	prefix := "env -u HERDR_SOCKET_PATH -u HERDR_CLIENT_SOCKET_PATH "
-	if c.Session != "" {
-		prefix += "HERDR_SESSION=" + shellQuote(c.Session) + " "
-	}
-
 	argv := []string{"ssh"}
 	argv = append(argv, c.SSHArgs(false)...)
-	argv = append(argv, prefix+launch)
+	argv = append(argv, c.startCommand(bin))
 	if _, err := runCommand(argv); err != nil {
 		return fmt.Errorf("%s: could not start a remote Herdr session: %w", c.Target, err)
 	}
@@ -271,6 +265,23 @@ func (c *Client) Start() error {
 // the machine the old way.
 func (c *Client) SameSettings(target, session, bin string) bool {
 	return c.Target == target && c.Session == session && c.configuredBin == bin
+}
+
+// startCommand renders the shell command that starts a Herdr session on the
+// machine.
+//
+// Three parts of it are load-bearing. The socket variables are cleared because
+// SSH forwards this machine's, and a Herdr started with those set would talk
+// back to the session here instead of its own. Every stream is redirected
+// because ssh waits for them to close, and a background process holding one
+// open leaves the connection hanging until it exits -- which for a server is
+// never. And nohup, so it outlives the connection that started it.
+func (c *Client) startCommand(bin string) string {
+	prefix := "env -u HERDR_SOCKET_PATH -u HERDR_CLIENT_SOCKET_PATH "
+	if c.Session != "" {
+		prefix += "HERDR_SESSION=" + shellQuote(c.Session) + " "
+	}
+	return prefix + "nohup " + shellQuote(bin) + " server >/dev/null 2>&1 </dev/null &"
 }
 
 // Close tears down the shared ControlMaster connection.
