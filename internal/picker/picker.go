@@ -489,6 +489,48 @@ func nameWidth(cols int) int {
 	return width
 }
 
+// displayName is how a machine is written in the menu: its name, and its label
+// after it when the two differ.
+//
+// Names come from ~/.ssh/config, so they are made safe to draw rather than
+// trusted to be short and printable.
+func displayName(entry Entry) string {
+	name := text.Sanitize(entry.Target)
+	if entry.Label != "" && entry.Label != entry.Target {
+		return fmt.Sprintf("%s (%s)", name, text.Sanitize(entry.Label))
+	}
+	return name
+}
+
+// nameColumn is how wide the column of machine names should be.
+//
+// It used to be whatever the popup could afford, which for the usual case --
+// machines called bot, prod, web1 -- left the status of each stranded some
+// thirty columns from the name it belongs to, with nothing in between. The eye
+// has to cross that gap to pair them up, and there was no reason for it: the
+// space was reserved for names nobody had.
+//
+// Measured across every machine rather than only the ones on screen. Sizing to
+// the visible ones is tighter still, but the column would then change width as
+// the list scrolls, and names sliding about under the cursor is worse than a
+// column wider than one screenful strictly needs.
+func nameColumn(entries []Entry, cols int) int {
+	limit := nameWidth(cols)
+	widest := 0
+	for _, entry := range entries {
+		if w := text.Width(displayName(entry)); w > widest {
+			widest = w
+		}
+	}
+	// A gutter, so the two columns read as two columns. Without it a list whose
+	// names are all the same length has every status hard against its name.
+	const gutter = 2
+	if widest+gutter < limit {
+		return widest + gutter
+	}
+	return limit
+}
+
 // visibleWindow picks the slice of entries to show, keeping the selected one
 // on screen.
 //
@@ -630,6 +672,8 @@ func render(entries []Entry, selected, cols, rows int, warning string) string {
 	frame := planLayout(len(entries), selected, rows, len(warned))
 	first, last := frame.first, frame.last
 
+	column := nameColumn(entries, cols)
+
 	var b strings.Builder
 	b.WriteString(esc + "[2J" + esc + "[H")
 	b.WriteString("  " + bold + text.Truncate("Connect to a machine", cols-4) + reset + "\r\n\r\n")
@@ -654,13 +698,7 @@ func render(entries []Entry, selected, cols, rows int, warning string) string {
 			number = fmt.Sprintf("%d.", i+1)
 		}
 
-		// Names come from ~/.ssh/config, so they are made safe to draw and cut
-		// to fit rather than trusted to be short and printable.
-		name := text.Sanitize(entry.Target)
-		if entry.Label != "" && entry.Label != entry.Target {
-			name = fmt.Sprintf("%s (%s)", name, text.Sanitize(entry.Label))
-		}
-		name = text.Pad(text.Truncate(name, nameWidth(cols)), nameWidth(cols))
+		name := text.Pad(text.Truncate(displayName(entry), column), column)
 
 		var line string
 		state := fitStatus(statusSpans(entry), cols-chromeWidth-text.Width(name))

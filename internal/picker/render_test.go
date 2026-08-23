@@ -3,6 +3,7 @@ package picker
 import (
 	"strings"
 
+	"fmt"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 	"testing"
 )
@@ -480,4 +481,78 @@ func TestTheMenuSaysWhenNothingIsAnswering(t *testing.T) {
 			t.Errorf("a line is %d columns wide: %q", w, visible(line))
 		}
 	}
+}
+
+func TestTheNameColumnFitsTheNamesThatAreThere(t *testing.T) {
+	// The column used to be whatever the popup could afford, which for the
+	// usual case -- machines called bot, prod, web1 -- left each status some
+	// thirty columns from the name it belongs to, with nothing in between. The
+	// eye has to cross that to pair them up, and the space was reserved for
+	// names nobody had.
+	short := []Entry{
+		{Target: "bot", Configured: true, Connected: true, Terminals: 3},
+		{Target: "prod", Configured: true},
+		{Target: "ci", Configured: true},
+	}
+
+	t.Run("short names do not reserve room for long ones", func(t *testing.T) {
+		got := nameColumn(short, 80)
+		if got >= nameWidth(80) {
+			t.Errorf("column is %d wide for names of at most 4, the same as the old fixed %d",
+				got, nameWidth(80))
+		}
+		// Wide enough for the longest name, or it would be cut for no reason.
+		if got < 4 {
+			t.Errorf("column is %d wide, too narrow for %q", got, "prod")
+		}
+	})
+
+	t.Run("the status still starts clear of the name", func(t *testing.T) {
+		for _, line := range lines(short, 0, 80, 24) {
+			plain := visible(line)
+			// The longer status first: "not connected" contains "connected",
+			// so searching for the short one finds the column four places in.
+			i := -1
+			for _, status := range []string{"not connected", "connected"} {
+				if at := strings.Index(plain, status); at >= 0 {
+					i = at
+					break
+				}
+			}
+			if i < 0 {
+				continue
+			}
+			// At least one blank column between the longest name and the
+			// status, so the two read as two columns rather than one.
+			if !strings.HasSuffix(plain[:i], "  ") {
+				t.Errorf("status runs straight into the name: %q", plain)
+			}
+		}
+	})
+
+	t.Run("a long name is still capped to what the popup can afford", func(t *testing.T) {
+		long := append([]Entry{}, short...)
+		long = append(long, Entry{Target: strings.Repeat("x", 200), Configured: true})
+		if got := nameColumn(long, 80); got > nameWidth(80) {
+			t.Errorf("column is %d wide, past the %d the popup can afford", got, nameWidth(80))
+		}
+	})
+
+	t.Run("the column does not change as the list scrolls", func(t *testing.T) {
+		// Sizing to the visible machines is tighter, but then names slide
+		// sideways under the cursor while paging, which is worse than a column
+		// wider than one screenful strictly needs.
+		many := make([]Entry, 40)
+		for i := range many {
+			many[i] = Entry{Target: fmt.Sprintf("machine-%d", i), Configured: true}
+		}
+		many[39] = Entry{Target: "a-considerably-longer-machine-name", Configured: true}
+
+		want := nameColumn(many, 80)
+		for _, selected := range []int{0, 10, 25, 39} {
+			if got := nameColumn(many, 80); got != want {
+				t.Errorf("at selection %d the column is %d, was %d", selected, got, want)
+			}
+		}
+	})
 }
