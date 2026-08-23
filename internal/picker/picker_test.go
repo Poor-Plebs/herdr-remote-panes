@@ -251,3 +251,68 @@ func TestCollectHidesADisabledMachine(t *testing.T) {
 		}
 	}
 }
+
+func TestParseKeyConsumesWholeEscapeSequences(t *testing.T) {
+	// Giving up partway through a sequence leaves the rest in the buffer, and
+	// the next read takes those bytes for keystrokes of their own. ctrl+up is
+	// ESC [ 1 ; 5 A, and the "5" left behind was read as picking the fifth
+	// machine in the list -- which connects to it. Pressing a modified arrow
+	// opened an SSH terminal somewhere nobody had asked for.
+	tests := []struct {
+		name string
+		in   string
+		want key
+	}{
+		{"up", "\x1b[A", keyUp},
+		{"down", "\x1b[B", keyDown},
+		{"up in application mode", "\x1bOA", keyUp},
+		{"down in application mode", "\x1bOB", keyDown},
+		{"ctrl+up still moves up", "\x1b[1;5A", keyUp},
+		{"shift+down still moves down", "\x1b[1;2B", keyDown},
+		{"home", "\x1b[H", keyTop},
+		{"end", "\x1b[F", keyBottom},
+		{"home as a number", "\x1b[1~", keyTop},
+		{"end as a number", "\x1b[4~", keyBottom},
+		{"page up", "\x1b[5~", keyPageUp},
+		{"page down", "\x1b[6~", keyPageDown},
+		{"page up with a modifier", "\x1b[5;5~", keyPageUp},
+		{"delete is not a key here", "\x1b[3~", keyNone},
+		{"a paste beginning", "\x1b[200~", keyNone},
+		{"something unrecognised", "\x1b[99;99;99R", keyNone},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := strings.NewReader(tt.in)
+			if got := parseKey(r); got != tt.want {
+				t.Errorf("parseKey(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+			// Nothing left over. This is the whole point: a leftover byte is
+			// read as a keypress nobody made.
+			if r.Len() != 0 {
+				rest := make([]byte, r.Len())
+				_, _ = r.Read(rest)
+				t.Errorf("parseKey(%q) left %q unread", tt.in, rest)
+			}
+		})
+	}
+}
+
+func TestParseKeyOnATruncatedSequence(t *testing.T) {
+	// A sequence that stops halfway means the input has gone, which is the same
+	// as being told to quit.
+	for _, in := range []string{"\x1b", "\x1b[", "\x1b[1", "\x1b[1;5"} {
+		if got := parseKey(strings.NewReader(in)); got != keyQuit {
+			t.Errorf("parseKey(%q) = %v, want keyQuit", in, got)
+		}
+	}
+}
+
+func TestParseKeyDoesNotReadForever(t *testing.T) {
+	// A stream of parameter bytes that never ends a sequence must not be read
+	// until it does.
+	endless := strings.NewReader("\x1b[" + strings.Repeat("1;", 4096) + "A")
+	if got := parseKey(endless); got != keyNone {
+		t.Errorf("parseKey on an endless sequence = %v, want keyNone", got)
+	}
+}

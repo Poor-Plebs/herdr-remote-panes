@@ -703,6 +703,10 @@ func readKey() key {
 // Both cursor-key encodings are handled: a terminal in application mode sends
 // ESC O A for Up rather than ESC [ A, and reading only the second form leaves
 // the arrow keys dead with no clue why.
+// maxEscapeParams bounds how much of an escape sequence is read before giving
+// up on it, so a stream that never ends one cannot be read forever.
+const maxEscapeParams = 16
+
 func parseKey(r io.Reader) key {
 	var buf [1]byte
 	read := func() (byte, bool) {
@@ -741,11 +745,33 @@ func parseKey(r io.Reader) key {
 		if intro != '[' && intro != 'O' {
 			return keyQuit
 		}
-		code, ok := read()
-		if !ok {
-			return keyQuit
+
+		// Read to the end of the sequence before deciding anything. Giving up
+		// partway leaves the rest in the buffer, where the next read takes them
+		// for keystrokes of their own: ctrl+up is ESC [ 1 ; 5 A, and the "5"
+		// left behind was read as picking the fifth machine -- which connects
+		// to it. A parameter byte is below 0x40 and the final byte is not, so
+		// the end is unambiguous whatever is in between.
+		var params []byte
+		var final byte
+		for i := 0; ; i++ {
+			b, ok := read()
+			if !ok {
+				return keyQuit
+			}
+			if b >= 0x40 && b <= 0x7E {
+				final = b
+				break
+			}
+			// Nothing this reads has a long parameter list, and a stream that
+			// never ends one is not something to keep reading.
+			if i >= maxEscapeParams {
+				return keyNone
+			}
+			params = append(params, b)
 		}
-		switch code {
+
+		switch final {
 		case 'A':
 			return keyUp
 		case 'B':
@@ -754,19 +780,18 @@ func parseKey(r io.Reader) key {
 			return keyTop
 		case 'F':
 			return keyBottom
-		case '5', '6', '1', '4':
-			// A numeric sequence, terminated by '~'.
-			if tilde, ok := read(); !ok || tilde != '~' {
-				return keyNone
-			}
-			switch code {
-			case '5':
+		case '~':
+			// The number before the tilde says which key it was. Modifiers
+			// arrive after a semicolon and do not change which key it is.
+			number, _, _ := strings.Cut(string(params), ";")
+			switch number {
+			case "5":
 				return keyPageUp
-			case '6':
+			case "6":
 				return keyPageDown
-			case '1':
+			case "1", "7":
 				return keyTop
-			case '4':
+			case "4", "8":
 				return keyBottom
 			}
 		}
