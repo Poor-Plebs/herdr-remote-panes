@@ -2,6 +2,7 @@ package syncd
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -65,6 +66,32 @@ func TestManifestListsWhatTheCodeImplements(t *testing.T) {
 		// ask for.
 		if !strings.Contains(string(main), `"`+id+`"`) {
 			t.Errorf("the manifest offers %q but nothing handles it", id)
+		}
+	}
+}
+
+func TestTheREADMEOnlyBindsActionsThatExist(t *testing.T) {
+	// The README shows keybindings to copy into config.toml. An action id that
+	// does not exist produces a binding that does nothing, and Herdr will not
+	// say why -- the same silence as a keybinding that clashes with a built-in.
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := os.ReadFile("../../herdr-plugin.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	referenced := regexp.MustCompile(`poorplebs\.remote-panes\.([a-z-]+)`).
+		FindAllStringSubmatch(string(readme), -1)
+	if len(referenced) == 0 {
+		t.Fatal("the README references no actions; this test needs rewriting")
+	}
+
+	for _, m := range referenced {
+		if !strings.Contains(string(manifest), `id = "`+m[1]+`"`) {
+			t.Errorf("the README binds %q, which is not an action this offers", m[0])
 		}
 	}
 }
