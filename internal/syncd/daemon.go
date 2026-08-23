@@ -1821,6 +1821,20 @@ const (
 // reporting whichever token matches the connection state and clearing the
 // other. Herdr shows these only where the sidebar template asks for them, so
 // the workspace name carries a plain marker too.
+// forgetWorkspace drops a space that Herdr says is gone.
+//
+// A machine's space disappears when its last pane closes, and the id was kept
+// regardless: every pass then renamed and marked a space that no longer
+// existed, two failing calls each time, for as long as the daemon ran. The next
+// pass finds or creates one as it would have at the start. Callers hold d.mu.
+func (d *Daemon) forgetWorkspace(state *hostSync, workspaceID string) {
+	log.Printf("%s: space %s is gone; will find it again", state.host.Target, workspaceID)
+	if state.workspaceID == workspaceID {
+		state.workspaceID = ""
+	}
+	delete(d.markedWorkspaces, workspaceID)
+}
+
 func (d *Daemon) markWorkspaceState(state *hostSync, connected bool) {
 	workspaceID := state.workspaceID
 	if workspaceID == "" {
@@ -1838,6 +1852,10 @@ func (d *Daemon) markWorkspaceState(state *hostSync, connected bool) {
 	// directly beside it.
 	if label := d.config().WorkspaceLabelFor(state.host, connected); label != "" {
 		if _, err := herdrcli.Run("workspace", "rename", workspaceID, label); err != nil {
+			if herdrcli.IsNotFound(err) {
+				d.forgetWorkspace(state, workspaceID)
+				return
+			}
 			log.Printf("rename workspace %s: %v", workspaceID, err)
 		}
 	}
@@ -1847,6 +1865,10 @@ func (d *Daemon) markWorkspaceState(state *hostSync, connected bool) {
 		"--token", want+"="+remoteGlyph,
 		"--clear-token", clear,
 		"--clear-token", "remote"); err != nil {
+		if herdrcli.IsNotFound(err) {
+			d.forgetWorkspace(state, workspaceID)
+			return
+		}
 		if d.markedWorkspaces[workspaceID] != "failed" {
 			log.Printf("mark workspace %s: %v", workspaceID, err)
 			d.markedWorkspaces[workspaceID] = "failed"

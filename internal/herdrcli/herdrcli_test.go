@@ -1,6 +1,7 @@
 package herdrcli
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -332,5 +333,40 @@ func TestSafeAgent(t *testing.T) {
 	}
 	if got := (Pane{Agent: "   "}).SafeAgent(); got != "" {
 		t.Errorf("SafeAgent() = %q for whitespace, want empty", got)
+	}
+}
+
+func TestIsNotFound(t *testing.T) {
+	// A caller that has just been told the thing it was working on is gone
+	// should stop asking after it. The daemon kept a machine's workspace id
+	// after Herdr had removed the space, and renamed and marked it on every
+	// pass for as long as it ran -- two failing calls every couple of seconds.
+	_, err := Decode([]byte(
+		`{"error":{"code":"workspace_not_found","message":"workspace w37 not found"}}`),
+		[]string{"workspace", "rename", "w37"})
+	if err == nil {
+		t.Fatal("an error response decoded as success")
+	}
+	if !IsNotFound(err) {
+		t.Errorf("%v is not recognised as a thing that is gone", err)
+	}
+	// The words still say what happened, since they end up in a log.
+	for _, want := range []string{"workspace w37 not found", "workspace_not_found"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should contain %q", err, want)
+		}
+	}
+
+	// Other refusals are not this.
+	_, err = Decode([]byte(`{"error":{"code":"invalid_params","message":"bad"}}`),
+		[]string{"pane", "open"})
+	if IsNotFound(err) {
+		t.Errorf("%v should not be read as a thing that is gone", err)
+	}
+	if IsNotFound(nil) {
+		t.Error("nil should not be read as a thing that is gone")
+	}
+	if IsNotFound(errors.New("some other trouble")) {
+		t.Error("an unrelated error should not be read as a thing that is gone")
 	}
 }

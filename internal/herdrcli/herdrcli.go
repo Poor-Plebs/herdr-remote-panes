@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"errors"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 )
 
@@ -117,6 +118,28 @@ type envelope struct {
 	} `json:"error"`
 }
 
+// APIError is a refusal from Herdr, carrying the code it gave.
+//
+// The code matters as well as the words: a caller that has just been told the
+// thing it was working on is gone should stop asking after it, rather than
+// repeating the request for as long as it runs.
+type APIError struct {
+	Command string
+	Code    string
+	Message string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("herdr %s: %s: %s", e.Command, e.Code, e.Message)
+}
+
+// IsNotFound reports whether Herdr refused because the thing asked about does
+// not exist -- a workspace closed, a pane already gone.
+func IsNotFound(err error) bool {
+	var api *APIError
+	return errors.As(err, &api) && strings.HasSuffix(api.Code, "_not_found")
+}
+
 // Run executes a Herdr CLI command and returns its decoded `result` object.
 func Run(args ...string) (json.RawMessage, error) {
 	return RunWith(nil, args...)
@@ -185,8 +208,11 @@ func Decode(out []byte, args []string) (json.RawMessage, error) {
 			strings.Join(args, " "), truncate(string(out)))
 	}
 	if env.Error != nil {
-		return nil, fmt.Errorf("herdr %s: %s: %s",
-			strings.Join(args, " "), env.Error.Code, env.Error.Message)
+		return nil, &APIError{
+			Command: strings.Join(args, " "),
+			Code:    env.Error.Code,
+			Message: env.Error.Message,
+		}
 	}
 	return env.Result, nil
 }

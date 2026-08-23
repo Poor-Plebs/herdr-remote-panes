@@ -1589,3 +1589,36 @@ func TestCoalescerRunsAgainAfterItFinishes(t *testing.T) {
 		t.Errorf("the job ran %d times, want 3", runs)
 	}
 }
+
+func TestAWorkspaceThatIsGoneIsForgotten(t *testing.T) {
+	// A machine's space disappears when its last pane closes, and the id was
+	// kept regardless: every pass then renamed and marked a space that no
+	// longer existed, two failing calls each time, for as long as the daemon
+	// ran. This machine's log had them every two seconds.
+	d := withConfig(&Daemon{
+		markedWorkspaces: map[string]string{"w37": "remote_up"},
+	}, config.Defaults())
+	state := &hostSync{host: config.Host{Target: "prod"}, workspaceID: "w37"}
+
+	d.forgetWorkspace(state, "w37")
+
+	if state.workspaceID != "" {
+		t.Errorf("workspaceID = %q, want it forgotten", state.workspaceID)
+	}
+	if _, ok := d.markedWorkspaces["w37"]; ok {
+		t.Error("the marker bookkeeping outlived the space")
+	}
+}
+
+func TestForgettingLeavesADifferentSpaceAlone(t *testing.T) {
+	// The machine may already have moved on to another space by the time a
+	// stale call comes back saying the old one is gone.
+	d := withConfig(&Daemon{markedWorkspaces: map[string]string{}}, config.Defaults())
+	state := &hostSync{host: config.Host{Target: "prod"}, workspaceID: "w99"}
+
+	d.forgetWorkspace(state, "w37")
+
+	if state.workspaceID != "w99" {
+		t.Errorf("workspaceID = %q, want the current space kept", state.workspaceID)
+	}
+}
