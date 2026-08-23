@@ -39,6 +39,14 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # Pinned rather than latest: a new release adding a check would fail a
+      # commit that has nothing to do with it, on a repository nobody is
+      # watching at the time.
+      - name: Staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
+          "$(go env GOPATH)/bin/staticcheck" ./...
+
       - name: Test
         run: go test -race ./...
 

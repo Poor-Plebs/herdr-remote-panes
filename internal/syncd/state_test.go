@@ -44,8 +44,10 @@ func TestSocketPathFor(t *testing.T) {
 	t.Run("the fallback is deterministic and per session", func(t *testing.T) {
 		// The actions must look for the socket the daemon actually bound.
 		long := "/" + strings.Repeat("deeply-nested-directory/", 6)
-		if socketPathFor(long, "hub", temp) != socketPathFor(long, "hub", temp) {
-			t.Error("the fallback path is not stable")
+		first := socketPathFor(long, "hub", temp)
+		second := socketPathFor(long, "hub", temp)
+		if first != second {
+			t.Errorf("the fallback path is not stable: %q and %q", first, second)
 		}
 		if socketPathFor(long, "hub", temp) == socketPathFor(long, "other", temp) {
 			t.Error("two sessions collided in the fallback")

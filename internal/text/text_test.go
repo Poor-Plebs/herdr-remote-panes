@@ -29,7 +29,9 @@ func TestSanitizeName(t *testing.T) {
 		{"a carriage return is stripped", "bot\rmore", "botmore"},
 		{"a tab becomes a space", "bot\tcol", "bot col"},
 		{"a bell is stripped", "bot\a", "bot"},
-		{"C1 controls are stripped", "botmore", "botmore"},
+		// Written as an escape: a literal one is invisible in the source, which
+		// is the very thing being stripped.
+		{"C1 controls are stripped", "bot\u0085more", "botmore"},
 		{"an ordinary name is untouched", "build-server-01", "build-server-01"},
 		{"non-ASCII names are kept", "构建服务器", "构建服务器"},
 		{"surrounding space is trimmed", "  bot  ", "bot"},

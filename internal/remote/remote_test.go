@@ -168,9 +168,13 @@ func TestSameSettings(t *testing.T) {
 	}
 
 	// Two clients for the same settings must share a control path, or each
-	// would open its own connection to the same machine.
-	if NewWithBin("bot", "default", "").controlPath != NewWithBin("bot", "default", "").controlPath {
-		t.Error("identical clients disagree on the control path")
+	// would open its own connection to the same machine. Held in variables so
+	// it reads as "call it twice and compare" rather than as a comparison of
+	// something with itself, which is also how it reads to a linter.
+	first := NewWithBin("bot", "default", "").controlPath
+	second := NewWithBin("bot", "default", "").controlPath
+	if first != second {
+		t.Errorf("identical clients disagree on the control path: %q and %q", first, second)
 	}
 	// Different sessions must not, since the session is part of what the
 	// connection is for.
