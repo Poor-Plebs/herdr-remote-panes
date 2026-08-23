@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"bytes"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 )
 
@@ -90,6 +90,9 @@ type Config struct {
 	// unknown holds settings read from the file that mean nothing here. Not a
 	// setting itself, so it is neither read from nor written back to JSON.
 	unknown []string
+	// dropped names the machines in the file that could not be used, in the
+	// words of the file rather than the index of a slice nobody can see.
+	dropped []string
 
 	// PollInterval is how often each host is polled for pane changes.
 	PollInterval string `json:"poll_interval,omitempty"`
@@ -508,18 +511,33 @@ func (c Config) normalized() Config {
 		c.MaxMirrors = d.MaxMirrors
 	}
 	// A host with no target cannot be reached, and leaving it in produces a
-	// space named after nothing and an ssh command with no destination.
+	// space named after nothing and an ssh command with no destination. Which
+	// ones went is remembered: dropping an entry somebody deliberately wrote
+	// and saying nothing is how a mistyped "targt" turns into a machine that
+	// is simply missing from the menu, with nowhere to look for why.
 	kept := c.Hosts[:0]
-	for _, host := range c.Hosts {
+	for i, host := range c.Hosts {
 		if host.Target != "" {
 			kept = append(kept, host)
+			continue
 		}
+		c.dropped = append(c.dropped, describeDropped(i, host))
 	}
 	c.Hosts = kept
 	if c.Hosts == nil {
 		c.Hosts = []Host{}
 	}
 	return c
+}
+
+// describeDropped points at a machine entry in terms someone can find it by.
+func describeDropped(index int, h Host) string {
+	// Its label if it has one -- that is what its author would recognise --
+	// and otherwise its position, counted the way the file reads.
+	if h.Label != "" {
+		return fmt.Sprintf("the machine labelled %q has no target and is ignored", h.Label)
+	}
+	return fmt.Sprintf("machine %d under hosts has no target and is ignored", index+1)
 }
 
 // Interval parses PollInterval, clamping it to something a remote can sustain.

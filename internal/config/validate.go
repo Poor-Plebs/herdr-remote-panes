@@ -44,12 +44,13 @@ func (c Config) Problems() []string {
 			"%q is not a setting and is being ignored", name))
 	}
 
+	// Reported from what normalized() recorded, not from the list: it drops
+	// these before anything here can see them, so the check that used to sit in
+	// the loop below could never fire.
+	problems = append(problems, c.dropped...)
+
 	seen := map[string]bool{}
 	for _, host := range c.Hosts {
-		if host.Target == "" {
-			problems = append(problems, "a host has no target and is ignored")
-			continue
-		}
 		if err := ValidTarget(host.Target); err != nil {
 			problems = append(problems, err.Error())
 		}

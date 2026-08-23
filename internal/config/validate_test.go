@@ -794,3 +794,78 @@ func TestAMistakeInTheConfigIsDescribedInTheFilesTerms(t *testing.T) {
 		})
 	}
 }
+
+func TestAMachineThatCannotBeUsedIsNotDroppedInSilence(t *testing.T) {
+	// A machine with no target cannot be reached, so it is dropped -- but
+	// dropping something somebody deliberately wrote and saying nothing is how
+	// a mistyped "targt" becomes a machine simply missing from the menu, with
+	// nowhere to look for why. The check for this existed but sat after the
+	// point where these entries had already been removed, so it never fired.
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "an entry with nothing in it",
+			content: `{"hosts":[{}]}`,
+			want:    "machine 1 under hosts has no target",
+		},
+		{
+			name:    "an entry counted the way the file reads",
+			content: `{"hosts":[{"target":"bot"},{"session":"work"}]}`,
+			want:    "machine 2 under hosts has no target",
+		},
+		{
+			name:    "an entry that has a label to name it by",
+			content: `{"hosts":[{"label":"the build box"}]}`,
+			want:    `the machine labelled "the build box" has no target`,
+		},
+		{
+			name:    "a target misspelt into a setting that is not one",
+			content: `{"hosts":[{"targt":"bot"}]}`,
+			want:    "has no target",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			problems := strings.Join(cfg.Problems(), "; ")
+			if !strings.Contains(problems, tt.want) {
+				t.Errorf("problems %q should mention %q", problems, tt.want)
+			}
+		})
+	}
+}
+
+func TestAUsableMachineIsNotComplainedAbout(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
+		[]byte(`{"hosts":[{"target":"bot"},{"target":"prod","label":"prod"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, problem := range cfg.Problems() {
+		if strings.Contains(problem, "no target") {
+			t.Errorf("a config with nothing wrong reported %q", problem)
+		}
+	}
+	if len(cfg.Hosts) != 2 {
+		t.Errorf("hosts = %d, want 2", len(cfg.Hosts))
+	}
+}
