@@ -545,3 +545,116 @@ func TestSharesWorkspace(t *testing.T) {
 		t.Errorf("a machine's own space reads the same up and down: %q", up)
 	}
 }
+
+func TestSettingsThatDefaultToOn(t *testing.T) {
+	// These four are documented as defaulting to true, and each is a pointer so
+	// that "not written down" and "written down as false" can be told apart.
+	// Getting that backwards would turn a setting off for everybody who had
+	// never heard of it, which is the sort of thing a reading of the code
+	// misses -- as one of these audits did miss, on a setting since fixed.
+	unset := Config{}
+	for name, got := range map[string]bool{
+		"close_propagates":  unset.ShouldClosePropagate(),
+		"capture_new_panes": unset.ShouldCaptureNewPanes(),
+		"takeover":          unset.ShouldTakeover(),
+		"auto_start":        unset.ShouldAutoStart(),
+	} {
+		if !got {
+			t.Errorf("%s defaults to off; the README says on", name)
+		}
+	}
+
+	no := false
+	off := Config{ClosePropagates: &no, CaptureNewPanes: &no, Takeover: &no, AutoStart: &no}
+	for name, got := range map[string]bool{
+		"close_propagates":  off.ShouldClosePropagate(),
+		"capture_new_panes": off.ShouldCaptureNewPanes(),
+		"takeover":          off.ShouldTakeover(),
+		"auto_start":        off.ShouldAutoStart(),
+	} {
+		if got {
+			t.Errorf("%s was written down as false and is still on", name)
+		}
+	}
+
+	// And the defaults this ships actually have them on, rather than relying on
+	// the nil case to do it.
+	d := Defaults()
+	if !d.ShouldClosePropagate() || !d.ShouldCaptureNewPanes() ||
+		!d.ShouldTakeover() || !d.ShouldAutoStart() {
+		t.Error("a default config does not have all four on")
+	}
+}
+
+func TestScopeDecidesWhatIsMirrored(t *testing.T) {
+	// "shared" mirrors one space on the machine; "all" mirrors everything it
+	// has. Anything unrecognised means the safer of the two, which is the one
+	// that leaves the machine's other work alone.
+	if !Defaults().SharedOnly() {
+		t.Error("the default should mirror only the shared space")
+	}
+	if (Config{Scope: ScopeAll}).SharedOnly() {
+		t.Error("scope all should mirror everything")
+	}
+	for _, scope := range []string{ScopeShared, "", "evrything", "ALL"} {
+		if !(Config{Scope: scope}).SharedOnly() {
+			t.Errorf("scope %q should leave the machine's other spaces alone", scope)
+		}
+	}
+}
+
+func TestRemoteWorkspaceLabelNamesThisMachine(t *testing.T) {
+	// The space this creates on the machine is named after the hub, so that
+	// sitting on the machine you can tell whose it is.
+	cfg := Defaults()
+	label := cfg.RemoteWorkspaceLabel()
+
+	if strings.Contains(label, "{hub}") {
+		t.Errorf("label = %q, the placeholder was not filled in", label)
+	}
+	if strings.TrimSpace(strings.TrimPrefix(label, "☁")) == "" {
+		t.Errorf("label = %q, it names no machine", label)
+	}
+	// Whatever the hostname is, it is in there.
+	if host, err := os.Hostname(); err == nil && host != "" {
+		if !strings.Contains(label, host) {
+			t.Errorf("label = %q, want it to contain %q", label, host)
+		}
+	}
+
+	// A format naming nothing still produces something rather than an empty
+	// label, which Herdr would show as a space with no name.
+	if got := (Config{RemoteWorkspaceFormat: "hub"}).RemoteWorkspaceLabel(); got != "hub" {
+		t.Errorf("label = %q, want it used as given", got)
+	}
+}
+
+func TestPerMachineOverridesFallBack(t *testing.T) {
+	// Four settings work per machine as well as globally, which was undocumented
+	// until recently and so worth holding to.
+	cfg := Defaults()
+	cfg.Placement = "split"
+	cfg.HerdrBin = "/usr/bin/herdr"
+
+	plain := Host{Target: "bot"}
+	if got := cfg.PlacementFor(plain); got != "split" {
+		t.Errorf("PlacementFor = %q, want the global %q", got, "split")
+	}
+	if got := cfg.BinFor(plain); got != "/usr/bin/herdr" {
+		t.Errorf("BinFor = %q, want the global one", got)
+	}
+
+	own := Host{Target: "ci", Placement: "tab", HerdrBin: "/opt/herdr"}
+	if got := cfg.PlacementFor(own); got != "tab" {
+		t.Errorf("PlacementFor = %q, want the machine's own %q", got, "tab")
+	}
+	if got := cfg.BinFor(own); got != "/opt/herdr" {
+		t.Errorf("BinFor = %q, want the machine's own", got)
+	}
+
+	// Nothing anywhere means nothing, not an empty string pretending to be a
+	// path: probing is what an empty herdr_bin asks for.
+	if got := (Config{}).BinFor(plain); got != "" {
+		t.Errorf("BinFor = %q, want empty so the path is probed", got)
+	}
+}
