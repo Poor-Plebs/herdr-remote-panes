@@ -432,3 +432,13 @@ func TestIgnoreNotFound(t *testing.T) {
 		t.Errorf("ignoreNotFound(nil) = %v", err)
 	}
 }
+
+func TestFocusingASpaceThatHasGoneIsNotAFailure(t *testing.T) {
+	// Focus is asked for after connecting, and a machine whose space closed in
+	// between is not a failure worth reporting over the connection having
+	// worked.
+	gone := &APIError{Command: "workspace focus w9", Code: "workspace_not_found", Message: "workspace w9 not found"}
+	if err := ignoreNotFound(gone); err != nil {
+		t.Errorf("a space already gone was reported as a failure: %v", err)
+	}
+}

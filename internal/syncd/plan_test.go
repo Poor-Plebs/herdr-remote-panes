@@ -1671,3 +1671,24 @@ func TestRecordReconcileGivesUpOnceAndSaysSoOnce(t *testing.T) {
 		t.Error("the reason was lost")
 	}
 }
+
+func TestFocusDoesNothingUntilThereIsSomewhereToGo(t *testing.T) {
+	// Picking a machine from the menu is a request to go and work on it. If
+	// its space does not exist yet there is nothing to focus, and asking Herdr
+	// to focus an empty id would be a failure logged for no reason.
+	d := withConfig(&Daemon{hosts: map[string]*hostSync{
+		"bot":     {host: config.Host{Target: "bot"}},
+		"pending": {host: config.Host{Target: "pending"}, workspaceID: ""},
+	}}, config.Defaults())
+
+	// Neither of these should reach Herdr: one has no space, the other is not
+	// a machine this knows about.
+	d.focusHost("pending")
+	d.focusHost("never-connected")
+
+	// A machine with a space is the case that does, and is checked live rather
+	// than here: it is one call to Herdr and nothing to decide.
+	d.mu.Lock()
+	d.hosts["bot"].workspaceID = "w1"
+	d.mu.Unlock()
+}

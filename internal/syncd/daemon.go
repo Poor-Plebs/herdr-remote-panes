@@ -370,6 +370,7 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 				host.Target, err)}
 		}
 		d.reconcileAll()
+		d.focusHost(host.Target)
 		if opened {
 			return Reply{OK: true, Message: "connected to " + host.Target + " and opened a terminal"}
 		}
@@ -827,6 +828,30 @@ func waitForRemote(client *remote.Client) error {
 			return err
 		}
 		time.Sleep(time.Duration(attempt+1) * 250 * time.Millisecond)
+	}
+}
+
+// focusHost brings a machine's space to the front.
+//
+// Picking a machine from the menu is a request to go and work on it, so leaving
+// the terminal open behind whatever was already on screen makes the menu look
+// as though it did nothing. Only an explicit connect does this: a reconcile
+// that happens to open a pane must not steal the screen from underneath
+// somebody.
+func (d *Daemon) focusHost(target string) {
+	d.mu.Lock()
+	state, ok := d.hosts[target]
+	workspaceID := ""
+	if ok {
+		workspaceID = state.workspaceID
+	}
+	d.mu.Unlock()
+
+	if workspaceID == "" {
+		return
+	}
+	if err := herdrcli.FocusWorkspace(workspaceID); err != nil {
+		log.Printf("focus %s: %v", target, err)
 	}
 }
 
