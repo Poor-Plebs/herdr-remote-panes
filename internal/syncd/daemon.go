@@ -1333,6 +1333,53 @@ func (d *Daemon) persist() {
 }
 
 // reconcileHost brings one host's mirrors in line with its remote panes.
+// forgetTerminals drops what is remembered about terminals the machine no
+// longer has.
+//
+// Each of these used to be cleared where it was most obviously needed, which
+// left the ones nobody had thought about growing for as long as the daemon ran.
+// The count of failed attempts was only cleared alongside a pending retry --
+// and giving up on a terminal deletes the retry first, so the count that had
+// just reached the limit stayed for good, one entry per terminal that ever
+// failed that often.
+//
+// Going through every one of them in a single place is the only way this stays
+// true when the next one is added.
+func forgetTerminals(state *hostSync, seen map[string]bool) {
+	for terminalID := range state.dismissed {
+		if !seen[terminalID] {
+			delete(state.dismissed, terminalID)
+		}
+	}
+	for terminalID := range state.abandoned {
+		if !seen[terminalID] {
+			delete(state.abandoned, terminalID)
+		}
+	}
+	for terminalID := range state.retryAt {
+		if !seen[terminalID] {
+			delete(state.retryAt, terminalID)
+		}
+	}
+	for terminalID := range state.failures {
+		if !seen[terminalID] {
+			delete(state.failures, terminalID)
+		}
+	}
+	// Set when a terminal is made on the machine and consumed when its mirror
+	// opens here. A terminal that goes before that happens leaves one behind.
+	for terminalID := range state.pendingPlacement {
+		if !seen[terminalID] {
+			delete(state.pendingPlacement, terminalID)
+		}
+	}
+	for terminalID := range state.pendingFocus {
+		if !seen[terminalID] {
+			delete(state.pendingFocus, terminalID)
+		}
+	}
+}
+
 func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	// A plain SSH host exposes no panes to discover, so there is nothing to add
 	// or retire. Its terminals are still watched, because one whose connection
@@ -1569,24 +1616,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	for _, rp := range remotePanes {
 		seen[rp.TerminalID] = true
 	}
-	for terminalID := range state.dismissed {
-		if !seen[terminalID] {
-			delete(state.dismissed, terminalID)
-		}
-	}
-	// Its own loop: a terminal given up on need not also have been closed by
-	// hand, and iterating only the other set would leave it here for good.
-	for terminalID := range state.abandoned {
-		if !seen[terminalID] {
-			delete(state.abandoned, terminalID)
-		}
-	}
-	for terminalID := range state.retryAt {
-		if !seen[terminalID] {
-			delete(state.retryAt, terminalID)
-			delete(state.failures, terminalID)
-		}
-	}
+	forgetTerminals(state, seen)
 
 	state.strays = d.planStrayCapture(state, index)
 	return nil

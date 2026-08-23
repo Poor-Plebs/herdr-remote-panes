@@ -1970,3 +1970,83 @@ func TestSharedPanesFilterOutEverythingWhenTheSpaceIsWrong(t *testing.T) {
 		t.Errorf("with a space that is gone, kept %+v", gone)
 	}
 }
+
+func TestNothingIsRememberedAboutATerminalThatIsGone(t *testing.T) {
+	// Each of these was cleared where it was most obviously needed, which left
+	// the ones nobody had thought about growing for as long as the daemon ran.
+	// The count of failed attempts was only cleared alongside a pending retry,
+	// and giving up on a terminal deletes the retry first -- so the count that
+	// had just reached the limit stayed for good, one entry per terminal that
+	// ever failed that often.
+	state := &hostSync{
+		dismissed:        map[string]bool{"gone": true, "here": true},
+		abandoned:        map[string]bool{"gone": true, "here": true},
+		failures:         map[string]int{"gone": 5, "here": 2},
+		retryAt:          map[string]time.Time{"gone": time.Now(), "here": time.Now()},
+		pendingPlacement: map[string]string{"gone": "tab", "here": "tab"},
+		pendingFocus:     map[string]bool{"gone": true, "here": true},
+	}
+
+	forgetTerminals(state, map[string]bool{"here": true})
+
+	if _, ok := state.dismissed["gone"]; ok {
+		t.Error("dismissed remembered a terminal that is gone")
+	}
+	if _, ok := state.abandoned["gone"]; ok {
+		t.Error("abandoned remembered a terminal that is gone")
+	}
+	if _, ok := state.failures["gone"]; ok {
+		t.Error("the failure count outlived the terminal it counted")
+	}
+	if _, ok := state.retryAt["gone"]; ok {
+		t.Error("a retry was still scheduled for a terminal that is gone")
+	}
+	if _, ok := state.pendingPlacement["gone"]; ok {
+		t.Error("a placement was still waiting for a terminal that is gone")
+	}
+	if _, ok := state.pendingFocus["gone"]; ok {
+		t.Error("focus was still waiting for a terminal that is gone")
+	}
+
+	// Everything about the terminal that is still there survives.
+	if !state.dismissed["here"] || !state.abandoned["here"] ||
+		state.failures["here"] != 2 || state.pendingPlacement["here"] != "tab" ||
+		!state.pendingFocus["here"] {
+		t.Error("forgetting one terminal disturbed another")
+	}
+	if _, ok := state.retryAt["here"]; !ok {
+		t.Error("the retry for a live terminal was dropped")
+	}
+}
+
+func TestGivingUpDoesNotStrandTheCountThatGaveUp(t *testing.T) {
+	// The specific path: backOff deletes the retry when it gives up, so the
+	// count was never reached by the loop that cleared it alongside one.
+	state := &hostSync{
+		host:      config.Host{Target: "bot"},
+		dismissed: map[string]bool{},
+		abandoned: map[string]bool{},
+		failures:  map[string]int{},
+		retryAt:   map[string]time.Time{},
+	}
+	d := withConfig(&Daemon{}, config.Defaults())
+
+	for i := 0; i < maxMirrorAttempts; i++ {
+		d.backOff(state, "term_1", errors.New("no"))
+	}
+	if !state.abandoned["term_1"] {
+		t.Fatal("it never gave up")
+	}
+	if _, ok := state.retryAt["term_1"]; ok {
+		t.Fatal("a retry is still scheduled for something given up on")
+	}
+	if state.failures["term_1"] == 0 {
+		t.Fatal("the count was not kept while the terminal was alive")
+	}
+
+	// Once the terminal is gone, so is the count.
+	forgetTerminals(state, map[string]bool{})
+	if _, ok := state.failures["term_1"]; ok {
+		t.Error("the count survived the terminal it counted")
+	}
+}
