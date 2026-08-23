@@ -857,11 +857,17 @@ func (d *Daemon) focusHost(target string) {
 		}
 	}
 	if state.workspaceID == "" {
+		// Worth saying rather than returning quietly: this is the whole of what
+		// picking a machine from the menu is supposed to do, and a silent
+		// no-op looks exactly like the feature not existing.
+		log.Printf("focus %s: no space of its own to go to", target)
 		return
 	}
 	if err := herdrcli.FocusWorkspace(state.workspaceID); err != nil {
 		log.Printf("focus %s: %v", target, err)
+		return
 	}
+	log.Printf("%s: focused %s", target, state.workspaceID)
 }
 
 func (d *Daemon) disconnect(target string) error {
