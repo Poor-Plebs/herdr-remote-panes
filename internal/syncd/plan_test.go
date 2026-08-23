@@ -445,22 +445,70 @@ func TestPlanShellNameNeverRepeatsWhatIsOpen(t *testing.T) {
 }
 
 func TestPlanGiveUp(t *testing.T) {
+	// A blip: the sort of failure that can come good by itself, so it is
+	// counted rather than acted on.
+	blip := errors.New("ssh: connect to host bot port 22: Connection refused")
+
 	// A machine that answers is never given up on.
-	if planGiveUp(0) {
+	if planGiveUp(0, nil) {
 		t.Error("a healthy machine should keep being polled")
 	}
 	// One failure can be a blip, so it is tried again.
-	if planGiveUp(1) {
+	if planGiveUp(1, blip) {
 		t.Error("a single failure should be retried")
 	}
-	// Some failures never resolve on their own — a changed host key needs
-	// someone to look at it — and retrying every couple of seconds burns SSH
-	// connections and fills the log.
-	if !planGiveUp(2) {
+	// Retrying every couple of seconds burns SSH connections and fills the log.
+	if !planGiveUp(2, blip) {
 		t.Error("a machine that failed twice should be left alone")
 	}
-	if !planGiveUp(20) {
+	if !planGiveUp(20, blip) {
 		t.Error("a long-failing machine should stay left alone")
+	}
+}
+
+func TestAFailureNeedingAPersonIsNotRetried(t *testing.T) {
+	// The second attempt at a changed host key cannot come out differently: it
+	// fails identically until somebody looks at known_hosts. Paying for it
+	// costs another connection and another fifteen-line banner in the log, and
+	// delays the one line worth reading.
+	settled := []string{
+		"REMOTE HOST IDENTIFICATION HAS CHANGED",
+		"Host key verification failed.",
+		"prod: Permission denied (publickey).",
+		"ssh: Could not resolve hostname prd: Name or service not known",
+		"Received disconnect: Too many authentication failures",
+		"no herdr on the remote host",
+	}
+	for _, message := range settled {
+		err := errors.New(message)
+		if !planGiveUp(0, err) {
+			t.Errorf("%q should not be retried; it needs a person", message)
+		}
+		if summarizeError(err) == "" {
+			t.Errorf("%q should still be named in the listing", message)
+		}
+	}
+
+	// These can come good on their own, and giving up on the first one would
+	// turn a machine still booting into a machine you have to reconnect to.
+	transient := []string{
+		"ssh: connect to host bot port 22: Connection refused",
+		"ssh: connect to host bot port 22: Connection timed out",
+		"ssh: connect to host bot port 22: Network is unreachable",
+		"kex_exchange_identification: Connection closed by remote host",
+		"Connection reset by peer",
+		"ssh: connect to host bot port 22: No route to host",
+	}
+	for _, message := range transient {
+		if planGiveUp(0, errors.New(message)) {
+			t.Errorf("%q should be retried; it can come good on its own", message)
+		}
+	}
+
+	// A failure nobody has classified is retried rather than written off: the
+	// cautious reading of an unknown cause is that it might pass.
+	if planGiveUp(0, errors.New("something nobody has seen before")) {
+		t.Error("an unrecognised failure should get its retries")
 	}
 }
 

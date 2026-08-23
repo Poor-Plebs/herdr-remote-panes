@@ -1251,7 +1251,7 @@ func recordReconcile(state *hostSync, err error) (gaveUp bool) {
 	if err != nil {
 		state.lastErr = err
 		state.failCount++
-		if planGiveUp(state.failCount) && !state.gaveUp {
+		if planGiveUp(state.failCount, err) && !state.gaveUp {
 			state.gaveUp = true
 			return true
 		}
@@ -1318,8 +1318,15 @@ func (d *Daemon) reconcileOnce() {
 				log.Printf("reconcile %s: %s", state.host.Target, summarizeError(err))
 			}
 			if recordReconcile(state, err) {
-				log.Printf("%s: giving up after %d attempts; connect again to retry",
-					state.host.Target, state.failCount)
+				// Saying "connect again to retry" after a changed host key was
+				// advice that could not work: the next attempt fails the same
+				// way until somebody looks at known_hosts.
+				if settledFailure(err) {
+					log.Printf("%s: not retrying — %s", state.host.Target, summarizeError(err))
+				} else {
+					log.Printf("%s: giving up after %d attempts; connect again to retry",
+						state.host.Target, state.failCount)
+				}
 			}
 			d.markWorkspaceState(state, state.lastErr == nil)
 		}(state)
@@ -1539,7 +1546,9 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 			}
 			if planLostPane(mirror.Failed(paneID)) {
 				state.shellFailures++
-				if planGiveUp(state.shellFailures) {
+				// No ssh failure to weigh here -- the terminals are dropping,
+				// not the connection -- so this is the count alone.
+				if planGiveUp(state.shellFailures, nil) {
 					state.gaveUp = true
 					state.lastErr = fmt.Errorf("terminals keep dropping on %s", state.host.Target)
 					log.Printf("%s: giving up after %d dropped terminals; connect again to retry",

@@ -253,13 +253,75 @@ const maxHostAttempts = 2
 
 // planGiveUp says whether to stop trying a machine.
 //
-// Some failures never resolve on their own — a changed host key needs someone
-// to look at it — and retrying those every couple of seconds burns SSH
-// connections, fills the log, and slows every other machine down. After a
-// couple of attempts the machine is left alone until it is connected to again,
-// which is an explicit "try now".
-func planGiveUp(consecutiveFailures int) bool {
+// Retrying a machine every couple of seconds burns SSH connections, fills the
+// log, and slows every other machine down, so after a couple of attempts it is
+// left alone until it is connected to again -- which is an explicit "try now".
+//
+// Some failures do not even earn the second attempt. A changed host key, a name
+// that does not resolve, a key the machine will not take: none of those can
+// come good between one attempt and the next, so the retry is guaranteed to
+// fail in exactly the same way. It is not free either -- an unresolvable name
+// costs another DNS wait, and a changed host key another fifteen-line banner in
+// the log -- and it delays saying the one thing worth saying, which is what to
+// go and fix.
+func planGiveUp(consecutiveFailures int, err error) bool {
+	if settledFailure(err) {
+		return true
+	}
 	return consecutiveFailures >= maxHostAttempts
+}
+
+// settledFailure says whether a failure is one that will not change on its own.
+func settledFailure(err error) bool {
+	known, ok := classify(err)
+	return ok && known.settled
+}
+
+// classify matches a failure against the causes worth naming.
+func classify(err error) (knownFailure, bool) {
+	if err == nil {
+		return knownFailure{}, false
+	}
+	message := err.Error()
+	for _, known := range knownFailures {
+		if strings.Contains(message, known.needle) {
+			return known, true
+		}
+	}
+	return knownFailure{}, false
+}
+
+// knownFailure is a cause of failure worth naming, and whether trying again
+// could ever produce a different answer.
+type knownFailure struct {
+	needle, summary string
+	// settled marks a failure that needs a person, not another attempt.
+	settled bool
+}
+
+// knownFailures is the single list behind both what a failure is called and
+// whether it is worth retrying, so the two cannot drift apart.
+var knownFailures = []knownFailure{
+	{"REMOTE HOST IDENTIFICATION HAS CHANGED", "host key changed — verify it, then update ~/.ssh/known_hosts", true},
+	{"Host key verification failed", "host key not accepted", true},
+	{"Permission denied", "ssh permission denied — check your key", true},
+	{"Connection refused", "connection refused", false},
+	{"Connection timed out", "connection timed out", false},
+	// macOS words the same failure differently, so a timeout there used to
+	// fall through and print the raw ssh line instead.
+	{"Operation timed out", "connection timed out", false},
+	{"Network is unreachable", "no network — check you are online", false},
+	// Checked before the generic closed/reset rules below: the real message
+	// is usually "kex_exchange_identification: Connection closed by remote
+	// host", and the specific cause is the more useful of the two.
+	{"kex_exchange_identification", "the machine dropped the connection before login — it may be busy or rate-limiting", false},
+	{"Connection closed by", "the machine closed the connection", false},
+	{"Connection reset by peer", "the machine reset the connection", false},
+	{"Too many authentication failures", "too many keys offered — set IdentitiesOnly=yes for this host", true},
+	{"Name or service not known", "host name does not resolve", true},
+	{"Could not resolve hostname", "host name does not resolve", true},
+	{"No route to host", "no route to host", false},
+	{"no herdr on the remote host", "herdr not found on the machine", true},
 }
 
 // summarizeError reduces a failure to one line fit for a list.
@@ -274,31 +336,8 @@ func summarizeError(err error) string {
 	}
 	message := err.Error()
 
-	for _, known := range []struct{ needle, summary string }{
-		{"REMOTE HOST IDENTIFICATION HAS CHANGED", "host key changed — verify it, then update ~/.ssh/known_hosts"},
-		{"Host key verification failed", "host key not accepted"},
-		{"Permission denied", "ssh permission denied — check your key"},
-		{"Connection refused", "connection refused"},
-		{"Connection timed out", "connection timed out"},
-		// macOS words the same failure differently, so a timeout there used to
-		// fall through and print the raw ssh line instead.
-		{"Operation timed out", "connection timed out"},
-		{"Network is unreachable", "no network — check you are online"},
-		// Checked before the generic closed/reset rules below: the real message
-		// is usually "kex_exchange_identification: Connection closed by remote
-		// host", and the specific cause is the more useful of the two.
-		{"kex_exchange_identification", "the machine dropped the connection before login — it may be busy or rate-limiting"},
-		{"Connection closed by", "the machine closed the connection"},
-		{"Connection reset by peer", "the machine reset the connection"},
-		{"Too many authentication failures", "too many keys offered — set IdentitiesOnly=yes for this host"},
-		{"Name or service not known", "host name does not resolve"},
-		{"Could not resolve hostname", "host name does not resolve"},
-		{"No route to host", "no route to host"},
-		{"no herdr on the remote host", "herdr not found on the machine"},
-	} {
-		if strings.Contains(message, known.needle) {
-			return known.summary
-		}
+	if known, ok := classify(err); ok {
+		return known.summary
 	}
 
 	// Otherwise the first line, which is where the cause usually is.
