@@ -2230,3 +2230,30 @@ func TestAMachineWithItsOwnNameOwnsItsSpace(t *testing.T) {
 		}
 	}
 }
+
+func TestTheSpaceOnAMachineIsFoundAfterTheFormatChanges(t *testing.T) {
+	// The local lookup ignores the marker so that changing workspace_format
+	// does not orphan the space a machine's panes are already in. The far side
+	// has its own format and its own space, and was matching the name exactly
+	// -- so changing remote_workspace_format would leave the terminals where
+	// they were and quietly make a second space beside them.
+	hub := config.HubName()
+
+	for _, existing := range []string{
+		"☁  " + hub, // what this plugin makes by default
+		"⚠  " + hub, // some other marker
+		hub,         // a format with no marker at all
+	} {
+		if !sameWorkspace(existing, hub) {
+			t.Errorf("a space called %q was not recognised as this machine's", existing)
+		}
+	}
+
+	// Somebody else's space is still somebody else's.
+	if sameWorkspace("☁  someone-else", hub) {
+		t.Errorf("a space named for another machine was claimed")
+	}
+	if sameWorkspace("~", hub) {
+		t.Error("the machine's own local space was claimed")
+	}
+}

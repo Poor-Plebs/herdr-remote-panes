@@ -519,11 +519,18 @@ func (c Config) WorkspaceLabelFor(h Host, reachable bool) string {
 
 // RemoteWorkspaceLabel is the workspace label used on the remote machine.
 func (c Config) RemoteWorkspaceLabel() string {
+	return strings.ReplaceAll(c.RemoteWorkspaceFormat, "{hub}", HubName())
+}
+
+// HubName is what this machine is called in the space it creates on another
+// one. Exposed because finding that space again needs the name without
+// whatever the format puts around it.
+func HubName() string {
 	hub, err := os.Hostname()
 	if err != nil || hub == "" {
 		hub = "herdr"
 	}
-	return strings.ReplaceAll(c.RemoteWorkspaceFormat, "{hub}", hub)
+	return hub
 }
 
 // EffectiveMode is how a machine is actually reached.

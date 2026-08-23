@@ -658,3 +658,21 @@ func TestPerMachineOverridesFallBack(t *testing.T) {
 		t.Errorf("BinFor = %q, want empty so the path is probed", got)
 	}
 }
+
+func TestHubNameAlwaysNamesSomething(t *testing.T) {
+	// It goes into the name of the space this machine creates on another one,
+	// and is what finds that space again afterwards. An empty one would make a
+	// space called nothing, and match every space when looking for it.
+	hub := HubName()
+	if hub == "" {
+		t.Fatal("HubName is empty")
+	}
+	if strings.ContainsAny(hub, " \t\n") {
+		t.Errorf("HubName = %q, want a single word", hub)
+	}
+	// It is what the label is built from.
+	if !strings.Contains(Defaults().RemoteWorkspaceLabel(), hub) {
+		t.Errorf("the remote label %q does not contain the hub name %q",
+			Defaults().RemoteWorkspaceLabel(), hub)
+	}
+}

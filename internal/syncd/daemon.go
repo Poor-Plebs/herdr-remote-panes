@@ -579,9 +579,16 @@ func (d *Daemon) findRemoteWorkspace(state *hostSync) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if id, ok := herdrcli.FindWorkspace(workspaces, label); ok {
-		state.remoteWorkspaceID = id
-		return true, nil
+	// Matched the way the local space is matched, marker and all. Without it,
+	// changing remote_workspace_format orphans the space this plugin's
+	// terminals are already in on that machine and quietly makes a second one
+	// beside it -- which is the reason the local lookup is tolerant, and the
+	// far side is no different.
+	for _, ws := range workspaces {
+		if ws.Label == label || sameWorkspace(ws.Label, config.HubName()) {
+			state.remoteWorkspaceID = ws.WorkspaceID
+			return true, nil
+		}
 	}
 	return false, nil
 }

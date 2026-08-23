@@ -24,14 +24,6 @@ func TestParseWorkspaceList(t *testing.T) {
 	if workspaces[1].Label != "☁  bot" || workspaces[1].PaneCount != 3 {
 		t.Errorf("second workspace = %+v", workspaces[1])
 	}
-
-	// A marker in the label must not stop a machine's space being found.
-	if id, ok := FindWorkspace(workspaces, "☁  bot"); !ok || id != "w2" {
-		t.Errorf("FindWorkspace = %q, %v; want w2, true", id, ok)
-	}
-	if _, ok := FindWorkspace(workspaces, "nope"); ok {
-		t.Error("FindWorkspace found a workspace that is not there")
-	}
 }
 
 func TestParseWorkspaceListEmpty(t *testing.T) {

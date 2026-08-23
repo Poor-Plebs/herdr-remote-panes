@@ -75,13 +75,3 @@ func ParseTabOrder(result json.RawMessage) (map[string]int, error) {
 	}
 	return order, nil
 }
-
-// FindWorkspace returns the id of the workspace with the given label.
-func FindWorkspace(workspaces []Workspace, label string) (string, bool) {
-	for _, ws := range workspaces {
-		if ws.Label == label {
-			return ws.WorkspaceID, true
-		}
-	}
-	return "", false
-}
