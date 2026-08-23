@@ -243,7 +243,12 @@ func collect() ([]Entry, string) {
 func status() ([]syncd.HostInfo, string) {
 	reply, err := syncd.Ask(syncd.Command{Cmd: "status"})
 	if err != nil {
-		return nil, ""
+		// Said here rather than left to be discovered by pressing enter. With
+		// nothing answering, every machine reads "not connected", which is
+		// exactly what a working daemon shows before anything is connected --
+		// so the menu looked ready and nothing in it would work.
+		return nil, "The daemon is not running, so nothing here can be connected to. " +
+			"Check `herdr plugin log list --plugin " + syncd.PluginID + "`."
 	}
 	return reply.Hosts, version.StaleMessage(reply.Revision)
 }

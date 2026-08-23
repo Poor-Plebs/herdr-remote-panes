@@ -484,3 +484,29 @@ func TestBeforeConnectingTheSettingIsAllThereIs(t *testing.T) {
 		t.Errorf("an unreachable machine should still say how it is reached:\n%s", drawn)
 	}
 }
+
+func TestTheMenuSaysWhenNothingIsAnswering(t *testing.T) {
+	// With no daemon, every machine reads "not connected" -- which is exactly
+	// what a working daemon shows before anything has been connected. The menu
+	// looked ready, and nothing in it would work until enter was pressed and
+	// the failure arrived on a screen of its own.
+	warning := "The daemon is not running, so nothing here can be connected to. " +
+		"Check `herdr plugin log list --plugin poorplebs.remote-panes`."
+
+	drawn := visible(strings.Join(lines(machines(3), 0, 76, 24, warning), "\n"))
+
+	if !strings.Contains(drawn, "daemon is not running") {
+		t.Errorf("the menu does not say the daemon is down:\n%s", drawn)
+	}
+	// The machines are still listed: knowing what is configured is useful even
+	// when none of it can be reached.
+	if !strings.Contains(drawn, "machine") {
+		t.Errorf("the machines were dropped along with the daemon:\n%s", drawn)
+	}
+	// And it still fits.
+	for _, line := range lines(machines(3), 0, 76, 24, warning) {
+		if w := text.Width(visible(line)); w > 76 {
+			t.Errorf("a line is %d columns wide: %q", w, visible(line))
+		}
+	}
+}
