@@ -305,6 +305,11 @@ func loadRaw() (Config, error) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse %s: %w", path, err)
 	}
+	// Carried like Load does. Without it, toggling mirroring handed the daemon
+	// a configuration that had forgotten which of its settings mean nothing,
+	// and the warning about them vanished until Herdr was restarted -- with the
+	// file unchanged and still wrong.
+	cfg.unknown = unknownKeys(raw)
 	return cfg, nil
 }
 

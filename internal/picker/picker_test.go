@@ -208,3 +208,46 @@ func TestParseKeyReadsDisconnect(t *testing.T) {
 		seen[k] = name
 	}
 }
+
+func TestCollectHidesADisabledMachine(t *testing.T) {
+	// "disabled" is meant to skip a machine without removing it. The menu
+	// skipped it while reading the plugin config and then swept ~/.ssh/config,
+	// which is where such a machine came from -- so it came straight back,
+	// stripped of its label and mode, looking like one that had never been
+	// configured at all.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"),
+		[]byte("Host bot\nHost retired\nHost prod\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgDir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", cfgDir)
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(
+		`{"hosts":[{"target":"bot"},{"target":"retired","disabled":true}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, _ := collect()
+	for _, e := range entries {
+		if e.Target == "retired" {
+			t.Errorf("a disabled machine is still offered: %+v", e)
+		}
+	}
+
+	// The others are all still there, including the one only ~/.ssh/config
+	// knows about, so this hides one machine rather than a category of them.
+	found := map[string]bool{}
+	for _, e := range entries {
+		found[e.Target] = true
+	}
+	for _, want := range []string{"bot", "prod"} {
+		if !found[want] {
+			t.Errorf("%q went missing: %+v", want, entries)
+		}
+	}
+}

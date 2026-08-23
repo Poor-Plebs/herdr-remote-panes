@@ -175,6 +175,17 @@ func collect() ([]Entry, string) {
 		return entry
 	}
 
+	// Machines turned off in the config, so the sweep of ~/.ssh/config below
+	// does not put them back. Almost every disabled machine is in that file --
+	// it is where it came from -- so without this "disabled" only stripped a
+	// machine of its settings and left it in the list looking unconfigured.
+	disabled := map[string]bool{}
+	for _, host := range cfg.Hosts {
+		if host.Disabled {
+			disabled[host.Target] = true
+		}
+	}
+
 	for _, host := range cfg.Hosts {
 		if host.Disabled {
 			continue
@@ -187,7 +198,7 @@ func collect() ([]Entry, string) {
 	for _, host := range sshconfig.Hosts() {
 		// An alias ssh would read as an option is not a machine anyone can
 		// connect to, so offering it would only produce a refusal later.
-		if config.ValidTarget(host) != nil {
+		if config.ValidTarget(host) != nil || disabled[host] {
 			continue
 		}
 		add(host)

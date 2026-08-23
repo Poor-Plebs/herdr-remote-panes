@@ -475,3 +475,33 @@ func TestSetHostModeWithNoFileYet(t *testing.T) {
 		t.Errorf("the file written is not readable: %v", err)
 	}
 }
+
+func TestUnknownSettingsSurviveAToggle(t *testing.T) {
+	// Toggling mirroring hands the daemon a fresh configuration to run on, and
+	// that one is built from the file directly rather than through Load. It
+	// missed the list of settings that mean nothing, so pressing m made the
+	// warning about them disappear until Herdr was restarted -- with the file
+	// unchanged and still wrong.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	raw := `{"wokspace_format": "x", "hosts": [{"target": "bot"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(loaded.Problems(), "\n"), "wokspace_format") {
+		t.Fatal("Load did not report the unknown setting")
+	}
+
+	toggled, err := SetHostMode("bot", ModeAttach)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(toggled.Problems(), "\n"), "wokspace_format") {
+		t.Errorf("after a toggle the unknown setting is no longer reported: %v", toggled.Problems())
+	}
+}
