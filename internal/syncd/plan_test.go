@@ -2480,3 +2480,30 @@ Host key verification failed.`
 		}
 	})
 }
+
+func TestALocalFailureIsNotMistakenForAnSSHOne(t *testing.T) {
+	// The classifier matches ssh's own wording, and reconcile errors are not
+	// all from ssh -- a call to the local Herdr can fail too. Writing a machine
+	// off for good over a local hiccup would be the worst kind of wrong answer,
+	// since the cause is not on that machine at all and nothing on it can be
+	// fixed to clear it.
+	//
+	// What keeps the two apart is that ssh capitalises and Go's syscall errors
+	// do not. That is a thin distinction to be relying on, so it is pinned here
+	// rather than left to be discovered.
+	local := []string{
+		"dial unix /run/herdr.sock: connect: permission denied",
+		"open /home/u/.config/herdr/plugins/p/config.json: permission denied",
+		"herdr pane list: fork/exec /usr/bin/herdr: permission denied",
+	}
+	for _, message := range local {
+		if planGiveUp(0, errors.New(message)) {
+			t.Errorf("%q stopped the machine for good; it is not an ssh refusal", message)
+		}
+	}
+
+	// The ssh one, which does need a person, still does.
+	if !planGiveUp(0, errors.New("bot: Permission denied (publickey).")) {
+		t.Error("ssh refusing a key should still stop the machine")
+	}
+}

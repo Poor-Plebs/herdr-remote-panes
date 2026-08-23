@@ -257,10 +257,17 @@ else are reported when the daemon starts, in `status`, and in the menu:
 config: mode "shh" is not one of ssh, attach or observe; machines default to a plain SSH terminal
 ```
 
-**A machine says `unreachable, not retrying`.** Two failed attempts and it
-stops, rather than reconnecting forever in the background. Fix the cause, then
-pick it from the menu again to retry. The most common cause is a changed host
-key:
+**A machine says `unreachable, not retrying`.** It stops rather than
+reconnecting forever in the background. Fix the cause, then pick it from the
+menu again to retry.
+
+How soon it stops depends on the cause. A failure that could pass on its own —
+refused, timed out, no route, a machine still booting — gets a second attempt.
+One that needs you gets none, because the second attempt would fail in exactly
+the same way: a changed host key, a name that does not resolve, a key the
+machine will not take. Those stop at once and say what to go and fix.
+
+The most common of them is a changed host key:
 
 ```
 REMOTE HOST IDENTIFICATION HAS CHANGED
