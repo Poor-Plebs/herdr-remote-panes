@@ -1,7 +1,11 @@
 package mirror
 
 import (
+	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -90,5 +94,71 @@ func TestFirstNonEmpty(t *testing.T) {
 	}
 	if got := firstNonEmpty("", "", ""); got != "" {
 		t.Errorf("firstNonEmpty = %q, want nothing", got)
+	}
+}
+
+func TestFailureLogIsRolledOverRatherThanGrowingForever(t *testing.T) {
+	// Every failed pane appended to this and nothing ever shortened it, so it
+	// grew for as long as the plugin was installed -- slowly, but with no end
+	// to it, in a directory nobody thinks to look in.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mirror.log")
+
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), maxLogBytes), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	appendToLog(path, "the newest failure")
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() >= maxLogBytes {
+		t.Errorf("the log is still %d bytes; it was not rolled over", info.Size())
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "the newest failure") {
+		t.Error("the message that triggered the rollover was lost")
+	}
+
+	// One generation is kept: the failure that began a run of them is worth
+	// not losing outright.
+	if _, err := os.Stat(path + ".1"); err != nil {
+		t.Errorf("the previous log was not kept: %v", err)
+	}
+
+	// A second rollover replaces that generation rather than accumulating.
+	if err := os.WriteFile(path, bytes.Repeat([]byte("y"), maxLogBytes), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	appendToLog(path, "later still")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("directory holds %v, want the log and one generation", names)
+	}
+}
+
+func TestFailureLogIsCreatedPrivate(t *testing.T) {
+	// It records which machines were being reached and why it failed.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mirror.log")
+	appendToLog(path, "could not reach bot")
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("permissions are %o, want 600", perm)
 	}
 }

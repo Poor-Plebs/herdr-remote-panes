@@ -624,6 +624,11 @@ func (d *Daemon) openShellPane(state *hostSync) error {
 	}
 
 	name := planShellName(d.liveTerminalCount(state.host.Target))
+	// The name the pane will carry, worked out once. A mirrored pane is told
+	// its full label; a plain SSH pane used to be told only the bare part, so
+	// when one failed it announced itself as "shell" with no mention of which
+	// machine had gone -- ninety-five such lines in the log on this machine.
+	label := d.label(state.host, herdrcli.Pane{}, name)
 
 	shellTarget := planPaneTarget(d.config().PlacementFor(state.host), workspaceID, index.anyInWorkspace[workspaceID])
 	opts := herdrcli.OpenOptions{
@@ -635,7 +640,7 @@ func (d *Daemon) openShellPane(state *hostSync) error {
 		Env: map[string]string{
 			mirror.EnvTarget: state.host.Target,
 			mirror.EnvMode:   string(config.ModeSSH),
-			mirror.EnvName:   name,
+			mirror.EnvName:   label,
 		},
 	}
 	pane, err := herdrcli.OpenPane(opts)
@@ -646,7 +651,7 @@ func (d *Daemon) openShellPane(state *hostSync) error {
 	d.mu.Lock()
 	state.shellPanes[pane.PaneID] = true
 	d.mu.Unlock()
-	d.retitle(state, pane.PaneID, d.label(state.host, herdrcli.Pane{}, name))
+	d.retitle(state, pane.PaneID, label)
 	d.retireRootPane(workspaceID, index)
 	return nil
 }

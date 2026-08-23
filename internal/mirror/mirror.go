@@ -123,11 +123,7 @@ func reportFailure(err error) {
 	}
 
 	if dir := os.Getenv("HERDR_PLUGIN_STATE_DIR"); dir != "" {
-		if f, ferr := os.OpenFile(filepath.Join(dir, "mirror.log"),
-			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); ferr == nil {
-			fmt.Fprintf(f, "%s %s\n", time.Now().Format(time.RFC3339), message)
-			f.Close()
-		}
+		appendToLog(filepath.Join(dir, "mirror.log"), message)
 	}
 
 	// Hold the pane open long enough for the message to be read.
@@ -400,6 +396,30 @@ func sttyOutput(args ...string) ([]byte, error) {
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = nil
 	return cmd.Output()
+}
+
+// maxLogBytes is how large the failure log may grow before it is rolled over.
+// One generation is kept, so the space used is bounded at twice this.
+const maxLogBytes = 256 * 1024
+
+// appendToLog records a failure, rolling the file over when it gets large.
+//
+// Nothing trimmed this. Every failed pane appended to it and it was never read
+// by anything that shortened it, so it grew for as long as the plugin was
+// installed -- slowly, but with no end to it, in a directory nobody thinks to
+// look in.
+func appendToLog(path, message string) {
+	if info, err := os.Stat(path); err == nil && info.Size() >= maxLogBytes {
+		// Keep one generation: the failures worth reading are the recent ones,
+		// but the one that started a run of them is worth not losing outright.
+		_ = os.Rename(path, path+".1")
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s %s\n", time.Now().Format(time.RFC3339), message)
 }
 
 // firstNonEmpty returns the first value that is not empty.

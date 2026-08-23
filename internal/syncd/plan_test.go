@@ -1475,3 +1475,23 @@ func testSocket(t *testing.T) string {
 	t.Cleanup(func() { _ = os.Remove(socket) })
 	return socket
 }
+
+func TestAPlainSSHPaneIsNamedAfterItsMachine(t *testing.T) {
+	// When one of these fails it announces itself by the name it was given.
+	// A mirrored pane is told its full label; a plain SSH pane was told only
+	// the bare part, so a failure read as "shell: exit status 255" with no
+	// mention of which machine had gone -- ninety-five such lines in one log.
+	d := withConfig(&Daemon{}, config.Defaults())
+
+	for _, count := range []int{0, 1, 5} {
+		name := planShellName(count)
+		label := d.label(config.Host{Target: "bot"}, herdrcli.Pane{}, name)
+
+		if !strings.Contains(label, "bot") {
+			t.Errorf("label %q does not say which machine it is", label)
+		}
+		if !strings.Contains(label, "shell") {
+			t.Errorf("label %q lost the name", label)
+		}
+	}
+}
