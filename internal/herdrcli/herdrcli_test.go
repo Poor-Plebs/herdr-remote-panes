@@ -370,3 +370,41 @@ func TestIsNotFound(t *testing.T) {
 		t.Error("an unrelated error should not be read as a thing that is gone")
 	}
 }
+
+func TestRunErrorKeepsTheCodeHerdrGave(t *testing.T) {
+	// Herdr signals a refusal by exiting non-zero and printing the error
+	// envelope. Returning the exit status alone threw the code away -- which is
+	// the part a caller can act on -- so IsNotFound could never be true for a
+	// real failure, only for output decoded directly.
+	envelope := []byte(`{"error":{"code":"workspace_not_found","message":"workspace w2Y not found"},"id":"cli:workspace:rename"}`)
+	exit := errors.New("exit status 1")
+
+	// Herdr prints it to stderr.
+	err := runError(exit, []string{"workspace", "rename", "w2Y"}, envelope, nil)
+	if !IsNotFound(err) {
+		t.Errorf("%v does not carry the code", err)
+	}
+
+	// And to stdout in some versions, so both are looked at.
+	err = runError(exit, []string{"workspace", "rename", "w2Y"}, nil, envelope)
+	if !IsNotFound(err) {
+		t.Errorf("%v does not carry the code when it is on stdout", err)
+	}
+
+	// A failure with no envelope still says what happened.
+	err = runError(exit, []string{"pane", "list"}, []byte("command not found"), nil)
+	if IsNotFound(err) {
+		t.Errorf("%v should not be read as a thing that is gone", err)
+	}
+	for _, want := range []string{"pane list", "exit status 1", "command not found"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should contain %q", err, want)
+		}
+	}
+
+	// Nothing printed at all: the exit status is all there is.
+	err = runError(exit, []string{"pane", "list"}, nil, nil)
+	if !strings.Contains(err.Error(), "exit status 1") {
+		t.Errorf("error %q should still name the failure", err)
+	}
+}
