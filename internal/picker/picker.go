@@ -14,6 +14,7 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/sshconfig"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/version"
 )
 
 // Entry is one machine offered in the menu.
@@ -48,13 +49,11 @@ type SetMode func(target, mode string) (string, error)
 // the user chooses or cancels; the pane closes as soon as it returns.
 func Run(connect Connect, setMode SetMode) error {
 	entries, warning := collect()
-	if warning != "" {
-		// A machine silently missing from the menu is worse than an ugly menu:
-		// it looks like the plugin forgot it.
-		fmt.Printf("\r\n  %s\r\n\r\n  Press any key.\r\n", warning)
-		waitForKey()
-	}
 	if len(entries) == 0 {
+		// With no menu to put it in, a warning still has to be said somewhere.
+		if warning != "" {
+			fmt.Printf("\r\n  %s\r\n", warning)
+		}
 		fmt.Print("\r\nNo machines found.\r\n\r\nAdd hosts to ~/.ssh/config or to the plugin's config.json.\r\n")
 		waitForKey()
 		return nil
@@ -65,7 +64,7 @@ func Run(connect Connect, setMode SetMode) error {
 
 	selected := 0
 	for {
-		draw(entries, selected)
+		draw(entries, selected, warning)
 
 		key := readKey()
 		switch key {
@@ -99,7 +98,7 @@ func Run(connect Connect, setMode SetMode) error {
 				fmt.Printf("\r\n  Could not change %s: %v\r\n\r\n  Press any key.\r\n", entry.Target, err)
 				readKey()
 			}
-			entries, _ = collect()
+			entries, warning = collect()
 			if selected >= len(entries) {
 				selected = 0
 			}
@@ -167,7 +166,17 @@ func collect() ([]Entry, string) {
 		add(host)
 	}
 
-	for _, info := range status() {
+	hosts, stale := status()
+	if stale != "" {
+		// Worth saying where machines are picked: an update that has not taken
+		// effect looks exactly like a fix that did not work.
+		if warning == "" {
+			warning = stale
+		} else {
+			warning += " · " + stale
+		}
+	}
+	for _, info := range hosts {
 		if entry, ok := byTarget[info.Target]; ok {
 			entry.Connected = info.Connected
 			entry.Mirrors = info.Mirrors
@@ -191,12 +200,14 @@ func collect() ([]Entry, string) {
 
 // status asks the daemon what it is currently mirroring. A daemon that is not
 // running is not an error here: every machine simply shows as unconnected.
-func status() []syncd.HostInfo {
+// status reports the machines the daemon is tracking, and anything about the
+// daemon itself worth putting in front of someone opening the menu.
+func status() ([]syncd.HostInfo, string) {
 	reply, err := syncd.Ask(syncd.Command{Cmd: "status"})
 	if err != nil {
-		return nil
+		return nil, ""
 	}
-	return reply.Hosts
+	return reply.Hosts, version.StaleMessage(reply.Revision)
 }
 
 const (
@@ -259,39 +270,44 @@ func nameWidth(cols int) int {
 // lines than fit scrolls the top away — taking the first machine, and the
 // heading, with it. So the list is windowed rather than assumed to fit.
 // layout is what fits in a popup of a given height: which slice of the machines
-// to draw, and whether there is room for the range counter and the key hints.
+// to draw, and which of the surrounding lines there is room for.
 type layout struct {
 	first, last int
 	counter     bool
 	hints       bool
+	warning     bool
 }
 
 // planLayout decides the whole frame in one place. It used to be split between
 // a row budget here and the drawing itself, and the two drifted: the budget did
 // not know about the "showing x-y of z" line, so once the list scrolled the
 // menu was a line taller than the popup and the heading scrolled away.
-func planLayout(count, selected, rows int) layout {
+//
+// When everything will not fit, the key hints go first and the warning second.
+// The machines are what the menu is for, and a warning is worth more than a
+// reminder of which keys move the selection.
+func planLayout(count, selected, rows int, warn bool) layout {
 	if rows < 1 {
 		rows = 1
 	}
 	// The heading and the blank line under it are always drawn.
 	const heading = 2
 
-	// Try to keep the key hints, which cost a blank separator and two lines.
-	// In a popup too short to hold them and a machine as well, the machines are
-	// the point and the hints are dropped. The counter is decided in the same
-	// place, because it is the line that costs a row only once the list
-	// scrolls -- exactly the case the old budget missed.
-	for _, hints := range []bool{true, false} {
+	for _, opt := range []struct{ hints, warning bool }{
+		{true, warn}, {false, warn}, {false, false},
+	} {
 		chrome := heading
-		if hints {
-			chrome += 3
+		if opt.hints {
+			chrome += 3 // a blank separator and two lines of hints
+		}
+		if opt.warning {
+			chrome += 2 // the warning and the blank line under it
 		}
 
 		if visible := rows - chrome; visible >= 1 && visible >= count {
-			return layout{first: 0, last: count, hints: hints}
+			return layout{first: 0, last: count, hints: opt.hints, warning: opt.warning}
 		}
-		visible := rows - chrome - 1
+		visible := rows - chrome - 1 // the range counter needs a row too
 		if visible < 1 {
 			continue
 		}
@@ -306,7 +322,10 @@ func planLayout(count, selected, rows int) layout {
 		if first < 0 {
 			first = 0
 		}
-		return layout{first: first, last: first + visible, counter: true, hints: hints}
+		return layout{
+			first: first, last: first + visible,
+			counter: true, hints: opt.hints, warning: opt.warning,
+		}
 	}
 
 	// Nothing fits properly; show the selected machine and nothing else.
@@ -316,21 +335,28 @@ func planLayout(count, selected, rows int) layout {
 	return layout{first: selected, last: selected + 1}
 }
 
-func draw(entries []Entry, selected int) {
+func draw(entries []Entry, selected int, warning string) {
 	cols, rows := windowSize()
-	fmt.Print(render(entries, selected, cols, rows))
+	fmt.Print(render(entries, selected, cols, rows, warning))
 }
 
 // render draws the menu into a string. Keeping it separate from the terminal it
 // is printed to is what makes the layout checkable: alignment, truncation and
 // the wide characters in a host name are otherwise only ever seen by eye.
-func render(entries []Entry, selected, cols, rows int) string {
-	frame := planLayout(len(entries), selected, rows)
+func render(entries []Entry, selected, cols, rows int, warning string) string {
+	warning = text.Sanitize(warning)
+	frame := planLayout(len(entries), selected, rows, warning != "")
 	first, last := frame.first, frame.last
 
 	var b strings.Builder
 	b.WriteString(esc + "[2J" + esc + "[H")
 	b.WriteString("  " + bold + "Connect to a machine" + reset + "\r\n\r\n")
+	if frame.warning {
+		// Shown in the menu rather than on a screen that has to be dismissed
+		// first: a problem worth mentioning every time is not worth
+		// interrupting every time.
+		b.WriteString("  " + yellow + text.Truncate(warning, cols-4) + reset + "\r\n\r\n")
+	}
 
 	for i := first; i < last; i++ {
 		entry := entries[i]

@@ -24,8 +24,12 @@ func visible(s string) string {
 	return b.String()
 }
 
-func lines(entries []Entry, selected, cols, rows int) []string {
-	out := render(entries, selected, cols, rows)
+func lines(entries []Entry, selected, cols, rows int, warning ...string) []string {
+	warn := ""
+	if len(warning) > 0 {
+		warn = warning[0]
+	}
+	out := render(entries, selected, cols, rows, warn)
 	out = strings.ReplaceAll(out, esc+"[2J"+esc+"[H", "")
 	return strings.Split(out, "\r\n")
 }
@@ -122,7 +126,59 @@ func TestMenuSurvivesAnAbsurdlySmallPopup(t *testing.T) {
 					t.Errorf("cols=%d rows=%d panicked: %v", size[0], size[1], r)
 				}
 			}()
-			_ = render(machines(10), 5, size[0], size[1])
+			_ = render(machines(10), 5, size[0], size[1], "")
 		}()
+	}
+}
+
+func TestMenuShowsAWarningWithoutStealingTheScreen(t *testing.T) {
+	// A config problem used to be shown on its own screen that had to be
+	// dismissed before the menu appeared. A problem worth mentioning every time
+	// the menu opens is not worth interrupting every time the menu opens.
+	warning := "Check the plugin config: mode \"shh\" is not one of ssh, attach or observe"
+	drawn := lines(machines(4), 0, 72, 24, warning)
+
+	joined := strings.Join(drawn, "\n")
+	if !strings.Contains(joined, "shh") {
+		t.Error("the warning is not in the menu")
+	}
+	if !strings.Contains(joined, "Connect to a machine") {
+		t.Error("the menu itself is missing")
+	}
+	if !strings.Contains(joined, "machine") {
+		t.Error("the machines are missing")
+	}
+}
+
+func TestAWarningStillFitsThePopup(t *testing.T) {
+	// The warning costs rows like anything else, and a long one must not push
+	// the frame past the bottom of the popup.
+	long := strings.Repeat("a very long configuration problem; ", 20)
+	for _, rows := range []int{4, 6, 8, 12, 24} {
+		for _, count := range []int{0, 1, 20} {
+			got := len(lines(machines(count), 0, 72, rows, long))
+			if got > rows {
+				t.Errorf("rows=%d count=%d drew %d lines with a warning, one popup holds %d",
+					rows, count, got, rows)
+			}
+		}
+	}
+}
+
+func TestAWarningIsCutToTheWidth(t *testing.T) {
+	long := strings.Repeat("problem ", 40)
+	for _, line := range lines(machines(3), 0, 60, 24, long) {
+		if w := text.Width(visible(line)); w > 60 {
+			t.Errorf("a line is %d columns wide in a %d column popup: %q", w, 60, visible(line))
+		}
+	}
+}
+
+func TestAWarningIsMadeSafeToDraw(t *testing.T) {
+	// The warning can quote a value straight from the config file, which is
+	// edited by hand and can hold anything at all.
+	drawn := strings.Join(lines(machines(2), 0, 72, 24, "mode \x1b[31m\"bad\"\x1b[0m is\nunknown"), "\n")
+	if strings.Contains(drawn, "\x1b[31m") {
+		t.Error("an escape from the config reached the screen")
 	}
 }

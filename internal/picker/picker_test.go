@@ -117,7 +117,7 @@ func TestPlanLayout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			frame := planLayout(tt.count, tt.selected, tt.rows)
+			frame := planLayout(tt.count, tt.selected, tt.rows, false)
 			first, last := frame.first, frame.last
 			if first != tt.wantFirst || last != tt.wantLast {
 				t.Errorf("planLayout(%d, %d, %d) = %d..%d, want %d..%d",

@@ -49,3 +49,23 @@ func Short() string {
 	})
 	return revision
 }
+
+// StaleMessage describes a daemon running a different build from the installed
+// one, or "" when there is nothing worth saying.
+//
+// Installing an update replaces the files but leaves the running daemon alone,
+// so its fixes do nothing until Herdr restarts. A binary built outside a
+// checkout has no revision to compare and stays quiet rather than warning every
+// time and teaching people to ignore it.
+func StaleMessage(running string) string {
+	installed := Short()
+	if installed == "" || installed == "unknown" || running == installed {
+		return ""
+	}
+	if running == "" {
+		// A daemon old enough not to report its build at all.
+		running = "an older build"
+	}
+	return "the running daemon is " + running + " but " + installed +
+		" is installed; restart Herdr to pick up the update"
+}
