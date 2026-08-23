@@ -311,6 +311,16 @@ rather than a picture of one: what you type goes to the process on the machine.
 
 Requires Herdr 0.8.0+ and Go 1.25+, on Linux or macOS.
 
+## Working on it
+
+```bash
+make check
+```
+
+That is exactly what CI runs — formatting, vet, staticcheck, the tests with the
+race detector in a shuffled order, and the build — and the workflow runs the
+same targets, so the two cannot drift apart.
+
 ## Trust
 
 This runs with your privileges and connects by SSH to machines you name. Read

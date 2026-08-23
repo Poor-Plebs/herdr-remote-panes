@@ -27,34 +27,23 @@ jobs:
           # The floor itself is checked by the job below.
           go-version: stable
 
+      # Each step is a Makefile target, so what runs here and what runs on
+      # somebody's machine cannot drift apart -- and "make check" is the whole
+      # of it. Kept as separate steps so a failure says which part failed.
       - name: gofmt
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "These files need gofmt:"
-            echo "$unformatted"
-            exit 1
-          fi
+        run: make fmt
 
       - name: Vet
-        run: go vet ./...
+        run: make vet
 
-      # Pinned rather than latest: a new release adding a check would fail a
-      # commit that has nothing to do with it, on a repository nobody is
-      # watching at the time.
       - name: Staticcheck
-        run: |
-          go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
-          "$(go env GOPATH)/bin/staticcheck" ./...
+        run: make lint
 
-      # Shuffled so a test that only passes because of the order it runs in is
-      # caught here rather than becoming something everyone works around. The
-      # seed is printed on failure, so a shuffle-only failure can be repeated.
       - name: Test
-        run: go test -race -shuffle=on ./...
+        run: make test
 
       - name: Build
-        run: go build -trimpath -o bin/herdr-remote-panes .
+        run: make build
 
   # go.mod advertises Go 1.25, and Herdr builds this plugin from source on the
   # machine it is installed on -- so a call to something added to the standard
@@ -79,7 +68,4 @@ jobs:
           go-version: "1.25"
 
       - name: Build, vet and test on the floor
-        run: |
-          go build ./...
-          go vet ./...
-          go test -race -shuffle=on ./...
+        run: make vet test build
