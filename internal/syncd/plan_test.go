@@ -1395,8 +1395,7 @@ func TestControlSocketIsPrivateToItsOwner(t *testing.T) {
 	// could reach it -- but that is a property of the umask rather than of this
 	// code, and what the socket accepts is instructions to open SSH connections
 	// to other machines.
-	dir := t.TempDir()
-	socket := filepath.Join(dir, "control-test.sock")
+	socket := testSocket(t)
 
 	listener, err := listenControl(socket)
 	if err != nil {
@@ -1416,8 +1415,7 @@ func TestControlSocketIsPrivateToItsOwner(t *testing.T) {
 func TestListenControlClearsASocketLeftBehind(t *testing.T) {
 	// A daemon killed rather than stopped leaves the file there, and binding
 	// over it fails. The next one has to be able to take it.
-	dir := t.TempDir()
-	socket := filepath.Join(dir, "control-test.sock")
+	socket := testSocket(t)
 
 	first, err := listenControl(socket)
 	if err != nil {
@@ -1454,8 +1452,7 @@ func TestListenControlClearsASocketLeftBehind(t *testing.T) {
 
 func TestListenControlRefusesToStealALiveSocket(t *testing.T) {
 	// Two daemons on one socket would each answer half the commands.
-	dir := t.TempDir()
-	socket := filepath.Join(dir, "control-test.sock")
+	socket := testSocket(t)
 
 	first, err := listenControl(socket)
 	if err != nil {
@@ -1466,4 +1463,15 @@ func TestListenControlRefusesToStealALiveSocket(t *testing.T) {
 	if _, err := listenControl(socket); err == nil {
 		t.Error("a second daemon took a socket that was already being served")
 	}
+}
+
+// testSocket places a control socket the way the daemon does. A Unix socket
+// path is bounded by the sockaddr struct, and a macOS temp directory is nearly
+// at that limit on its own -- binding a path under one directly fails with
+// "invalid argument", which is the very thing socketPathFor exists to avoid.
+func testSocket(t *testing.T) string {
+	t.Helper()
+	socket := socketPathFor(t.TempDir(), "test", os.TempDir())
+	t.Cleanup(func() { _ = os.Remove(socket) })
+	return socket
 }
