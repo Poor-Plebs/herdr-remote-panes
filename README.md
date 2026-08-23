@@ -223,8 +223,13 @@ All optional, in `$(herdr plugin config-dir poorplebs.remote-panes)/config.json`
 
 ## When something looks wrong
 
-**A machine's space is empty or missing.** With mirroring on, it usually means
-the machine has nothing running:
+**A machine's space is missing.** You closed its terminals, and a space with
+nothing in it does not exist. The machine is still connected — the menu says so
+— and `enter` on it opens a terminal again.
+
+**A machine's space is empty while mirroring.** That usually means the machine
+has nothing running, since mirroring shows what is there rather than opening
+anything:
 
 ```bash
 ssh workbox 'herdr pane list'
