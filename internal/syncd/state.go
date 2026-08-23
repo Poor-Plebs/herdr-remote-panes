@@ -181,11 +181,22 @@ func loadSnapshot() snapshot {
 // saveSnapshot writes the bookkeeping, replacing the file atomically so a
 // crash mid-write cannot leave a truncated snapshot behind.
 func saveSnapshot(s snapshot) error {
-	path, err := snapshotPath()
+	raw, err := marshalSnapshot(s)
 	if err != nil {
 		return err
 	}
-	raw, err := json.MarshalIndent(s, "", "  ")
+	return writeSnapshot(raw)
+}
+
+// marshalSnapshot renders a snapshot. Map keys are sorted by encoding/json, so
+// the same state always renders to the same bytes and can be compared with what
+// was last written.
+func marshalSnapshot(s snapshot) ([]byte, error) {
+	return json.MarshalIndent(s, "", "  ")
+}
+
+func writeSnapshot(raw []byte) error {
+	path, err := snapshotPath()
 	if err != nil {
 		return err
 	}

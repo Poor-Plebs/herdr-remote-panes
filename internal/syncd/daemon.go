@@ -3,6 +3,7 @@
 package syncd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,6 +52,10 @@ type Daemon struct {
 	// snapshot is the bookkeeping left by a previous daemon, consulted when a
 	// host connects so its panes are adopted rather than reopened.
 	snapshot snapshot
+
+	// lastSaved is the snapshot as it was last written to disk, so one that has
+	// not changed is not written again.
+	lastSaved []byte
 
 	// markedWorkspaces avoids re-reporting the same workspace metadata.
 	markedWorkspaces map[string]string
@@ -696,10 +701,7 @@ func (d *Daemon) connect(host config.Host) error {
 			shellPanes:       map[string]bool{},
 		}
 		if saved, ok := d.snapshot.Hosts[host.Target]; ok {
-			for terminalID, paneID := range saved.Mirrors {
-				state.mirrors[terminalID] = paneID
-			}
-			state.restoreShells = saved.Shells
+			restoreFromSnapshot(state, saved)
 		}
 		d.hosts[host.Target] = state
 	}
@@ -710,6 +712,21 @@ func (d *Daemon) connect(host config.Host) error {
 	state.shellFailures = 0
 	state.gaveUp = false
 	return connectErr
+}
+
+// restoreFromSnapshot carries a machine's bookkeeping across a restart.
+//
+// Terminals closed by hand were written to the snapshot and then never read
+// back, so a restart forgot them and mirrored them again -- reopening, on the
+// machine's next reconcile, exactly the terminals someone had shut.
+func restoreFromSnapshot(state *hostSync, saved hostSnapshot) {
+	for terminalID, paneID := range saved.Mirrors {
+		state.mirrors[terminalID] = paneID
+	}
+	for _, terminalID := range saved.Dismissed {
+		state.dismissed[terminalID] = true
+	}
+	state.restoreShells = saved.Shells
 }
 
 // prepareRemote makes sure the host has a Herdr session answering, starting one
@@ -1054,9 +1071,24 @@ func (d *Daemon) persist() {
 		}
 	}
 	d.snapshot = current
+
+	// Reconciling happens every couple of seconds whether anything changed or
+	// not, and this used to write the file every time: the same bytes, tens of
+	// thousands of times a day, keeping a laptop's disk awake for nothing.
+	raw, err := marshalSnapshot(current)
+	if err != nil {
+		d.mu.Unlock()
+		log.Printf("save mirror state: %v", err)
+		return
+	}
+	if bytes.Equal(raw, d.lastSaved) {
+		d.mu.Unlock()
+		return
+	}
+	d.lastSaved = raw
 	d.mu.Unlock()
 
-	if err := saveSnapshot(current); err != nil {
+	if err := writeSnapshot(raw); err != nil {
 		log.Printf("save mirror state: %v", err)
 	}
 }

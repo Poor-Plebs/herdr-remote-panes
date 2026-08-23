@@ -1139,3 +1139,91 @@ func TestPaneTargetNeverCarriesBothKindsOfTarget(t *testing.T) {
 		}
 	}
 }
+
+func TestSnapshotIsOnlyWrittenWhenItChanges(t *testing.T) {
+	// Reconciling happens every couple of seconds whether anything changed or
+	// not, and persist used to write the file every time: the same bytes, tens
+	// of thousands of times a day, keeping a laptop's disk awake for nothing.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("HERDR_SESSION", "default")
+
+	d := withConfig(&Daemon{hosts: map[string]*hostSync{
+		"bot": {
+			host:       config.Host{Target: "bot"},
+			mirrors:    map[string]string{"term_1": "w1:p1"},
+			dismissed:  map[string]bool{},
+			shellPanes: map[string]bool{"w1:p2": true},
+		},
+	}}, config.Defaults())
+
+	d.persist()
+	path, err := snapshotPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("nothing was written: %v", err)
+	}
+
+	// Nothing changed, so nothing should be written.
+	d.persist()
+	d.persist()
+	again, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !again.ModTime().Equal(first.ModTime()) {
+		t.Error("an unchanged snapshot was written again")
+	}
+
+	// Something changed, so it must be written.
+	d.mu.Lock()
+	d.hosts["bot"].mirrors["term_2"] = "w1:p3"
+	d.mu.Unlock()
+	d.persist()
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "term_2") {
+		t.Errorf("a changed snapshot was not written: %s", raw)
+	}
+}
+
+func TestDismissedTerminalsSurviveARestart(t *testing.T) {
+	// A terminal closed by hand was written to the snapshot and then never read
+	// back, so a restart forgot it and mirrored it again -- reopening, on the
+	// machine's next reconcile, exactly the terminal someone had shut.
+	d := withConfig(&Daemon{
+		hosts: map[string]*hostSync{},
+		snapshot: snapshot{Hosts: map[string]hostSnapshot{
+			"bot": {
+				Mirrors:   map[string]string{"term_1": "w1:p1"},
+				Dismissed: []string{"term_9", "term_8"},
+				Shells:    2,
+			},
+		}},
+	}, config.Defaults())
+
+	state := &hostSync{
+		host:      config.Host{Target: "bot"},
+		mirrors:   map[string]string{},
+		dismissed: map[string]bool{},
+	}
+	restoreFromSnapshot(state, d.snapshot.Hosts["bot"])
+
+	for _, terminalID := range []string{"term_8", "term_9"} {
+		if !state.dismissed[terminalID] {
+			t.Errorf("%s was closed by hand but is not remembered as such", terminalID)
+		}
+	}
+	if state.mirrors["term_1"] != "w1:p1" {
+		t.Error("a live mirror was not restored")
+	}
+	if state.restoreShells != 2 {
+		t.Errorf("restoreShells = %d, want 2", state.restoreShells)
+	}
+}
