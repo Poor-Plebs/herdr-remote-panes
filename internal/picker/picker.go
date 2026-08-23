@@ -51,10 +51,11 @@ func Run(connect Connect, setMode SetMode) error {
 	entries, warning := collect()
 	if len(entries) == 0 {
 		// With no menu to put it in, a warning still has to be said somewhere.
+		body := []string{"Add hosts to ~/.ssh/config or to the plugin's config.json."}
 		if warning != "" {
-			fmt.Printf("\r\n  %s\r\n", warning)
+			body = append(body, warning)
 		}
-		fmt.Print("\r\nNo machines found.\r\n\r\nAdd hosts to ~/.ssh/config or to the plugin's config.json.\r\n")
+		notice("No machines found.", body...)
 		waitForKey()
 		return nil
 	}
@@ -94,8 +95,8 @@ func Run(connect Connect, setMode SetMode) error {
 				mode = "ssh"
 			}
 			if _, err := setMode(entry.Target, mode); err != nil {
-				clear()
-				fmt.Printf("\r\n  Could not change %s: %v\r\n\r\n  Press any key.\r\n", entry.Target, err)
+				notice("Could not change "+entry.Target,
+					err.Error(), "Press any key.")
 				readKey()
 			}
 			entries, warning = collect()
@@ -112,16 +113,16 @@ func Run(connect Connect, setMode SetMode) error {
 }
 
 func choose(entry Entry, connect Connect) error {
-	clear()
-	fmt.Printf("  Connecting to %s ...\r\n", entry.Target)
+	notice("Connecting to " + text.Sanitize(entry.Target) + " ...")
 
 	message, err := connect(entry.Target)
 	if err != nil {
-		fmt.Printf("\r\n  Could not connect: %v\r\n\r\n  Press any key.\r\n", err)
+		notice("Could not connect to "+text.Sanitize(entry.Target),
+			err.Error(), "Press any key.")
 		waitForKey()
 		return nil
 	}
-	fmt.Printf("\r\n  %s\r\n", message)
+	notice("", message)
 	return nil
 }
 
@@ -274,6 +275,40 @@ func nameWidth(cols int) int {
 // The menu runs in a popup whose height it does not control, and writing more
 // lines than fit scrolls the top away — taking the first machine, and the
 // heading, with it. So the list is windowed rather than assumed to fit.
+// maxNoticeLines bounds one paragraph on a screen that is not the menu. An
+// error can carry a socket path and a suggested command and still be one
+// sentence, so there is more room here than a warning in the menu gets.
+const maxNoticeLines = 8
+
+// renderNotice draws a message on a screen of its own, wrapped to the popup.
+//
+// These used to be printed straight out at whatever length they happened to
+// be, so an error carrying a socket path ran off the edge of the popup and
+// wrapped wherever the terminal chose, mid-word and mid-path.
+func renderNotice(cols int, heading string, body ...string) string {
+	width := cols - 4
+	var b strings.Builder
+	b.WriteString(esc + "[2J" + esc + "[H\r\n")
+	if heading != "" {
+		for _, line := range text.Wrap(text.Sanitize(heading), width, maxNoticeLines) {
+			b.WriteString("  " + bold + line + reset + "\r\n")
+		}
+	}
+	for _, part := range body {
+		b.WriteString("\r\n")
+		for _, line := range text.Wrap(text.Sanitize(part), width, maxNoticeLines) {
+			b.WriteString("  " + line + "\r\n")
+		}
+	}
+	return b.String()
+}
+
+// notice draws renderNotice at the popup's current size.
+func notice(heading string, body ...string) {
+	cols, _ := windowSize()
+	fmt.Print(renderNotice(cols, heading, body...))
+}
+
 // maxWarningLines bounds how much of the popup a warning may take.
 const maxWarningLines = 2
 

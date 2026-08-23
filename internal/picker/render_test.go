@@ -207,3 +207,66 @@ func TestAShortPopupKeepsSomeOfTheWarning(t *testing.T) {
 		t.Errorf("the warning went entirely:\n%s", strings.Join(drawn, "\n"))
 	}
 }
+
+func noticeLines(cols int, heading string, body ...string) []string {
+	out := renderNotice(cols, heading, body...)
+	out = strings.ReplaceAll(out, esc+"[2J"+esc+"[H", "")
+	return strings.Split(out, "\r\n")
+}
+
+func TestNoticeStaysInsideThePopup(t *testing.T) {
+	// These screens used to be printed at whatever length they happened to be,
+	// so an error carrying a socket path ran off the edge and wrapped wherever
+	// the terminal chose, mid-word and mid-path.
+	long := "no running daemon (is the plugin enabled? check `herdr plugin log " +
+		"list --plugin poorplebs.remote-panes`): dial unix " +
+		"/tmp/hrp-9777840ec7cbab2b.sock: connect: no such file or directory"
+
+	for _, cols := range []int{40, 60, 76, 120} {
+		for _, line := range noticeLines(cols, "Could not change prod", long, "Press any key.") {
+			if w := text.Width(visible(line)); w > cols {
+				t.Errorf("cols=%d: line is %d wide: %q", cols, w, visible(line))
+			}
+		}
+	}
+}
+
+func TestNoticeKeepsTheWholeMessage(t *testing.T) {
+	// The end of an error is usually the part that says what actually went
+	// wrong, so it has to survive the wrapping.
+	long := "no running daemon: dial unix /tmp/hrp-9777840ec7cbab2b.sock: " +
+		"connect: no such file or directory"
+	// The lines carry their indent, so collapse the whitespace before looking
+	// for a phrase that the wrapping may have split across two of them.
+	joined := strings.Join(strings.Fields(
+		visible(strings.Join(noticeLines(76, "Could not change prod", long), " "))), " ")
+
+	if !strings.Contains(joined, "no such file or directory") {
+		t.Errorf("the end of the message was lost: %q", joined)
+	}
+	if !strings.Contains(joined, "prod") {
+		t.Errorf("the machine was not named: %q", joined)
+	}
+}
+
+func TestNoticeIsMadeSafeToDraw(t *testing.T) {
+	// A machine name comes from ~/.ssh/config and an error can quote a remote
+	// message, so neither is trusted to be printable.
+	joined := strings.Join(noticeLines(76, "Connecting to \x1b[31mbot\x1b[0m ..."), "\n")
+	if strings.Contains(joined, "\x1b[31m") {
+		t.Error("an escape reached the screen")
+	}
+}
+
+func TestNoticeSurvivesAnAbsurdlyNarrowPopup(t *testing.T) {
+	for _, cols := range []int{0, 1, 4, 5} {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("cols=%d panicked: %v", cols, r)
+				}
+			}()
+			_ = renderNotice(cols, "Could not connect", "something went wrong")
+		}()
+	}
+}
