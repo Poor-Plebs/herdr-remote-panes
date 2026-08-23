@@ -1622,3 +1622,52 @@ func TestForgettingLeavesADifferentSpaceAlone(t *testing.T) {
 		t.Errorf("workspaceID = %q, want the current space kept", state.workspaceID)
 	}
 }
+
+func TestAnUnreachablePlainSSHMachineKeepsSayingSo(t *testing.T) {
+	// Reconciling a plain SSH machine never contacts it: the ssh runs inside
+	// the pane. A pass that went fine therefore says nothing about whether the
+	// machine can be reached, and clearing the connect failure on that basis
+	// made an unreachable machine report "ok" -- until one of its panes had
+	// dropped twice, which is a different mechanism arriving later.
+	failure := errors.New("prod is not reachable over ssh: host key changed")
+
+	sshOnly := &hostSync{host: config.Host{Target: "prod"}, sshOnly: true, lastErr: failure}
+	if recordReconcile(sshOnly, nil); sshOnly.lastErr == nil {
+		t.Error("a plain SSH machine forgot it could not be reached")
+	}
+
+	// A mirroring machine is contacted while reconciling, so a pass that went
+	// fine is evidence, and the failure should go.
+	mirroring := &hostSync{host: config.Host{Target: "ci"}, lastErr: failure, failCount: 1}
+	recordReconcile(mirroring, nil)
+	if mirroring.lastErr != nil {
+		t.Error("a mirroring machine kept an error a successful pass disproved")
+	}
+	if mirroring.failCount != 0 {
+		t.Errorf("failCount = %d, want it reset", mirroring.failCount)
+	}
+}
+
+func TestRecordReconcileGivesUpOnceAndSaysSoOnce(t *testing.T) {
+	// The message is logged by the caller, so it must be reported exactly on
+	// the pass that gives up -- not on every pass after it.
+	failure := errors.New("cannot reach it")
+	state := &hostSync{host: config.Host{Target: "ci"}}
+
+	var announced int
+	for i := 0; i < 5; i++ {
+		if recordReconcile(state, failure) {
+			announced++
+		}
+	}
+
+	if !state.gaveUp {
+		t.Error("it never gave up")
+	}
+	if announced != 1 {
+		t.Errorf("giving up was announced %d times, want once", announced)
+	}
+	if state.lastErr == nil {
+		t.Error("the reason was lost")
+	}
+}

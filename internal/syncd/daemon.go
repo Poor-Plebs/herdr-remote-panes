@@ -254,7 +254,7 @@ func (d *Daemon) Run() error {
 			continue
 		}
 		if err := d.connect(h); err != nil {
-			log.Printf("connect %s: %v", h.Target, err)
+			log.Printf("connect %s: %s", h.Target, summarizeError(err))
 		}
 	}
 
@@ -941,7 +941,7 @@ func (d *Daemon) connectAll() ([]string, error) {
 			continue
 		}
 		if err := d.connect(host); err != nil {
-			log.Printf("connect %s: %v", host.Target, err)
+			log.Printf("connect %s: %s", host.Target, summarizeError(err))
 			lastErr = err
 			continue
 		}
@@ -1065,6 +1065,32 @@ func (c *coalescer) run(job func()) {
 	}
 }
 
+// recordReconcile updates a machine's health from one reconcile pass, and
+// reports whether that pass was the one that gave up on it.
+//
+// A pass that went fine is evidence the machine can be reached only when
+// reconciling actually contacts it. A plain SSH machine is deliberately not
+// contacted -- the ssh runs inside the pane -- so clearing its connect failure
+// on that basis made an unreachable machine report "ok" until one of its panes
+// had dropped twice, which is a different mechanism arriving later. What
+// settles it for those is connect, which does test the machine.
+func recordReconcile(state *hostSync, err error) (gaveUp bool) {
+	if err != nil {
+		state.lastErr = err
+		state.failCount++
+		if planGiveUp(state.failCount) && !state.gaveUp {
+			state.gaveUp = true
+			return true
+		}
+		return false
+	}
+	if !state.sshOnly {
+		state.lastErr = nil
+		state.failCount = 0
+	}
+	return false
+}
+
 // reconcileAll brings every connected machine in line, folding calls that
 // arrive while one is already running into a single further pass.
 //
@@ -1114,20 +1140,13 @@ func (d *Daemon) reconcileOnce() {
 			if state.gaveUp {
 				return
 			}
-			if err := d.reconcileHost(state, index); err != nil {
-				if state.lastErr == nil || state.lastErr.Error() != err.Error() {
-					log.Printf("reconcile %s: %v", state.host.Target, err)
-				}
-				state.lastErr = err
-				state.failCount++
-				if planGiveUp(state.failCount) {
-					state.gaveUp = true
-					log.Printf("%s: giving up after %d attempts; connect again to retry",
-						state.host.Target, state.failCount)
-				}
-			} else {
-				state.lastErr = nil
-				state.failCount = 0
+			err := d.reconcileHost(state, index)
+			if err != nil && (state.lastErr == nil || state.lastErr.Error() != err.Error()) {
+				log.Printf("reconcile %s: %s", state.host.Target, summarizeError(err))
+			}
+			if recordReconcile(state, err) {
+				log.Printf("%s: giving up after %d attempts; connect again to retry",
+					state.host.Target, state.failCount)
 			}
 			d.markWorkspaceState(state, state.lastErr == nil)
 		}(state)
