@@ -881,6 +881,25 @@ func (d *Daemon) focusHost(target string) {
 	log.Printf("%s: focused %s", target, state.workspaceID)
 }
 
+// panesToClose lists every local pane a machine has.
+//
+// Disconnecting used to close its mirrors only. A plain SSH machine has no
+// mirrors -- its panes are the sessions themselves -- so disconnecting one
+// stopped tracking it and left its terminals open, each still holding an SSH
+// connection, with nothing watching them any more. That is the default mode,
+// so it was the usual case rather than an unusual one.
+func panesToClose(state *hostSync) []string {
+	out := make([]string, 0, len(state.mirrors)+len(state.shellPanes))
+	for _, paneID := range state.mirrors {
+		out = append(out, paneID)
+	}
+	for paneID := range state.shellPanes {
+		out = append(out, paneID)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (d *Daemon) disconnect(target string) error {
 	d.mu.Lock()
 	state, ok := d.hosts[target]
@@ -892,9 +911,9 @@ func (d *Daemon) disconnect(target string) error {
 	if !ok {
 		return fmt.Errorf("%s is not connected", target)
 	}
-	for _, paneID := range state.mirrors {
+	for _, paneID := range panesToClose(state) {
 		if err := herdrcli.ClosePane(paneID); err != nil {
-			log.Printf("close mirror %s: %v", paneID, err)
+			log.Printf("close %s: %v", paneID, err)
 		}
 	}
 	state.client.Close()

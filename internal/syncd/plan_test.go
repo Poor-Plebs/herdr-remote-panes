@@ -1692,3 +1692,42 @@ func TestFocusDoesNothingUntilThereIsSomewhereToGo(t *testing.T) {
 	d.hosts["bot"].workspaceID = "w1"
 	d.mu.Unlock()
 }
+
+func TestDisconnectingClosesEveryKindOfPane(t *testing.T) {
+	// Disconnecting used to close a machine's mirrors only. A plain SSH machine
+	// has no mirrors -- its panes are the sessions themselves -- so
+	// disconnecting one stopped tracking it and left its terminals open, each
+	// still holding an SSH connection, with nothing watching them. That is the
+	// default mode, so it was the usual case rather than an unusual one.
+	sshOnly := &hostSync{
+		sshOnly:    true,
+		mirrors:    map[string]string{},
+		shellPanes: map[string]bool{"w1:p2": true, "w1:p3": true},
+	}
+	got := panesToClose(sshOnly)
+	if len(got) != 2 || got[0] != "w1:p2" || got[1] != "w1:p3" {
+		t.Errorf("panesToClose = %v, want both terminals", got)
+	}
+
+	mirroring := &hostSync{
+		mirrors:    map[string]string{"term_1": "w2:p1"},
+		shellPanes: map[string]bool{},
+	}
+	if got := panesToClose(mirroring); len(got) != 1 || got[0] != "w2:p1" {
+		t.Errorf("panesToClose = %v, want the mirror", got)
+	}
+
+	// A machine that fell back to plain SSH after being mirrored can have both.
+	both := &hostSync{
+		mirrors:    map[string]string{"term_1": "w3:p1"},
+		shellPanes: map[string]bool{"w3:p2": true},
+	}
+	if got := panesToClose(both); len(got) != 2 {
+		t.Errorf("panesToClose = %v, want both kinds", got)
+	}
+
+	// Nothing open is nothing to close, not a nil surprise for the caller.
+	if got := panesToClose(&hostSync{mirrors: map[string]string{}, shellPanes: map[string]bool{}}); len(got) != 0 {
+		t.Errorf("panesToClose = %v, want none", got)
+	}
+}
