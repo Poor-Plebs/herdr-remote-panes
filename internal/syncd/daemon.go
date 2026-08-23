@@ -663,6 +663,18 @@ func (d *Daemon) connect(host config.Host) error {
 		state.host = host
 		state.sshOnly = sshOnly
 		clear(state.dismissed)
+		// The settings can have moved on since this host was first connected:
+		// toggling a mode from the menu rereads the whole config file, so an
+		// edit to any other machine's session or Herdr path lands then too.
+		// Keeping the old client would leave state.host describing one thing
+		// and the connection doing another.
+		if state.client == nil || !state.client.SameSettings(
+			host.Target, d.config().SessionFor(host), d.config().BinFor(host)) {
+			if state.client != nil {
+				state.client.Close()
+			}
+			state.client = client
+		}
 	} else {
 		state = &hostSync{
 			host:      host,

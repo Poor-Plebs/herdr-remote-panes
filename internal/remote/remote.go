@@ -255,6 +255,17 @@ func (c *Client) Start() error {
 	return nil
 }
 
+// SameSettings reports whether this client is already set up for exactly these
+// settings.
+//
+// The session is part of the multiplexed connection's identity, so a client
+// made for one session cannot stand in for another. Reconnecting a host whose
+// settings have changed has to replace the client rather than keep talking to
+// the machine the old way.
+func (c *Client) SameSettings(target, session, bin string) bool {
+	return c.Target == target && c.Session == session && c.configuredBin == bin
+}
+
 // Close tears down the shared ControlMaster connection.
 func (c *Client) Close() {
 	argv := []string{"ssh", "-o", "ControlPath=" + c.controlPath, "-O", "exit", c.Target}

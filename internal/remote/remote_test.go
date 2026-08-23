@@ -147,3 +147,34 @@ func TestRemoteCommandQuotesEveryPart(t *testing.T) {
 		t.Errorf("the literal argument did not survive: %q", string(out))
 	}
 }
+
+func TestSameSettings(t *testing.T) {
+	// The session is part of the multiplexed connection's identity, so a client
+	// built for one session cannot stand in for another.
+	c := NewWithBin("bot", "default", "/usr/bin/herdr")
+
+	if !c.SameSettings("bot", "default", "/usr/bin/herdr") {
+		t.Error("a client did not recognise its own settings")
+	}
+	for _, other := range [][3]string{
+		{"other", "default", "/usr/bin/herdr"},
+		{"bot", "remote", "/usr/bin/herdr"},
+		{"bot", "default", "/opt/herdr"},
+		{"bot", "default", ""},
+	} {
+		if c.SameSettings(other[0], other[1], other[2]) {
+			t.Errorf("settings %v were accepted as unchanged", other)
+		}
+	}
+
+	// Two clients for the same settings must share a control path, or each
+	// would open its own connection to the same machine.
+	if NewWithBin("bot", "default", "").controlPath != NewWithBin("bot", "default", "").controlPath {
+		t.Error("identical clients disagree on the control path")
+	}
+	// Different sessions must not, since the session is part of what the
+	// connection is for.
+	if NewWithBin("bot", "a", "").controlPath == NewWithBin("bot", "b", "").controlPath {
+		t.Error("clients for different sessions share a control path")
+	}
+}

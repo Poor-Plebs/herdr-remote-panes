@@ -1101,3 +1101,41 @@ func TestConfigCanBeReadWhileItIsBeingReplaced(t *testing.T) {
 	close(stop)
 	wg.Wait()
 }
+
+func TestPaneTargetNeverCarriesBothKindsOfTarget(t *testing.T) {
+	// Herdr rejects the combination outright: a split takes a pane and no
+	// workspace, a tab takes a workspace and no pane, an overlay takes neither.
+	// Sending both came back as invalid_params, which is how no split mirror
+	// ever opened. The table above checks the placements that exist; this holds
+	// the rule for whatever gets added next, including a placement nobody here
+	// has heard of.
+	placements := []string{
+		placementSplit, placementZoomed, placementTab,
+		placementOverlay, placementPopup,
+		"", "TAB", "float", "tiled", "  split  ", "split;rm",
+	}
+	workspaces := []string{"", "w1"}
+	panes := []string{"", "w1:p1"}
+
+	for _, placement := range placements {
+		for _, workspace := range workspaces {
+			for _, paneInWorkspace := range panes {
+				got := planPaneTarget(placement, workspace, paneInWorkspace)
+				if got.Workspace != "" && got.TargetPane != "" {
+					t.Errorf("planPaneTarget(%q, %q, %q) = %+v, which Herdr rejects",
+						placement, workspace, paneInWorkspace, got)
+				}
+				if got.Placement == "" {
+					t.Errorf("planPaneTarget(%q, %q, %q) chose no placement",
+						placement, workspace, paneInWorkspace)
+				}
+				// A split with nothing to split from cannot open, so it must
+				// have become something that can.
+				if got.Placement == placementSplit && got.TargetPane == "" {
+					t.Errorf("planPaneTarget(%q, %q, %q) = %+v: a split needs a pane",
+						placement, workspace, paneInWorkspace, got)
+				}
+			}
+		}
+	}
+}
