@@ -245,7 +245,7 @@ func describeJSONError(raw []byte, err error) string {
 	var typeErr *json.UnmarshalTypeError
 	if errors.As(err, &typeErr) {
 		return fmt.Sprintf("%s should be %s, not %s%s",
-			typeErr.Field, plainType(typeErr.Type), plainValue(typeErr.Value),
+			plainField(typeErr.Field), plainType(typeErr.Type), plainValue(typeErr.Value),
 			atLine(raw, typeErr.Offset))
 	}
 
@@ -254,6 +254,31 @@ func describeJSONError(raw []byte, err error) string {
 		return fmt.Sprintf("%s%s", syntaxErr, atLine(raw, syntaxErr.Offset))
 	}
 	return err.Error()
+}
+
+// plainField names the setting at fault, without the position of the machine
+// it is in.
+//
+// The decoder spells that position differently depending on which Go built the
+// plugin -- "hosts.disabled" on some, "hosts.0.disabled" on others -- and this
+// is built from source on whatever toolchain the machine has, so leaving it as
+// given makes the same broken file produce different wording on two machines.
+// The index is no loss: it counts from zero, which does not match how anyone
+// reads the file, and the line number that follows says exactly which entry
+// anyway.
+func plainField(field string) string {
+	parts := strings.Split(field, ".")
+	kept := parts[:0]
+	for _, part := range parts {
+		if part == "" || strings.IndexFunc(part, func(r rune) bool { return r < '0' || r > '9' }) < 0 {
+			continue
+		}
+		kept = append(kept, part)
+	}
+	if len(kept) == 0 {
+		return field
+	}
+	return strings.Join(kept, ".")
 }
 
 // atLine says which line an offset falls on, since that is what an editor shows.

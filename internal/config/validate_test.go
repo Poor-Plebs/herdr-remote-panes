@@ -753,7 +753,10 @@ func TestAMistakeInTheConfigIsDescribedInTheFilesTerms(t *testing.T) {
 		{
 			name:    "a setting inside a machine",
 			content: "{\n  \"hosts\": [\n    {\"disabled\": \"yes\"}\n  ]\n}",
-			want:    []string{"hosts.disabled", "true or false", "not text", "line 3"},
+			// Named without the machine's position: the decoder spells that
+			// differently by Go version, and the line number already says
+			// which entry.
+			want: []string{"hosts.disabled", "true or false", "not text", "line 3"},
 		},
 		{
 			name:    "a list written as one thing",
@@ -867,5 +870,28 @@ func TestAUsableMachineIsNotComplainedAbout(t *testing.T) {
 	}
 	if len(cfg.Hosts) != 2 {
 		t.Errorf("hosts = %d, want 2", len(cfg.Hosts))
+	}
+}
+
+func TestTheSameBrokenFileReadsTheSameOnEveryToolchain(t *testing.T) {
+	// Go spells the path to a setting inside a list differently by version:
+	// "hosts.disabled" on 1.25 and 1.26, "hosts.0.disabled" on newer. This
+	// plugin is built from source on whatever toolchain the machine has, so
+	// taking that as given would have the same broken file produce different
+	// wording on two machines -- and it did: the wording was written against a
+	// local toolchain and failed on CI's.
+	for _, given := range []string{"hosts.disabled", "hosts.0.disabled", "hosts.12.disabled"} {
+		if got := plainField(given); got != "hosts.disabled" {
+			t.Errorf("plainField(%q) = %q, want %q", given, got, "hosts.disabled")
+		}
+	}
+
+	// A plain setting is untouched.
+	if got := plainField("max_mirrors"); got != "max_mirrors" {
+		t.Errorf("plainField(max_mirrors) = %q", got)
+	}
+	// And a path with nothing but a position keeps something to say.
+	if got := plainField("0"); got == "" {
+		t.Error("a field of only a position should not vanish")
 	}
 }
