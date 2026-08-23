@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -359,5 +361,117 @@ func TestAGoodConfigReportsNoUnknownSettings(t *testing.T) {
 		if strings.Contains(p, "is not a setting") {
 			t.Errorf("a config this wrote itself was reported: %q", p)
 		}
+	}
+}
+
+func TestSetHostModeLeavesTheRestOfTheFileAlone(t *testing.T) {
+	// Changing one setting used to go through Load and Save, both of which fill
+	// in what is missing, so toggling mirroring wrote back every setting
+	// somebody had left out, pinned to whatever it defaulted to that day.
+	// Nothing changed at the time; it did mean those settings quietly stopped
+	// following the default.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	path := filepath.Join(dir, "config.json")
+
+	minimal := `{
+  "hosts": [
+    {
+      "target": "bot"
+    },
+    {
+      "target": "ci",
+      "mode": "attach"
+    }
+  ]
+}
+`
+	if err := os.WriteFile(path, []byte(minimal), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := SetHostMode("bot", ModeAttach)
+	if err != nil {
+		t.Fatalf("SetHostMode: %v", err)
+	}
+
+	// What the caller runs on is filled in, because it has to be usable.
+	if cfg.WorkspaceFormat == "" || cfg.PollInterval == "" {
+		t.Error("the returned config was not filled in for the caller")
+	}
+
+	// What the file holds is what it held, plus the one change.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk map[string]any
+	if err := json.Unmarshal(raw, &onDisk); err != nil {
+		t.Fatalf("the file is no longer valid JSON: %v", err)
+	}
+	if len(onDisk) != 1 {
+		keys := make([]string, 0, len(onDisk))
+		for k := range onDisk {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		t.Errorf("the file gained settings: %v", keys)
+	}
+
+	hosts, _ := onDisk["hosts"].([]any)
+	if len(hosts) != 2 {
+		t.Fatalf("hosts = %v, want both kept", hosts)
+	}
+	first, _ := hosts[0].(map[string]any)
+	if first["target"] != "bot" || first["mode"] != string(ModeAttach) {
+		t.Errorf("bot = %v, want its mode changed", first)
+	}
+	second, _ := hosts[1].(map[string]any)
+	if second["target"] != "ci" || second["mode"] != string(ModeAttach) {
+		t.Errorf("ci = %v, want it untouched", second)
+	}
+}
+
+func TestSetHostModeAddsAMachineThatWasNotThere(t *testing.T) {
+	// Toggling mirroring for something found only in ~/.ssh/config has to write
+	// it down, since there is nowhere else to record the choice.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"hosts":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := SetHostMode("laptop", ModeObserve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Hosts) != 1 || cfg.Hosts[0].Target != "laptop" || cfg.Hosts[0].Mode != ModeObserve {
+		t.Errorf("hosts = %+v, want laptop recorded", cfg.Hosts)
+	}
+
+	// And it survives a read back.
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Hosts) != 1 || loaded.Hosts[0].Mode != ModeObserve {
+		t.Errorf("after reloading, hosts = %+v", loaded.Hosts)
+	}
+}
+
+func TestSetHostModeWithNoFileYet(t *testing.T) {
+	// Nothing to preserve, so this is the one time writing the defaults out is
+	// what somebody wants: it gives them a file to edit.
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", t.TempDir())
+
+	cfg, err := SetHostMode("bot", ModeAttach)
+	if err != nil {
+		t.Fatalf("SetHostMode with no file: %v", err)
+	}
+	if len(cfg.Hosts) != 1 || cfg.Hosts[0].Target != "bot" {
+		t.Errorf("hosts = %+v, want bot", cfg.Hosts)
+	}
+	if _, err := Load(); err != nil {
+		t.Errorf("the file written is not readable: %v", err)
 	}
 }

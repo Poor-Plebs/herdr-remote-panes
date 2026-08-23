@@ -267,11 +267,45 @@ func Save(cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	raw, err := json.MarshalIndent(cfg.normalized(), "", "  ")
+	return saveRaw(cfg.normalized())
+}
+
+// saveRaw writes a configuration exactly as given, without filling anything in.
+func saveRaw(cfg Config) error {
+	path, err := Path()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
 	return writeFileAtomically(path, append(raw, '\n'))
+}
+
+// loadRaw reads the file as written, without filling in defaults.
+//
+// Changing one setting used to go through Load and Save, both of which fill in
+// what is missing, so toggling mirroring wrote back every setting somebody had
+// left out, pinned to whatever it defaulted to that day. Nothing changed at the
+// time; it did mean those settings quietly stopped following the default.
+func loadRaw() (Config, error) {
+	path, err := Path()
+	if err != nil {
+		return Config{}, err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, err
+	}
+	var cfg Config
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return Config{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return cfg, nil
 }
 
 // writeFileAtomically replaces a file's contents in one step.
@@ -500,18 +534,37 @@ func (c Config) Mirrors(h Host) bool {
 // SetHostMode records a machine's mode on disk, adding the host when it is not
 // configured yet, and returns the updated configuration.
 func SetHostMode(target string, mode Mode) (Config, error) {
-	cfg, err := Load()
-	if err != nil {
-		return cfg, err
+	// The file as written, so that changing one setting does not write back
+	// every other one that was being left to its default.
+	cfg, err := loadRaw()
+	if errors.Is(err, fs.ErrNotExist) {
+		// No file yet: Load writes one from the defaults, which is the only
+		// time filling them in is what somebody wants.
+		if cfg, err = Load(); err != nil {
+			return cfg, err
+		}
+	} else if err != nil {
+		return Config{}, err
 	}
+
+	found := false
 	for i := range cfg.Hosts {
 		if cfg.Hosts[i].Target == target {
 			cfg.Hosts[i].Mode = mode
-			return cfg, Save(cfg)
+			found = true
+			break
 		}
 	}
-	cfg.Hosts = append(cfg.Hosts, Host{Target: target, Mode: mode})
-	return cfg, Save(cfg)
+	if !found {
+		cfg.Hosts = append(cfg.Hosts, Host{Target: target, Mode: mode})
+	}
+
+	if err := saveRaw(cfg); err != nil {
+		return Config{}, err
+	}
+	// The caller runs on this, so it gets the filled-in one; the file keeps
+	// what it had.
+	return cfg.normalized(), nil
 }
 
 // BinFor resolves the remote Herdr binary for a host. An empty result means
