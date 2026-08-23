@@ -349,7 +349,13 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 				return Reply{Message: err.Error()}
 			}
 			d.reconcileAll()
-			return Reply{OK: true, Message: "connected to " + strings.Join(connected, ", ")}
+			// Worded so it cannot be mistaken for the single-machine reply
+			// below. With one machine reachable both said "connected to bot",
+			// which makes a connect that named no machine indistinguishable
+			// from one that did -- including to whoever is reading a log to
+			// work out why something did not happen.
+			return Reply{OK: true, Message: fmt.Sprintf("reconnected %d of your machines: %s",
+				len(connected), strings.Join(connected, ", "))}
 		}
 		host, ok := d.hostConfig(cmd.Host)
 		if !ok {
