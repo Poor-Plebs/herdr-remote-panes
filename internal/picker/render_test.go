@@ -354,3 +354,72 @@ func TestPagingReachesEveryMachine(t *testing.T) {
 		}
 	}
 }
+
+func TestNoLineEverRunsPastThePopup(t *testing.T) {
+	// The room kept for the state column was a number written down beside the
+	// code that drew it, and it went stale the moment a state line grew: the
+	// reservation stayed at what "connected · NN mirrored" needed while the
+	// longest had become half as long again, and the line ran off the popup by
+	// a dozen columns at ordinary widths.
+	entries := []Entry{
+		{Target: "bot", Configured: true, Connected: true, Terminals: 3},
+		{Target: "build-server-eu-west-1a", Configured: true, GaveUp: true, Mirroring: true},
+		{Target: "prod", Configured: true, GaveUp: true},
+		{Target: "staging", Configured: true, Connected: true, Mirroring: true, Mirrors: 99},
+		{Target: "日本語のホスト", Configured: true, Mirroring: true},
+		{Target: strings.Repeat("very-long-machine-name-", 6), Configured: true},
+		{Target: "laptop"},
+	}
+
+	for _, cols := range []int{20, 30, 40, 48, 60, 76, 80, 100, 200} {
+		for _, rows := range []int{8, 12, 24, 40} {
+			for _, warning := range []string{"", "check the plugin config: mode \"shh\" is unknown"} {
+				for _, line := range lines(entries, 1, cols, rows, warning) {
+					if w := text.Width(visible(line)); w > cols {
+						t.Errorf("cols=%d rows=%d: a line is %d wide: %q",
+							cols, rows, w, visible(line))
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestTheStateSurvivesEvenWhenTheHintCannot(t *testing.T) {
+	// Room is given up from the end: a hint about which key to press is worth
+	// less than knowing the machine cannot be reached.
+	narrow := strings.Join(lines([]Entry{
+		{Target: "prod", Configured: true, GaveUp: true, Mirroring: true},
+	}, 0, 34, 24), "\n")
+
+	if !strings.Contains(narrow, "unreachable") {
+		t.Errorf("the state itself was given up:\n%s", visible(narrow))
+	}
+
+	// With room, the whole of it is there.
+	wide := strings.Join(lines([]Entry{
+		{Target: "prod", Configured: true, GaveUp: true, Mirroring: true},
+	}, 0, 100, 24), "\n")
+	for _, want := range []string{"unreachable", "mirrored", "enter to retry"} {
+		if !strings.Contains(wide, want) {
+			t.Errorf("a wide popup should say %q:\n%s", want, visible(wide))
+		}
+	}
+}
+
+func TestWidestStatusMatchesWhatIsDrawn(t *testing.T) {
+	// The reservation and the drawing must agree, which they can only do by
+	// one of them asking the other.
+	reserved := widestStatus()
+	for _, entry := range []Entry{
+		{GaveUp: true, Mirroring: true},
+		{Connected: true, Mirroring: true, Mirrors: 99},
+		{Connected: true, Terminals: 99},
+		{Configured: true, Mirroring: true},
+		{},
+	} {
+		if w := text.Width(plainOf(statusSpans(entry))); w > reserved {
+			t.Errorf("%+v needs %d columns, only %d are kept for it", entry, w, reserved)
+		}
+	}
+}

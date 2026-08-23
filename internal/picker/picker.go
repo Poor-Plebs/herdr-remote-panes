@@ -266,12 +266,142 @@ func warningLines(cols int, warning string) []string {
 	return text.Wrap(text.Sanitize(warning), cols-4, maxWarningLines)
 }
 
+// hintLines are the key reminders at the foot of the menu.
+//
+// They were two fixed strings, sixty and forty-six columns wide, printed
+// whatever the popup could hold -- so any popup narrower than sixty, which a
+// modest terminal gives, had them running off the side. A narrow one gets the
+// short pair rather than the long pair cut off mid-word.
+func hintLines(cols int) []string {
+	room := cols - 4
+	full := []string{
+		"↑↓ jk move · pgup/pgdn g/G jump · 1-9 pick · enter connect",
+		"m toggle mirroring (experimental) · q cancel",
+	}
+	short := []string{
+		"↑↓ jk move · 1-9 pick · enter connect",
+		"m mirroring · q cancel",
+	}
+	shortest := []string{"↑↓ enter", "m · q"}
+
+	for _, pair := range [][]string{full, short, shortest} {
+		if text.Width(pair[0]) <= room && text.Width(pair[1]) <= room {
+			return pair
+		}
+	}
+	return []string{
+		text.Truncate(shortest[0], room),
+		text.Truncate(shortest[1], room),
+	}
+}
+
+// span is a piece of a machine's state line, with the colour it is drawn in.
+// Kept as pieces so the words exist once: what is drawn, how wide it is, and
+// how much room the name column may have are all worked out from these.
+type span struct {
+	text   string
+	colour string
+}
+
+// statusSpans is what a machine's line says after its name.
+func statusSpans(entry Entry) []span {
+	mode := "ssh"
+	if entry.Mirroring {
+		mode = "mirrored"
+	}
+	switch {
+	case entry.GaveUp:
+		// The mode is worth saying even here: this is the line someone reads
+		// before pressing m, and without it there is no telling which way the
+		// toggle would go.
+		out := []span{{"unreachable", red}}
+		if entry.Mirroring {
+			out = append(out, span{" · mirrored", dim})
+		}
+		return append(out, span{" · enter to retry", dim})
+	case entry.Connected && entry.Mirroring:
+		return []span{{fmt.Sprintf("connected · %d mirrored", entry.Mirrors), green}}
+	case entry.Connected && entry.Terminals > 0:
+		return []span{{fmt.Sprintf("connected · %d open", entry.Terminals), green}}
+	case entry.Connected:
+		return []span{{"connected", green}, {" · ssh", dim}}
+	case entry.Configured:
+		return []span{{"not connected", yellow}, {" · " + mode, dim}}
+	default:
+		return []span{{"from ~/.ssh/config · " + mode, dim}}
+	}
+}
+
+func plainOf(spans []span) string {
+	var b strings.Builder
+	for _, s := range spans {
+		b.WriteString(s.text)
+	}
+	return b.String()
+}
+
+func colourOf(spans []span) string {
+	var b strings.Builder
+	for _, s := range spans {
+		b.WriteString(s.colour + s.text + reset)
+	}
+	return b.String()
+}
+
+// fitStatus gives up the tail of a state line until what is left fits.
+//
+// The first piece is the state itself and is kept whatever happens; what
+// follows it elaborates, and a hint about which key to press is worth less than
+// a line that stays inside the popup.
+func fitStatus(spans []span, room int) []span {
+	if room < 1 {
+		room = 1
+	}
+	for len(spans) > 1 && text.Width(plainOf(spans)) > room {
+		spans = spans[:len(spans)-1]
+	}
+	if len(spans) == 1 && text.Width(spans[0].text) > room {
+		spans[0].text = text.Truncate(spans[0].text, room)
+	}
+	return spans
+}
+
+// chromeWidth is everything on a machine's line that is not its name or its
+// state: the selection marker, the number, and the spaces between the columns.
+const chromeWidth = 8
+
+// widestStatus is how much room the state column needs, worked out by asking
+// the code that draws it rather than by writing a number down beside it.
+//
+// It was a number written down beside it, and it went stale the moment a state
+// line grew: the reservation stayed at what "connected · NN mirrored" needed
+// while the longest had become half as long again, and the line ran off the
+// popup by a dozen columns.
+func widestStatus() int {
+	worst := []Entry{
+		{GaveUp: true, Mirroring: true},
+		{GaveUp: true},
+		{Connected: true, Mirroring: true, Mirrors: 99},
+		{Connected: true, Terminals: 99},
+		{Connected: true},
+		{Configured: true, Mirroring: true},
+		{Configured: true},
+		{Mirroring: true},
+		{},
+	}
+	widest := 0
+	for _, entry := range worst {
+		if w := text.Width(plainOf(statusSpans(entry))); w > widest {
+			widest = w
+		}
+	}
+	return widest
+}
+
 // nameWidth is how much room the machine column gets, leaving space for the
 // marker, the number and the state that follows it.
 func nameWidth(cols int) int {
-	const chrome = 8 // marker, number and the spaces between columns
-	const state = 26 // the widest state text, "connected · NN mirrored"
-	width := cols - chrome - state
+	width := cols - chromeWidth - widestStatus()
 	if width < 8 {
 		width = 8
 	}
@@ -424,7 +554,7 @@ func render(entries []Entry, selected, cols, rows int, warning string) string {
 
 	var b strings.Builder
 	b.WriteString(esc + "[2J" + esc + "[H")
-	b.WriteString("  " + bold + "Connect to a machine" + reset + "\r\n\r\n")
+	b.WriteString("  " + bold + text.Truncate("Connect to a machine", cols-4) + reset + "\r\n\r\n")
 	if frame.warning > 0 {
 		// Shown in the menu rather than on a screen that has to be dismissed
 		// first: a problem worth mentioning every time is not worth
@@ -438,7 +568,6 @@ func render(entries []Entry, selected, cols, rows int, warning string) string {
 	for i := first; i < last; i++ {
 		entry := entries[i]
 		marker := "  "
-		line := ""
 		if i == selected {
 			marker = reverse + " >" + reset
 		}
@@ -455,31 +584,9 @@ func render(entries []Entry, selected, cols, rows int, warning string) string {
 		}
 		name = text.Pad(text.Truncate(name, nameWidth(cols)), nameWidth(cols))
 
-		mode := "ssh"
-		if entry.Mirroring {
-			mode = "mirrored"
-		}
-		switch {
-		case entry.GaveUp:
-			// The mode is worth saying even here: this is the line someone
-			// reads before pressing m, and without it there is no telling
-			// which way the toggle would go.
-			detail := " · enter to retry"
-			if entry.Mirroring {
-				detail = " · mirrored · enter to retry"
-			}
-			line = red + "unreachable" + reset + dim + detail + reset
-		case entry.Connected && entry.Mirroring:
-			line = green + fmt.Sprintf("connected · %d mirrored", entry.Mirrors) + reset
-		case entry.Connected && entry.Terminals > 0:
-			line = green + fmt.Sprintf("connected · %d open", entry.Terminals) + reset
-		case entry.Connected:
-			line = green + "connected" + reset + dim + " · ssh" + reset
-		case entry.Configured:
-			line = yellow + "not connected" + reset + dim + " · " + mode + reset
-		default:
-			line = dim + "from ~/.ssh/config · " + mode + reset
-		}
+		var line string
+		state := fitStatus(statusSpans(entry), cols-chromeWidth-text.Width(name))
+		line = colourOf(state)
 
 		b.WriteString(marker + " " + number + " " + name + " " + line + "\r\n")
 	}
@@ -489,8 +596,9 @@ func render(entries []Entry, selected, cols, rows int, warning string) string {
 	}
 	if frame.hints {
 		b.WriteString("\r\n")
-		b.WriteString("  " + dim + "↑↓ jk move · pgup/pgdn g/G jump · 1-9 pick · enter connect" + reset + "\r\n")
-		b.WriteString("  " + dim + "m toggle mirroring (experimental) · q cancel" + reset)
+		hints := hintLines(cols)
+		b.WriteString("  " + dim + hints[0] + reset + "\r\n")
+		b.WriteString("  " + dim + hints[1] + reset)
 	}
 	return strings.TrimSuffix(b.String(), "\r\n")
 }
