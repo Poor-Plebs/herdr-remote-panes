@@ -268,6 +268,17 @@ func summarizeError(err error) string {
 		{"Permission denied", "ssh permission denied — check your key"},
 		{"Connection refused", "connection refused"},
 		{"Connection timed out", "connection timed out"},
+		// macOS words the same failure differently, so a timeout there used to
+		// fall through and print the raw ssh line instead.
+		{"Operation timed out", "connection timed out"},
+		{"Network is unreachable", "no network — check you are online"},
+		// Checked before the generic closed/reset rules below: the real message
+		// is usually "kex_exchange_identification: Connection closed by remote
+		// host", and the specific cause is the more useful of the two.
+		{"kex_exchange_identification", "the machine dropped the connection before login — it may be busy or rate-limiting"},
+		{"Connection closed by", "the machine closed the connection"},
+		{"Connection reset by peer", "the machine reset the connection"},
+		{"Too many authentication failures", "too many keys offered — set IdentitiesOnly=yes for this host"},
 		{"Name or service not known", "host name does not resolve"},
 		{"Could not resolve hostname", "host name does not resolve"},
 		{"No route to host", "no route to host"},

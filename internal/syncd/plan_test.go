@@ -404,6 +404,20 @@ Host key verification failed.`)
 		"connect: Connection refused":          "connection refused",
 		"ssh: Could not resolve hostname nope": "host name does not resolve",
 		"bot: no herdr on the remote host":     "herdr not found on the machine",
+
+		// macOS words a timeout differently from Linux, so this used to fall
+		// through and print the raw ssh line.
+		"ssh: connect to host bot port 22: Operation timed out":  "connection timed out",
+		"ssh: connect to host bot port 22: Connection timed out": "connection timed out",
+
+		// The rest are everyday ssh failures that used to arrive raw.
+		"connect: Network is unreachable":                       "no network — check you are online",
+		"Connection closed by 10.0.0.4 port 22":                 "the machine closed the connection",
+		"read: Connection reset by peer":                        "the machine reset the connection",
+		"Received disconnect: Too many authentication failures": "too many keys offered — set IdentitiesOnly=yes for this host",
+		"kex_exchange_identification: read: Connection reset":   "the machine dropped the connection before login — it may be busy or rate-limiting",
+		// The real message carries both causes; the specific one should win.
+		"kex_exchange_identification: Connection closed by remote host": "the machine dropped the connection before login — it may be busy or rate-limiting",
 	} {
 		if got := summarizeError(errors.New(in)); got != want {
 			t.Errorf("summarizeError(%q) = %q, want %q", in, got, want)
