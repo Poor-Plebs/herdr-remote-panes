@@ -427,17 +427,29 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		// how it is reached. Drop them and connect again under the new mode.
 		_ = d.disconnect(cmd.Host)
 		host, _ := d.hostConfig(cmd.Host)
+
+		changed := "mirroring on for " + cmd.Host
+		if cmd.Mode == string(config.ModeSSH) {
+			changed = "mirroring off for " + cmd.Host
+		}
+
+		// The setting is changed and written by this point. A machine that
+		// will not answer is worth saying, but it is a fact about the machine
+		// rather than a failure of the change -- reporting it as one told
+		// somebody their toggle had not worked while the file on disk said
+		// otherwise, and put fifteen lines of ssh banner on the screen to
+		// explain it.
 		if err := d.connect(host); err != nil {
-			return Reply{Message: err.Error()}
+			return Reply{OK: true, Message: changed + ", but it is not reachable: " + summarizeError(err)}
 		}
 		if _, err := d.ensureRemotePresence(host); err != nil {
-			return Reply{Message: err.Error()}
+			return Reply{OK: true, Message: changed + ", but no terminal opened: " + summarizeError(err)}
 		}
 		d.reconcileAll()
-		if cmd.Mode == string(config.ModeSSH) {
-			return Reply{OK: true, Message: "mirroring off for " + cmd.Host}
-		}
-		return Reply{OK: true, Message: "mirroring on for " + cmd.Host}
+		// No focus here: m keeps you in the menu, so moving the screen
+		// underneath it only surprises you when you leave. Going somewhere is
+		// what enter is for.
+		return Reply{OK: true, Message: changed}
 
 	case "refresh":
 		d.reconcileAll()

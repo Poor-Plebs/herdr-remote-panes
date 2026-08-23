@@ -1794,3 +1794,31 @@ func TestDisconnectingClosesEveryKindOfPane(t *testing.T) {
 		t.Errorf("panesToClose = %v, want none", got)
 	}
 }
+
+func TestChangingAModeIsNotUndoneByAnUnreachableMachine(t *testing.T) {
+	// Toggling mirroring writes the setting first and then reconnects under it.
+	// A machine that will not answer used to make the whole thing report
+	// failure, so the menu said the change had not worked while the file on
+	// disk said it had -- and put fifteen lines of ssh banner on the screen to
+	// explain it.
+	unreachable := errors.New("staging is not reachable over ssh: exit status 255: " +
+		"@@@@@@@@@@\nWARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\n" +
+		"Host key verification failed.")
+
+	summary := summarizeError(unreachable)
+	if strings.Contains(summary, "\n") {
+		t.Errorf("the reply would span lines: %q", summary)
+	}
+	if !strings.Contains(summary, "host key changed") {
+		t.Errorf("summary = %q, want it to name the cause", summary)
+	}
+
+	// What the reply reads as: the change, then the machine's state.
+	reply := "mirroring off for staging" + ", but it is not reachable: " + summary
+	if !strings.Contains(reply, "mirroring off for staging") {
+		t.Errorf("reply = %q, want it to say the change happened", reply)
+	}
+	if len(reply) > 200 {
+		t.Errorf("reply is %d characters, too long for a menu screen", len(reply))
+	}
+}
