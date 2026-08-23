@@ -155,6 +155,14 @@ other spaces.
 SSH link fails is reopened. One you deliberately closed stays closed, and is
 still closed after a restart.
 
+**Restarting Herdr brings your machines back.** Each one you had connected
+reconnects with as many terminals as it had, opened one at a time rather than
+all at once. They are new sessions, though: a plain SSH terminal's shell goes
+when its pane does, so anything running in one is lost unless you started it
+under something that outlives it. With mirroring the work is on the machine
+rather than in the pane, so it is still running and the mirror simply finds it
+again.
+
 **An unreachable machine is left alone after two tries** rather than retried
 forever in the background. Fix whatever is wrong and pick it from the menu,
 which is how you say "try now".
