@@ -63,10 +63,14 @@ func NewWithBin(target, session, bin string) *Client {
 // ~/.local/bin — where Herdr's own installer puts it for a non-root user — is
 // invisible even though an interactive login finds it. Probe the usual
 // locations rather than failing with "herdr: command not found".
+//
+// -f as well as -x: a directory is executable in the sense -x tests for, so a
+// directory named herdr would otherwise be handed back as the binary and every
+// call after that would fail saying something else entirely.
 const probeScript = `command -v herdr 2>/dev/null && exit 0
 for p in "$HOME/.local/bin/herdr" /usr/local/bin/herdr /opt/homebrew/bin/herdr \
          "$HOME/.nix-profile/bin/herdr" "$HOME/.local/share/mise/shims/herdr"; do
-  [ -x "$p" ] && printf '%s\n' "$p" && exit 0
+  [ -f "$p" ] && [ -x "$p" ] && printf '%s\n' "$p" && exit 0
 done
 exit 1`
 

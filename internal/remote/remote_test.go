@@ -3,6 +3,7 @@ package remote
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -201,5 +202,126 @@ func TestSSHArgsEndOptionsBeforeTheTarget(t *testing.T) {
 		if args[len(args)-2] != "--" {
 			t.Errorf("SSHArgs(%v) has no -- before the target: %v", tty, args)
 		}
+	}
+}
+
+func TestProbeScriptFindsHerdrWherePathDoesNot(t *testing.T) {
+	// `ssh host <command>` runs no login shell, so an install under
+	// ~/.local/bin -- where Herdr's own installer puts it for a non-root user
+	// -- is invisible to PATH even though an interactive login finds it. This
+	// script is what runs on someone else's machine to sort that out, so it is
+	// checked by running it rather than by reading it.
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh to run the probe in")
+	}
+
+	run := func(home, path string) (string, error) {
+		cmd := exec.Command("/bin/sh", "-c", probeScript)
+		cmd.Env = []string{"HOME=" + home, "PATH=" + path}
+		out, err := cmd.Output()
+		return strings.TrimSpace(string(out)), err
+	}
+	install := func(dir, name string) string {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	t.Run("on PATH", func(t *testing.T) {
+		dir := t.TempDir()
+		install(dir, "herdr")
+		got, err := run(t.TempDir(), dir)
+		if err != nil {
+			t.Fatalf("the probe failed: %v", err)
+		}
+		if !strings.HasSuffix(got, "/herdr") {
+			t.Errorf("probe said %q, want a path to herdr", got)
+		}
+	})
+
+	t.Run("only under ~/.local/bin", func(t *testing.T) {
+		home := t.TempDir()
+		want := install(filepath.Join(home, ".local", "bin"), "herdr")
+		got, err := run(home, t.TempDir()) // an empty PATH directory
+		if err != nil {
+			t.Fatalf("the probe failed where herdr is installed: %v", err)
+		}
+		if got != want {
+			t.Errorf("probe said %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a home directory with a space in it", func(t *testing.T) {
+		// Quoted in the script; unquoted it would split and find nothing.
+		home := filepath.Join(t.TempDir(), "My Home")
+		want := install(filepath.Join(home, ".local", "bin"), "herdr")
+		got, err := run(home, t.TempDir())
+		if err != nil {
+			t.Fatalf("the probe failed: %v", err)
+		}
+		if got != want {
+			t.Errorf("probe said %q, want %q", got, want)
+		}
+	})
+
+	t.Run("nowhere at all", func(t *testing.T) {
+		got, err := run(t.TempDir(), t.TempDir())
+		if err == nil {
+			t.Errorf("the probe reported success with no herdr installed: %q", got)
+		}
+		if got != "" {
+			t.Errorf("the probe printed %q when it found nothing", got)
+		}
+	})
+
+	t.Run("a directory named herdr is not a herdr", func(t *testing.T) {
+		// -x is true for a directory, so a bare existence check would offer one
+		// as the binary and every later call would fail confusingly.
+		home := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(home, ".local", "bin", "herdr"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := run(home, t.TempDir())
+		if got != "" {
+			t.Errorf("the probe offered a directory as the binary: %q", got)
+		}
+	})
+}
+
+func TestShellArgvOpensAnInteractiveLogin(t *testing.T) {
+	// This is what every plain SSH pane runs, which is the default and so the
+	// path most people are on.
+	argv := New("bot", "default").ShellArgv()
+
+	if len(argv) == 0 || argv[0] != "ssh" {
+		t.Fatalf("ShellArgv = %v, want it to start with ssh", argv)
+	}
+	joined := strings.Join(argv, " ")
+
+	// A pty on the far side, or the shell there runs without a terminal and
+	// behaves like a pipe: no prompt, no job control, no editor.
+	if !strings.Contains(joined, "-tt") {
+		t.Errorf("ShellArgv does not ask for a terminal: %v", argv)
+	}
+	// BatchMode=yes would refuse to ask for a passphrase, and the pane would
+	// close instead of prompting. The polling calls set it; this must not.
+	if strings.Contains(joined, "BatchMode=yes") {
+		t.Errorf("an interactive shell cannot be in batch mode: %v", argv)
+	}
+	if !strings.Contains(joined, "BatchMode=no") {
+		t.Errorf("ShellArgv should ask for interaction explicitly: %v", argv)
+	}
+	// The destination last, after "--", so it is never read as an option.
+	if argv[len(argv)-1] != "bot" || argv[len(argv)-2] != "--" {
+		t.Errorf("ShellArgv should end with -- bot: %v", argv)
+	}
+	// Nothing to run: the point is the login shell itself.
+	if strings.Contains(joined, "herdr") {
+		t.Errorf("a plain SSH pane should not need Herdr on the machine: %v", argv)
 	}
 }
