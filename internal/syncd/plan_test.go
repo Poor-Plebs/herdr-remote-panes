@@ -1289,3 +1289,55 @@ func TestBothSetsStopATerminalBeingMirrored(t *testing.T) {
 		t.Errorf("plan opens %+v, want only the untouched terminal", plan.Open)
 	}
 }
+
+func TestAFailedSnapshotWriteIsTriedAgain(t *testing.T) {
+	// The snapshot is only written when it differs from what was last written.
+	// Recording it as written before the write actually succeeded meant a
+	// failed one -- a full disk, a state directory that went away -- left this
+	// believing the file held content it never received. Every later pass then
+	// saw nothing to do, and the snapshot silently stopped being saved for as
+	// long as the daemon ran.
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocked, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", filepath.Join(blocked, "state"))
+	t.Setenv("HERDR_SESSION", "default")
+
+	d := withConfig(&Daemon{hosts: map[string]*hostSync{
+		"bot": {
+			host:       config.Host{Target: "bot"},
+			mirrors:    map[string]string{"term_1": "w1:p1"},
+			dismissed:  map[string]bool{},
+			abandoned:  map[string]bool{},
+			shellPanes: map[string]bool{},
+		},
+	}}, config.Defaults())
+
+	d.persist()
+	d.mu.Lock()
+	recorded := len(d.lastSaved)
+	d.mu.Unlock()
+	if recorded != 0 {
+		t.Error("a write that failed was recorded as having succeeded")
+	}
+
+	// Once the state directory works, the next pass must write it rather than
+	// deciding there is nothing to do.
+	good := filepath.Join(dir, "state")
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", good)
+	d.persist()
+
+	path, err := snapshotPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the snapshot was never written: %v", err)
+	}
+	if !strings.Contains(string(raw), "term_1") {
+		t.Errorf("snapshot = %s, want the mirror in it", raw)
+	}
+}

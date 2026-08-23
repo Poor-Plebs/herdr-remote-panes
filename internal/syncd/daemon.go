@@ -1094,12 +1094,20 @@ func (d *Daemon) persist() {
 		d.mu.Unlock()
 		return
 	}
-	d.lastSaved = raw
 	d.mu.Unlock()
 
+	// Recorded only once it is actually on disk. Recording it first meant a
+	// failed write -- a full disk, a state directory that went away -- left
+	// this believing the file held content it never received, so every later
+	// pass saw nothing to do and the snapshot silently stopped being saved for
+	// as long as the daemon ran.
 	if err := writeSnapshot(raw); err != nil {
 		log.Printf("save mirror state: %v", err)
+		return
 	}
+	d.mu.Lock()
+	d.lastSaved = raw
+	d.mu.Unlock()
 }
 
 // reconcileHost brings one host's mirrors in line with its remote panes.
