@@ -351,7 +351,7 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		if cmd.Host == "" {
 			connected, err := d.connectAll()
 			if err != nil {
-				return Reply{Message: err.Error()}
+				return Reply{Message: summarizeError(err)}
 			}
 			d.reconcileAll()
 			// Worded so it cannot be mistaken for the single-machine reply
@@ -367,7 +367,10 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 			return Reply{Message: fmt.Sprintf("%s is not in the plugin config", cmd.Host)}
 		}
 		if err := d.connect(host); err != nil {
-			return Reply{Message: err.Error()}
+			// Summarised like the status line and the log: ssh prints fifteen
+			// lines of banner for a changed host key, and the screen after
+			// pressing enter is the one place somebody is certainly looking.
+			return Reply{Message: summarizeError(err)}
 		}
 		d.reconcileAll()
 
@@ -377,8 +380,8 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		// happened.
 		opened, err := d.ensureRemotePresence(host)
 		if err != nil {
-			return Reply{Message: fmt.Sprintf("connected to %s, but could not open a terminal: %v",
-				host.Target, err)}
+			return Reply{Message: fmt.Sprintf("connected to %s, but could not open a terminal: %s",
+				host.Target, summarizeError(err))}
 		}
 		d.reconcileAll()
 		d.focusHost(host.Target)
@@ -410,10 +413,10 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 			return Reply{OK: true, Message: "opened a local pane"}
 		}
 		if err := d.connect(host); err != nil {
-			return Reply{Message: err.Error()}
+			return Reply{Message: summarizeError(err)}
 		}
 		if err := d.openRemotePane(host, cmd.Placement, true); err != nil {
-			return Reply{Message: err.Error()}
+			return Reply{Message: summarizeError(err)}
 		}
 		d.reconcileAll()
 		return Reply{OK: true, Message: "opened a terminal on " + host.Target}

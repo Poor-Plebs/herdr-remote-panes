@@ -1889,3 +1889,37 @@ func TestClaimedPanesCoversEveryMachineAndBothKinds(t *testing.T) {
 		t.Error("a pane nobody has was claimed")
 	}
 }
+
+func TestWhatTheMenuShowsAfterAFailedConnectIsReadable(t *testing.T) {
+	// The status line and the log both summarise a machine that will not
+	// answer. The reply to pressing enter did not, so the one screen somebody
+	// is certainly looking at was the one showing fifteen lines of ssh banner.
+	banner := errors.New(`prod is not reachable over ssh: exit status 255: @@@@@@@@@@@@@@@
+@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
+@@@@@@@@@@@@@@@
+IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!
+Someone could be eavesdropping on you right now (man-in-the-middle attack)!
+The fingerprint for the ED25519 key sent by the remote host is
+SHA256:ekdqq1VzTZUkbfV4hKMQa2T+6OB7kJ2bDyKFsEDJYV0.
+Offending ECDSA key in /home/ounos/.ssh/known_hosts:113
+Host key verification failed.`)
+
+	got := summarizeError(banner)
+	if strings.Contains(got, "\n") {
+		t.Errorf("the reply spans lines: %q", got)
+	}
+	if strings.Contains(got, "@@@") {
+		t.Errorf("the reply still carries the banner: %q", got)
+	}
+	if !strings.Contains(got, "host key changed") {
+		t.Errorf("reply = %q, want it to name the cause", got)
+	}
+	if !strings.Contains(got, "known_hosts") {
+		t.Errorf("reply = %q, want it to say what to do", got)
+	}
+
+	// Short enough for the screen it lands on, which wraps to eight lines.
+	if len([]rune(got)) > 120 {
+		t.Errorf("reply is %d characters, too long for a popup", len([]rune(got)))
+	}
+}
