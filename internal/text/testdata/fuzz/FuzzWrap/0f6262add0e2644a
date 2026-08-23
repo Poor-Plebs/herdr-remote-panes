@@ -1,0 +1,4 @@
+go test fuzz v1
+string("\x8b")
+int(95)
+int(75)

@@ -89,13 +89,20 @@ func knownPlacement(placement string) bool {
 	return false
 }
 
-// ValidTarget reports why a target cannot be used, or nil.
+// ValidTarget reports why a target is unsafe to hand ssh, or nil.
 //
 // The target is handed to ssh as an argument. ssh takes options on the command
 // line, and -oProxyCommand=... runs a command, so a target beginning with a
-// dash is an instruction rather than a machine. Targets do not only come from
-// this file: connect falls back to whatever text is selected in the terminal,
-// which is how a line of someone else's output becomes an argument to ssh.
+// dash is an instruction rather than a machine. A control character has no
+// business in a host name and would reach the terminal on its way to being
+// drawn.
+//
+// A space is not on this list. It is safe -- the target is one element of an
+// argument list and never goes near a shell -- and it is legal: ssh allows
+// `Host "my server"` and connects to it as `ssh "my server"`. Refusing it here
+// meant such a machine was read correctly out of ~/.ssh/config and then dropped
+// from the menu without a word. What a space does mean is that a name nobody
+// declared is probably not a name at all, which is PlausibleTarget's business.
 func ValidTarget(target string) error {
 	if target == "" {
 		return errors.New("no target")
@@ -104,8 +111,30 @@ func ValidTarget(target string) error {
 		return fmt.Errorf("target %q starts with a dash, which ssh reads as an option", target)
 	}
 	for _, r := range target {
-		if unicode.IsSpace(r) || unicode.IsControl(r) {
-			return fmt.Errorf("target %q contains a space or control character", target)
+		if unicode.IsControl(r) {
+			return fmt.Errorf("target %q contains a control character", target)
+		}
+	}
+	return nil
+}
+
+// PlausibleTarget reports why a target nobody wrote down cannot be used.
+//
+// Targets do not only come from a file somebody edited: connect falls back to
+// whatever text is selected in the terminal, which is how a line of someone
+// else's output becomes an argument to ssh. Such a name has to look like a
+// name, and a line with a space in it is a sentence.
+//
+// Held apart from ValidTarget because the two answer different questions. This
+// one is a guess about what somebody meant, and a machine written down in
+// ~/.ssh/config needs no guessing.
+func PlausibleTarget(target string) error {
+	if err := ValidTarget(target); err != nil {
+		return err
+	}
+	for _, r := range target {
+		if unicode.IsSpace(r) {
+			return fmt.Errorf("target %q contains a space, so it is unlikely to be a machine", target)
 		}
 	}
 	return nil

@@ -248,14 +248,17 @@ func TestValidTargetRefusesAnOptionDressedAsAMachine(t *testing.T) {
 	//
 	// It matters because targets do not only come from a file someone typed.
 	// connect falls back to whatever text is selected in the terminal, so a
-	// line of output from somewhere else can end up here.
+	// line of output from somewhere else can end up here. That second source is
+	// what PlausibleTarget guards; this one is about what ssh can be handed at
+	// all, whoever wrote it.
 	refused := []string{
 		"",
 		"-oProxyCommand=touch /tmp/x",
 		"-F/dev/null",
 		"--",
 		"-",
-		"host with spaces",
+		// Tabs and newlines are control characters, so they stay here even
+		// though a plain space no longer does.
 		"host\twith\ttabs",
 		"host\nnewline",
 		"host\x00null",
@@ -893,5 +896,46 @@ func TestTheSameBrokenFileReadsTheSameOnEveryToolchain(t *testing.T) {
 	// And a path with nothing but a position keeps something to say.
 	if got := plainField("0"); got == "" {
 		t.Error("a field of only a position should not vanish")
+	}
+}
+
+func TestASpaceIsSafeButOnlyMeansSomethingWhenNobodyWroteItDown(t *testing.T) {
+	// These answer different questions and used to be one. ValidTarget asks
+	// whether ssh can be handed this at all; PlausibleTarget asks whether
+	// somebody meant it as a machine, which only matters for a name nobody
+	// declared -- connect falls back to the terminal's selection, so a line of
+	// someone else's output can arrive as a target.
+	//
+	// Merging them cost a real machine: `Host "my server"` is legal ssh, read
+	// correctly out of ~/.ssh/config, and then dropped from the menu in silence.
+	t.Run("a space is safe to hand ssh", func(t *testing.T) {
+		if err := ValidTarget("my server"); err != nil {
+			t.Errorf("ValidTarget(my server) = %v, want nil", err)
+		}
+	})
+	t.Run("but a name nobody wrote down needs to look like one", func(t *testing.T) {
+		if err := PlausibleTarget("my server"); err == nil {
+			t.Error("a selected line with a space was taken as a machine")
+		}
+	})
+
+	// Both still refuse what is actually dangerous, whoever it came from.
+	for _, target := range []string{"", "-oProxyCommand=touch /tmp/x", "bot\x00", "a\x1b[31mb", "bot\n"} {
+		if err := ValidTarget(target); err == nil {
+			t.Errorf("ValidTarget(%q) = nil, want a refusal", target)
+		}
+		if err := PlausibleTarget(target); err == nil {
+			t.Errorf("PlausibleTarget(%q) = nil, want a refusal", target)
+		}
+	}
+
+	// And both accept an ordinary machine.
+	for _, target := range []string{"bot", "user@10.0.0.1", "prod.example.com", "[2001:db8::1]"} {
+		if err := ValidTarget(target); err != nil {
+			t.Errorf("ValidTarget(%q) = %v, want nil", target, err)
+		}
+		if err := PlausibleTarget(target); err != nil {
+			t.Errorf("PlausibleTarget(%q) = %v, want nil", target, err)
+		}
 	}
 }

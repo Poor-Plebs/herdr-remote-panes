@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 )
 
 // Path is the user's SSH config location.
@@ -52,7 +54,7 @@ func hostsFrom(path string, depth int) []string {
 		switch keyword {
 		case "host":
 			for _, alias := range fields[1:] {
-				if isPattern(alias) || seen[alias] {
+				if !connectable(alias) || seen[alias] {
 					continue
 				}
 				seen[alias] = true
@@ -143,6 +145,21 @@ func stripComment(line string) string {
 // machine that can be connected to.
 func isPattern(alias string) bool {
 	return strings.ContainsAny(alias, "*?!")
+}
+
+// connectable reports whether an alias names a machine somebody could connect
+// to, as opposed to a rule about machines or a line ssh would refuse.
+//
+// Filtered here rather than left to callers. This returns machines, and the one
+// caller there is happened to check -- so the next one would have inherited a
+// menu entry for `Host -oProxyCommand=...`, which ssh reads as an option and
+// not a destination.
+//
+// `Host ""` is a legal line that names nothing. Quotes are honoured so a name
+// may hold a space, and the rule that allows that turns an empty pair of them
+// into an empty field.
+func connectable(alias string) bool {
+	return alias != "" && !isPattern(alias) && config.ValidTarget(alias) == nil
 }
 
 // expand resolves an Include path, which may be relative to ~/.ssh and may

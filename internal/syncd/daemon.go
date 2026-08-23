@@ -27,6 +27,7 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/mirror"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/sshconfig"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/version"
 )
@@ -794,10 +795,32 @@ func (d *Daemon) hostConfig(name string) (config.Host, bool) {
 	// been through the config file's checks, though, and it need not have come
 	// from a person typing it: connect falls back to whatever text is selected
 	// in the terminal, so a line of someone else's output can arrive here.
-	if config.ValidTarget(name) == nil {
+	//
+	// Which is why a name in ~/.ssh/config is held to less. Somebody wrote it
+	// down, so there is nothing left to guess about whether it is a machine --
+	// and `Host "my server"` is a machine, one ssh reaches as `ssh "my
+	// server"`. A name from nowhere still has to look like a name.
+	check := config.PlausibleTarget
+	if declaredInSSHConfig(name) {
+		check = config.ValidTarget
+	}
+	if check(name) == nil {
 		return config.Host{Target: name}, true
 	}
 	return config.Host{}, false
+}
+
+// declaredInSSHConfig reports whether the user wrote this machine down.
+//
+// Read rather than cached: ~/.ssh/config is edited by hand between connects,
+// and this runs on connect rather than in the reconcile loop.
+func declaredInSSHConfig(name string) bool {
+	for _, host := range sshconfig.Hosts() {
+		if host == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Daemon) connect(host config.Host) error {

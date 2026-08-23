@@ -130,3 +130,56 @@ func TestHostsIgnoresComments(t *testing.T) {
 		}
 	}
 }
+
+func TestOnlyMachinesSomebodyCouldConnectToAreOffered(t *testing.T) {
+	// Hosts() returns machines, so the filtering belongs here rather than in
+	// whichever caller thought to do it. The one caller there was did check --
+	// so a second one would have inherited a menu row for `Host -oProxy...`,
+	// which ssh reads as an option and not a destination.
+	cases := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{
+			name:    "an alias ssh would read as an option",
+			content: "Host bot\nHost -oProxyCommand=something\n",
+			want:    []string{"bot"},
+		},
+		{
+			name:    "an empty pair of quotes names nothing",
+			content: "Host \"\"\nHost bot\n",
+			want:    []string{"bot"},
+		},
+		{
+			name:    "a quoted name with a space is a machine",
+			content: "Host \"my server\"\nHost bot\n",
+			want:    []string{"my server", "bot"},
+		},
+		{
+			name:    "patterns are rules about machines, not machines",
+			content: "Host *\nHost !prod\nHost web?\nHost bot\n",
+			want:    []string{"bot"},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config")
+			if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got := hostsFrom(path, 0)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("got %q, want %q", got, tt.want)
+					break
+				}
+			}
+		})
+	}
+}
