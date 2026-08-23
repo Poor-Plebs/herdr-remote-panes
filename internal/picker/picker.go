@@ -258,30 +258,75 @@ func nameWidth(cols int) int {
 // The menu runs in a popup whose height it does not control, and writing more
 // lines than fit scrolls the top away — taking the first machine, and the
 // heading, with it. So the list is windowed rather than assumed to fit.
-func visibleWindow(count, selected, rows int) (first, last int) {
-	// Heading, the blank line under it, and the two footer lines.
-	const chrome = 4
-	visible := rows - chrome
-	if visible < 1 {
-		visible = 1
+// layout is what fits in a popup of a given height: which slice of the machines
+// to draw, and whether there is room for the range counter and the key hints.
+type layout struct {
+	first, last int
+	counter     bool
+	hints       bool
+}
+
+// planLayout decides the whole frame in one place. It used to be split between
+// a row budget here and the drawing itself, and the two drifted: the budget did
+// not know about the "showing x-y of z" line, so once the list scrolled the
+// menu was a line taller than the popup and the heading scrolled away.
+func planLayout(count, selected, rows int) layout {
+	if rows < 1 {
+		rows = 1
 	}
-	if visible >= count {
-		return 0, count
+	// The heading and the blank line under it are always drawn.
+	const heading = 2
+
+	// Try to keep the key hints, which cost a blank separator and two lines.
+	// In a popup too short to hold them and a machine as well, the machines are
+	// the point and the hints are dropped. The counter is decided in the same
+	// place, because it is the line that costs a row only once the list
+	// scrolls -- exactly the case the old budget missed.
+	for _, hints := range []bool{true, false} {
+		chrome := heading
+		if hints {
+			chrome += 3
+		}
+
+		if visible := rows - chrome; visible >= 1 && visible >= count {
+			return layout{first: 0, last: count, hints: hints}
+		}
+		visible := rows - chrome - 1
+		if visible < 1 {
+			continue
+		}
+
+		first := selected - visible/2
+		if first < 0 {
+			first = 0
+		}
+		if first+visible > count {
+			first = count - visible
+		}
+		if first < 0 {
+			first = 0
+		}
+		return layout{first: first, last: first + visible, counter: true, hints: hints}
 	}
 
-	first = selected - visible/2
-	if first < 0 {
-		first = 0
+	// Nothing fits properly; show the selected machine and nothing else.
+	if selected < 0 || selected >= count {
+		return layout{first: 0, last: count}
 	}
-	if first+visible > count {
-		first = count - visible
-	}
-	return first, first + visible
+	return layout{first: selected, last: selected + 1}
 }
 
 func draw(entries []Entry, selected int) {
 	cols, rows := windowSize()
-	first, last := visibleWindow(len(entries), selected, rows)
+	fmt.Print(render(entries, selected, cols, rows))
+}
+
+// render draws the menu into a string. Keeping it separate from the terminal it
+// is printed to is what makes the layout checkable: alignment, truncation and
+// the wide characters in a host name are otherwise only ever seen by eye.
+func render(entries []Entry, selected, cols, rows int) string {
+	frame := planLayout(len(entries), selected, rows)
+	first, last := frame.first, frame.last
 
 	var b strings.Builder
 	b.WriteString(esc + "[2J" + esc + "[H")
@@ -329,12 +374,15 @@ func draw(entries []Entry, selected int) {
 		b.WriteString(marker + " " + number + " " + name + " " + line + "\r\n")
 	}
 
-	if last < len(entries) || first > 0 {
+	if frame.counter {
 		b.WriteString("  " + dim + fmt.Sprintf("showing %d-%d of %d", first+1, last, len(entries)) + reset + "\r\n")
 	}
-	b.WriteString("  " + dim + "↑↓ jk move · pgup/pgdn g/G jump · 1-9 pick · enter connect" + reset + "\r\n")
-	b.WriteString("  " + dim + "m toggle mirroring (experimental) · q cancel" + reset)
-	fmt.Print(b.String())
+	if frame.hints {
+		b.WriteString("\r\n")
+		b.WriteString("  " + dim + "↑↓ jk move · pgup/pgdn g/G jump · 1-9 pick · enter connect" + reset + "\r\n")
+		b.WriteString("  " + dim + "m toggle mirroring (experimental) · q cancel" + reset)
+	}
+	return strings.TrimSuffix(b.String(), "\r\n")
 }
 
 // windowSize reports the popup's size, falling back to something sensible when
