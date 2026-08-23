@@ -300,3 +300,37 @@ func TestDisplayNamePrefersARealTitleOverTheDirectory(t *testing.T) {
 		t.Errorf("DisplayName() = %q, want the label", got)
 	}
 }
+
+func TestSafeAgent(t *testing.T) {
+	// An agent's name is set by whatever runs in the pane, which for a remote
+	// pane is something at the other end of an SSH connection. It reaches a
+	// sidebar by two routes -- as part of a pane's name, and through
+	// report-agent -- and cleaning it at each route is how one of them came to
+	// be missed.
+	p := Pane{Agent: "claude\x1b[31m\nfake\r"}
+	got := p.SafeAgent()
+
+	for _, bad := range []string{"\x1b", "\n", "\r"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("SafeAgent() = %q, still carries %q", got, bad)
+		}
+	}
+	if !strings.Contains(got, "claude") {
+		t.Errorf("SafeAgent() = %q, lost the readable part", got)
+	}
+
+	// An unbounded name would crowd out everything beside it.
+	long := Pane{Agent: strings.Repeat("x", 500)}
+	if n := len([]rune(long.SafeAgent())); n > maxAgentName {
+		t.Errorf("SafeAgent() is %d runes, want at most %d", n, maxAgentName)
+	}
+
+	// Nothing in, nothing out: an empty agent means no agent, and must not
+	// become something that looks like one.
+	if got := (Pane{}).SafeAgent(); got != "" {
+		t.Errorf("SafeAgent() = %q, want empty", got)
+	}
+	if got := (Pane{Agent: "   "}).SafeAgent(); got != "" {
+		t.Errorf("SafeAgent() = %q for whitespace, want empty", got)
+	}
+}

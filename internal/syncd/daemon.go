@@ -1498,7 +1498,10 @@ func (d *Daemon) backOff(state *hostSync, terminalID string, cause error) {
 // pane, so a remote agent appears in the sidebar with the right name and state
 // instead of showing up as a bare ssh pane.
 func (d *Daemon) syncAgent(state *hostSync, paneID string, rp herdrcli.Pane) {
-	agent := strings.TrimSpace(rp.Agent)
+	// Cleaned like every other name from the far machine: this reaches the
+	// sidebar through report-agent rather than through the pane's label, and
+	// that second route was left unguarded when the first one was fixed.
+	agent := rp.SafeAgent()
 	previous, reported := state.reportedAgents[paneID]
 
 	if agent == "" {
@@ -1593,7 +1596,7 @@ func (d *Daemon) label(host config.Host, rp herdrcli.Pane, name string) string {
 	replacer := strings.NewReplacer(
 		"{name}", name,
 		"{host}", text.Sanitize(host.DisplayLabel()),
-		"{agent}", text.Truncate(text.Sanitize(rp.Agent), maxLabelWidth),
+		"{agent}", rp.SafeAgent(),
 		"{pane}", text.Sanitize(rp.PaneID),
 	)
 	return replacer.Replace(d.config().LabelFormat)
