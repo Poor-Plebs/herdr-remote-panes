@@ -3,6 +3,7 @@ package syncd
 import (
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -738,4 +739,64 @@ func TestStatusToleratesADuplicateInTheConfig(t *testing.T) {
 	if got := d.orderedHosts(); len(got) != 1 {
 		t.Errorf("got %d entries, want 1", len(got))
 	}
+}
+
+func TestStatusIsSafeWhileMachinesChange(t *testing.T) {
+	// status walks the map of machines while the reconcile loop is adding to
+	// it, removing from it and swapping the config. Reading that map without
+	// holding the lock is the kind of fault that shows up as a crash on a busy
+	// machine and never in a quiet test, so the race detector is pointed at it
+	// deliberately here.
+	d := &Daemon{
+		cfg:   config.Config{Hosts: []config.Host{{Target: "bot"}, {Target: "prod"}}},
+		hosts: map[string]*hostSync{},
+	}
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	// Readers: whatever the menu and the status command do.
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					for _, info := range d.status() {
+						_ = info.Target
+					}
+				}
+			}
+		}()
+	}
+
+	// Writer: machines connecting and dropping, and the config being replaced
+	// when a mode is toggled from the menu. It is waited on separately from the
+	// readers, which only stop when told to.
+	written := make(chan struct{})
+	go func() {
+		defer close(written)
+		targets := []string{"bot", "prod", "staging", "ci"}
+		for i := 0; i < 400; i++ {
+			target := targets[i%len(targets)]
+			d.mu.Lock()
+			if _, ok := d.hosts[target]; ok {
+				delete(d.hosts, target)
+			} else {
+				d.hosts[target] = &hostSync{host: config.Host{Target: target}}
+			}
+			d.cfg = config.Config{Hosts: []config.Host{
+				{Target: "bot"}, {Target: target},
+			}}
+			d.mu.Unlock()
+		}
+	}()
+
+	// Let the writer finish, then release the readers.
+	<-written
+	close(stop)
+	wg.Wait()
 }

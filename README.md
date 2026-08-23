@@ -157,6 +157,7 @@ All optional, in `$(herdr plugin config-dir poorplebs.remote-panes)/config.json`
 | `workspace_format` | `☁  {host}` | How a machine's space is named |
 | `workspace_format_down` | `⚠  {host}` | How it is named while unreachable |
 | `workspace` | one per machine | Put every machine in one space instead |
+| `remote_workspace_format` | `☁  {hub}` | How *this* machine's space is named **on** the machine, so it is recognisable from that end |
 | `label_format` | `{name}@{host}` | How its terminals are named |
 | `poll_interval` | `2s` | How often machines are checked |
 | `close_propagates` | `true` | Closing a mirrored tab closes it on the machine |
@@ -191,6 +192,21 @@ else are reported when the daemon starts, in `status`, and in the menu:
 ```
 config: mode "shh" is not one of ssh, attach or observe; machines default to a plain SSH terminal
 ```
+
+**A machine says `unreachable, not retrying`.** Two failed attempts and it
+stops, rather than reconnecting forever in the background. Fix the cause, then
+pick it from the menu again to retry. The most common cause is a changed host
+key:
+
+```
+REMOTE HOST IDENTIFICATION HAS CHANGED
+```
+
+That means the machine now presents a different key than the one recorded in
+`~/.ssh/known_hosts`. A rebuilt or reinstalled machine does this, and so does
+someone sitting between you and it. Check the fingerprint against the machine
+itself before removing the old entry — the whole point of the warning is that
+you cannot tell the two cases apart from here.
 
 **A keybinding does nothing.** It probably clashes with a built-in. Taken:
 `b c e g h j k l n o p q r s v w x z tab minus alt+g shift+d shift+g shift+n

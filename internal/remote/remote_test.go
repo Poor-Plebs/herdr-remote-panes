@@ -1,6 +1,8 @@
 package remote
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -69,5 +71,79 @@ func TestConfiguredBinIsUsedVerbatim(t *testing.T) {
 	}
 	if got := strings.Join(argv, " "); !strings.Contains(got, "'~/.local/bin/herdr' pane list") {
 		t.Errorf("argv %q does not invoke the configured binary", got)
+	}
+}
+
+func TestShellQuoteSurvivesARealShell(t *testing.T) {
+	// The table test above asserts what the quoting should look like, which is
+	// only as good as the belief behind it. `ssh host <cmd>` runs the command
+	// through a shell on the far machine, so the real question is whether a
+	// string comes back out of a shell exactly as it went in. Anything that
+	// does not is an injection on someone else's machine.
+	//
+	// The payloads below announce themselves rather than doing damage: if the
+	// quoting leaks, the output contains INJECTED instead of the literal text.
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh to check against")
+	}
+
+	inputs := []string{
+		"simple",
+		"two words",
+		"it's",
+		`"double"`,
+		`back\slash`,
+		"$(echo INJECTED)",
+		"`echo INJECTED`",
+		"${IFS}INJECTED",
+		"a;echo INJECTED",
+		"a|echo INJECTED",
+		"a&&echo INJECTED",
+		"a>/dev/null",
+		"*",
+		"~root",
+		"--flag",
+		"-",
+		"line\nbreak",
+		"tab\there",
+		"emoji 🌩 name",
+		"héllo",
+		"'",
+		`'\''`,
+		"$",
+		"!history",
+		"a$'\\n'b",
+	}
+
+	for _, in := range inputs {
+		// printf %s prints its argument with no interpretation of its own, so
+		// whatever comes back is exactly what the shell handed it.
+		out, err := exec.Command("/bin/sh", "-c", "printf %s "+shellQuote(in)).Output()
+		if err != nil {
+			t.Errorf("shellQuote(%q) produced something the shell rejected: %v", in, err)
+			continue
+		}
+		if string(out) != in {
+			t.Errorf("shellQuote(%q) came back as %q", in, string(out))
+		}
+	}
+}
+
+func TestRemoteCommandQuotesEveryPart(t *testing.T) {
+	// A session name comes from a config file edited by hand, and a mistake in
+	// it should stay a mistake rather than becoming a command on the machine at
+	// the far end.
+	c := &Client{Target: "bot", Session: "a;echo INJECTED"}
+	cmd := c.remoteCommand("/usr/bin/herdr", []string{"pane", "list", "--filter", "$(echo INJECTED)"})
+
+	out, err := exec.Command("/bin/sh", "-c", "set -- "+cmd+`; printf '%s\n' "$@"`).Output()
+	if err != nil {
+		t.Fatalf("the rendered command is not valid shell: %v (%s)", err, cmd)
+	}
+	if strings.Contains(string(out), "INJECTED\n") && !strings.Contains(string(out), "$(echo INJECTED)") {
+		t.Errorf("a value escaped its quoting: %q", string(out))
+	}
+	if !strings.Contains(string(out), "$(echo INJECTED)") {
+		t.Errorf("the literal argument did not survive: %q", string(out))
 	}
 }
