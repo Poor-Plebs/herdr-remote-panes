@@ -178,3 +178,24 @@ func TestSameSettings(t *testing.T) {
 		t.Error("clients for different sessions share a control path")
 	}
 }
+
+func TestSSHArgsEndOptionsBeforeTheTarget(t *testing.T) {
+	// ssh takes options on the command line, so without "--" a destination
+	// beginning with a dash is read as one. -oProxyCommand=... runs a command,
+	// and a target need not have been typed by the person running this: connect
+	// falls back to whatever text is selected in the terminal.
+	c := New("bot", "default")
+
+	for _, tty := range []bool{true, false} {
+		args := c.SSHArgs(tty)
+		if len(args) < 2 {
+			t.Fatalf("SSHArgs(%v) = %v", tty, args)
+		}
+		if args[len(args)-1] != "bot" {
+			t.Errorf("SSHArgs(%v) does not end with the target: %v", tty, args)
+		}
+		if args[len(args)-2] != "--" {
+			t.Errorf("SSHArgs(%v) has no -- before the target: %v", tty, args)
+		}
+	}
+}

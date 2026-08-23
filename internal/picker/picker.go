@@ -163,6 +163,11 @@ func collect() ([]Entry, string) {
 		entry.Mirroring = cfg.Mirrors(host)
 	}
 	for _, host := range sshconfig.Hosts() {
+		// An alias ssh would read as an option is not a machine anyone can
+		// connect to, so offering it would only produce a refusal later.
+		if config.ValidTarget(host) != nil {
+			continue
+		}
 		add(host)
 	}
 

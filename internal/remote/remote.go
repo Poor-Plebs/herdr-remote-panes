@@ -122,7 +122,10 @@ func (c *Client) SSHArgs(tty bool) []string {
 	} else {
 		args = append(args, "-o", "BatchMode=yes")
 	}
-	return append(args, c.Target)
+	// "--" so a destination is never read as an option. ssh takes -o on the
+	// command line, and -oProxyCommand=... runs a command, so a target that
+	// begins with a dash is an instruction rather than a machine.
+	return append(args, "--", c.Target)
 }
 
 // remoteCommand renders a Herdr invocation as a single shell command string,
@@ -268,7 +271,7 @@ func (c *Client) SameSettings(target, session, bin string) bool {
 
 // Close tears down the shared ControlMaster connection.
 func (c *Client) Close() {
-	argv := []string{"ssh", "-o", "ControlPath=" + c.controlPath, "-O", "exit", c.Target}
+	argv := []string{"ssh", "-o", "ControlPath=" + c.controlPath, "-O", "exit", "--", c.Target}
 	_, _ = runCommand(argv)
 }
 

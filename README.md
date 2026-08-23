@@ -240,6 +240,13 @@ Requires Herdr 0.8.0+ and Go 1.22+.
 This runs with your privileges and connects by SSH to machines you name. Read
 the source before installing it, the same as any Herdr plugin.
 
+`connect` with no machine given falls back to the text selected in the terminal,
+so a name can be highlighted and connected to. Selected text is not necessarily
+something you wrote, so it is checked before it is used: anything ssh would read
+as an option rather than a machine — a leading dash, a space, a control
+character — is refused, and the destination is passed after `--` so ssh cannot
+read it as one either.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

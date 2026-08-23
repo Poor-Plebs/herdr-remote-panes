@@ -237,3 +237,57 @@ func TestSaveWritesThroughASymlink(t *testing.T) {
 		t.Errorf("the real file was not written through: %v", err)
 	}
 }
+
+func TestValidTargetRefusesAnOptionDressedAsAMachine(t *testing.T) {
+	// The target is handed to ssh as an argument, and ssh takes options on the
+	// command line: -oProxyCommand=... runs a command. A target beginning with
+	// a dash is therefore an instruction, not a machine.
+	//
+	// It matters because targets do not only come from a file someone typed.
+	// connect falls back to whatever text is selected in the terminal, so a
+	// line of output from somewhere else can end up here.
+	refused := []string{
+		"",
+		"-oProxyCommand=touch /tmp/x",
+		"-F/dev/null",
+		"--",
+		"-",
+		"host with spaces",
+		"host\twith\ttabs",
+		"host\nnewline",
+		"host\x00null",
+		"host\x1b[31m",
+	}
+	for _, target := range refused {
+		if err := ValidTarget(target); err == nil {
+			t.Errorf("ValidTarget(%q) allowed it", target)
+		}
+	}
+
+	// Ordinary destinations must keep working, including the shapes ssh
+	// accepts beyond a bare name.
+	allowed := []string{
+		"bot",
+		"bot.example.com",
+		"deploy@bot",
+		"deploy@10.0.0.4",
+		"[2001:db8::1]",
+		"ssh://deploy@bot:2222",
+		"bot-1_2.internal",
+	}
+	for _, target := range allowed {
+		if err := ValidTarget(target); err != nil {
+			t.Errorf("ValidTarget(%q) refused an ordinary destination: %v", target, err)
+		}
+	}
+}
+
+func TestProblemsReportsATargetThatIsAnOption(t *testing.T) {
+	cfg := Defaults()
+	cfg.Hosts = []Host{{Target: "-oProxyCommand=touch /tmp/x"}}
+
+	problems := strings.Join(cfg.Problems(), "\n")
+	if !strings.Contains(problems, "dash") {
+		t.Errorf("problems %q should explain why the target is refused", problems)
+	}
+}

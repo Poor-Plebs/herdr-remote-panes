@@ -623,8 +623,11 @@ func (d *Daemon) hostConfig(name string) (config.Host, bool) {
 		}
 	}
 	// An unconfigured target is still usable: treat it as an ad-hoc host so
-	// `connect` works against anything in the user's ssh config.
-	if name != "" {
+	// `connect` works against anything in the user's ssh config. It has not
+	// been through the config file's checks, though, and it need not have come
+	// from a person typing it: connect falls back to whatever text is selected
+	// in the terminal, so a line of someone else's output can arrive here.
+	if config.ValidTarget(name) == nil {
 		return config.Host{Target: name}, true
 	}
 	return config.Host{}, false
