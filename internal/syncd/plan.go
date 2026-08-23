@@ -225,15 +225,25 @@ func planNeedsTerminal(liveTerminals int) bool {
 	return liveTerminals == 0
 }
 
-// planShellName names a plain SSH terminal from how many are already open.
+// planShellName picks a name for a new terminal on a machine, avoiding one
+// already on screen.
 //
-// Numbering from a running total instead drifts: close the only terminal and
-// the next one is called "shell 2", with no "shell 1" anywhere.
-func planShellName(liveTerminals int) string {
-	if liveTerminals == 0 {
-		return "shell"
+// It used to be the count of live terminals plus one, which repeats the moment
+// one in the middle is closed: with three open, closing the second gave the
+// next terminal the third's name, and two panes were called "shell 3".
+//
+// label renders what a name would be shown as, so what is compared is what is
+// actually drawn rather than a guess at how the format will treat it.
+func planShellName(taken map[string]bool, label func(string) string) string {
+	for n := 1; ; n++ {
+		name := "shell"
+		if n > 1 {
+			name = fmt.Sprintf("shell %d", n)
+		}
+		if !taken[label(name)] {
+			return name
+		}
 	}
-	return fmt.Sprintf("shell %d", liveTerminals+1)
 }
 
 // maxHostAttempts is how many times a machine is tried before it is left alone.

@@ -353,16 +353,73 @@ func TestPlanNeedsTerminal(t *testing.T) {
 }
 
 func TestPlanShellName(t *testing.T) {
-	// Numbering from a running total drifts: close the only terminal and the
-	// next one is "shell 2" with no "shell 1" anywhere.
-	if got := planShellName(0); got != "shell" {
+	// Numbering from a running total repeats the moment one in the middle is
+	// closed: with three open, closing the second gave the next terminal the
+	// third's name, and two panes on the machine were called "shell 3".
+	at := func(name string) string { return name + "@bot" }
+
+	if got := planShellName(nil, at); got != "shell" {
 		t.Errorf("first terminal = %q, want %q", got, "shell")
 	}
-	if got := planShellName(1); got != "shell 2" {
+
+	one := map[string]bool{"shell@bot": true}
+	if got := planShellName(one, at); got != "shell 2" {
 		t.Errorf("second terminal = %q, want %q", got, "shell 2")
 	}
-	if got := planShellName(3); got != "shell 4" {
+
+	three := map[string]bool{"shell@bot": true, "shell 2@bot": true, "shell 3@bot": true}
+	if got := planShellName(three, at); got != "shell 4" {
 		t.Errorf("fourth terminal = %q, want %q", got, "shell 4")
+	}
+
+	// The case that was wrong: the second of three closed, so its name is free
+	// again and the third's is not.
+	gap := map[string]bool{"shell@bot": true, "shell 3@bot": true}
+	if got := planShellName(gap, at); got != "shell 2" {
+		t.Errorf("terminal after a gap = %q, want the free name %q", got, "shell 2")
+	}
+
+	// The first name is reusable too, once nothing is called it.
+	if got := planShellName(map[string]bool{"shell 2@bot": true}, at); got != "shell" {
+		t.Errorf("terminal = %q, want %q", got, "shell")
+	}
+
+	// Names are compared as they are drawn, so a format that hides the number
+	// does not make every terminal collide forever.
+	sameForAll := func(string) string { return "terminal@bot" }
+	if got := planShellName(map[string]bool{}, sameForAll); got != "shell" {
+		t.Errorf("terminal = %q, want %q", got, "shell")
+	}
+}
+
+func TestPlanShellNameNeverRepeatsWhatIsOpen(t *testing.T) {
+	// Opening and closing in any order must never produce two terminals with
+	// the same name on one machine.
+	at := func(name string) string { return name + "@bot" }
+	open := map[string]bool{}
+
+	add := func() string {
+		name := planShellName(open, at)
+		if open[at(name)] {
+			t.Fatalf("%q is already on screen", at(name))
+		}
+		open[at(name)] = true
+		return name
+	}
+
+	first, second, third := add(), add(), add()
+	if first == second || second == third || first == third {
+		t.Fatalf("names repeat: %q %q %q", first, second, third)
+	}
+
+	delete(open, at(second))
+	if got := add(); got != second {
+		t.Errorf("the freed name %q was not reused, got %q", second, got)
+	}
+	// And with everything closed, numbering starts over.
+	open = map[string]bool{}
+	if got := add(); got != "shell" {
+		t.Errorf("with nothing open the first terminal is %q, want %q", got, "shell")
 	}
 }
 
@@ -1484,9 +1541,15 @@ func TestAPlainSSHPaneIsNamedAfterItsMachine(t *testing.T) {
 	// mention of which machine had gone -- ninety-five such lines in one log.
 	d := withConfig(&Daemon{}, config.Defaults())
 
-	for _, count := range []int{0, 1, 5} {
-		name := planShellName(count)
-		label := d.label(config.Host{Target: "bot"}, herdrcli.Pane{}, name)
+	render := func(n string) string { return d.label(config.Host{Target: "bot"}, herdrcli.Pane{}, n) }
+
+	for _, taken := range []map[string]bool{
+		nil,
+		{"shell@bot": true},
+		{"shell@bot": true, "shell 2@bot": true},
+	} {
+		name := planShellName(taken, render)
+		label := render(name)
 
 		if !strings.Contains(label, "bot") {
 			t.Errorf("label %q does not say which machine it is", label)

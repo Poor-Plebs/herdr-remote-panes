@@ -637,7 +637,20 @@ func (d *Daemon) openShellPane(state *hostSync, focus bool) error {
 		return err
 	}
 
-	name := planShellName(d.liveTerminalCount(state.host.Target))
+	// The names already on this machine's terminals, so the new one does not
+	// repeat any of them.
+	d.mu.Lock()
+	taken := make(map[string]bool, len(state.shellPanes))
+	for paneID := range state.shellPanes {
+		if existing := state.labels[paneID]; existing != "" {
+			taken[existing] = true
+		}
+	}
+	d.mu.Unlock()
+
+	name := planShellName(taken, func(candidate string) string {
+		return d.label(state.host, herdrcli.Pane{}, candidate)
+	})
 	// The name the pane will carry, worked out once. A mirrored pane is told
 	// its full label; a plain SSH pane used to be told only the bare part, so
 	// when one failed it announced itself as "shell" with no mention of which
