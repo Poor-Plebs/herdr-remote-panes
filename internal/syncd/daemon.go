@@ -590,21 +590,19 @@ func (d *Daemon) findRemoteWorkspace(state *hostSync) (bool, error) {
 // The bool reports whether the workspace was created just now, in which case
 // its root pane is already the terminal that was asked for.
 func (d *Daemon) ensureRemoteWorkspace(state *hostSync) (string, bool, error) {
+	// Looked for the same way the other lookup looks for it. This had its own
+	// search that matched the name exactly, so the two could disagree about
+	// whether the space already existed -- and this is the one that makes a new
+	// one when it decides there is none.
+	found, err := d.findRemoteWorkspace(state)
+	if err != nil {
+		return "", false, err
+	}
+	if found {
+		return state.remoteWorkspaceID, false, nil
+	}
+
 	label := d.config().RemoteWorkspaceLabel()
-
-	result, err := state.client.Run("workspace", "list")
-	if err != nil {
-		return "", false, err
-	}
-	workspaces, err := herdrcli.ParseWorkspaceList(result)
-	if err != nil {
-		return "", false, err
-	}
-	if id, ok := herdrcli.FindWorkspace(workspaces, label); ok {
-		state.remoteWorkspaceID = id
-		return id, false, nil
-	}
-
 	created, err := state.client.Run("workspace", "create", "--label", label)
 	if err != nil {
 		return "", false, err
@@ -633,16 +631,32 @@ func (d *Daemon) resolveOpenTarget(cmd Command) (config.Host, bool) {
 	if label == "" {
 		return config.Host{}, false
 	}
-	for _, h := range d.config().Hosts {
-		if d.config().WorkspaceFor(h) == label {
+	return d.hostForWorkspaceLabel(label)
+}
+
+// hostForWorkspaceLabel finds the machine whose space carries a label.
+//
+// The marker is ignored, as it is everywhere else a space is looked up by name.
+// Comparing against the reachable form alone meant that a machine which could
+// not be reached -- whose space is renamed to say so -- stopped being
+// recognised as the owner of its own space. Opening a tab there then made an
+// ordinary local shell, inside that machine's space, with nothing to say why.
+func (d *Daemon) hostForWorkspaceLabel(label string) (config.Host, bool) {
+	cfg := d.config()
+	matches := func(h config.Host) bool {
+		return cfg.WorkspaceFor(h) == label || sameWorkspace(label, h.DisplayLabel())
+	}
+
+	for _, h := range cfg.Hosts {
+		if matches(h) {
 			return h, true
 		}
 	}
-	// Also consider hosts connected ad hoc, which are not in the config file.
+	// Also machines connected ad hoc, which are not in the config file.
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, state := range d.hosts {
-		if d.config().WorkspaceFor(state.host) == label {
+		if matches(state.host) {
 			return state.host, true
 		}
 	}

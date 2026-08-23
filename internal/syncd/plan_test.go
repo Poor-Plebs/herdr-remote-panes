@@ -2169,3 +2169,64 @@ func TestASnapshotCarriesTheTerminalCount(t *testing.T) {
 		t.Errorf("restoreShells = %d, want the three that were open", fresh.restoreShells)
 	}
 }
+
+func TestAMachineOwnsItsSpaceEvenWhenItCannotBeReached(t *testing.T) {
+	// A machine's space is named "☁  bot" while it can be reached and "⚠  bot"
+	// while it cannot. Matching against the reachable form alone meant a
+	// machine stopped being recognised as the owner of its own space the moment
+	// it went down -- so opening a tab there made an ordinary local shell,
+	// inside that machine's space, with nothing to say why.
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{{Target: "bot"}}
+	d := withConfig(&Daemon{hosts: map[string]*hostSync{}}, cfg)
+
+	for _, label := range []string{"☁  bot", "⚠  bot"} {
+		got, ok := d.hostForWorkspaceLabel(label)
+		if !ok {
+			t.Errorf("%q was not recognised as a machine's space", label)
+			continue
+		}
+		if got.Target != "bot" {
+			t.Errorf("%q resolved to %q, want bot", label, got.Target)
+		}
+	}
+
+	// Something that is nobody's space stays nobody's, so the keybinding still
+	// makes an ordinary tab everywhere else.
+	if _, ok := d.hostForWorkspaceLabel("~"); ok {
+		t.Error("the local space was claimed by a machine")
+	}
+	if _, ok := d.hostForWorkspaceLabel("☁  somewhere-else"); ok {
+		t.Error("another machine's space was claimed")
+	}
+}
+
+func TestAMachineConnectedAdHocOwnsItsSpaceToo(t *testing.T) {
+	// Machines picked from ~/.ssh/config are never written into the plugin's
+	// config, so they are only found through what is connected.
+	d := withConfig(&Daemon{hosts: map[string]*hostSync{
+		"laptop": {host: config.Host{Target: "laptop"}},
+	}}, config.Defaults())
+
+	for _, label := range []string{"☁  laptop", "⚠  laptop"} {
+		got, ok := d.hostForWorkspaceLabel(label)
+		if !ok || got.Target != "laptop" {
+			t.Errorf("%q resolved to %+v, %v; want laptop", label, got, ok)
+		}
+	}
+}
+
+func TestAMachineWithItsOwnNameOwnsItsSpace(t *testing.T) {
+	// A machine can be given a name to show here, and its space is named after
+	// that rather than after the ssh destination.
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{{Target: "bot.example.com", Label: "bot"}}
+	d := withConfig(&Daemon{hosts: map[string]*hostSync{}}, cfg)
+
+	for _, label := range []string{"☁  bot", "⚠  bot"} {
+		got, ok := d.hostForWorkspaceLabel(label)
+		if !ok || got.Target != "bot.example.com" {
+			t.Errorf("%q resolved to %+v, %v; want the machine behind the name", label, got, ok)
+		}
+	}
+}
