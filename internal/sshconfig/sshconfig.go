@@ -79,21 +79,64 @@ func hostsFrom(path string, depth int) []string {
 // It drops comments, which are legal on a Host line and would otherwise be read
 // as machine names — "Host bot # work laptop" offering "#", "work" and "laptop"
 // alongside "bot". It also accepts the "Key=Value" spelling that ssh allows.
+//
+// And it honours double quotes, which ssh allows around a name containing a
+// space. Splitting on spaces turned `Host "my server"` into two machines called
+// `"my` and `server"`, both offered in the menu and neither of them anything
+// ssh could connect to.
 func splitDirective(line string) []string {
-	if i := strings.IndexByte(line, '#'); i >= 0 {
-		line = line[:i]
-	}
-	line = strings.TrimSpace(line)
+	line = strings.TrimSpace(stripComment(line))
 	if line == "" {
 		return nil
 	}
 	// "Host=bot" and "Host = bot" both mean "Host bot".
-	if i := strings.IndexByte(line, '='); i >= 0 {
+	if i := strings.IndexByte(line, '='); i >= 0 && !strings.ContainsRune(line[:i], '"') {
 		if len(strings.Fields(line[:i])) == 1 {
 			line = line[:i] + " " + line[i+1:]
 		}
 	}
-	return strings.Fields(line)
+
+	var fields []string
+	var current strings.Builder
+	quoted, started := false, false
+	flush := func() {
+		if started || current.Len() > 0 {
+			fields = append(fields, current.String())
+			current.Reset()
+			started = false
+		}
+	}
+	for _, r := range line {
+		switch {
+		case r == '"':
+			// An empty pair of quotes is still a value, so that a name written
+			// as "" is one field rather than none.
+			quoted = !quoted
+			started = true
+		case !quoted && (r == ' ' || r == '\t'):
+			flush()
+		default:
+			current.WriteRune(r)
+		}
+	}
+	flush()
+	return fields
+}
+
+// stripComment removes a trailing comment, leaving a # inside quotes alone.
+func stripComment(line string) string {
+	quoted := false
+	for i, r := range line {
+		switch r {
+		case '"':
+			quoted = !quoted
+		case '#':
+			if !quoted {
+				return line[:i]
+			}
+		}
+	}
+	return line
 }
 
 // isPattern reports whether an alias is a wildcard or a negation rather than a
