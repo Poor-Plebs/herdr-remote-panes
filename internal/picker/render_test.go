@@ -326,35 +326,6 @@ func TestAPageMovesExactlyOneScreenful(t *testing.T) {
 	}
 }
 
-func TestPagingReachesEveryMachine(t *testing.T) {
-	// The point of the step matching the screenful: paging from the top must
-	// eventually land on every machine rather than jumping past some.
-	entries := machines(37)
-	rows := 24
-	step := planLayout(len(entries), 0, rows, 0)
-	onScreen := step.last - step.first
-
-	seen := map[int]bool{}
-	selected := 0
-	for i := 0; i < len(entries)*2; i++ {
-		frame := planLayout(len(entries), selected, rows, 0)
-		for j := frame.first; j < frame.last; j++ {
-			seen[j] = true
-		}
-		next := move(selected, onScreen, len(entries))
-		if next == selected {
-			break
-		}
-		selected = next
-	}
-
-	for i := range entries {
-		if !seen[i] {
-			t.Errorf("machine %d was never shown while paging through", i)
-		}
-	}
-}
-
 func TestNoLineEverRunsPastThePopup(t *testing.T) {
 	// The room kept for the state column was a number written down beside the
 	// code that drew it, and it went stale the moment a state line grew: the

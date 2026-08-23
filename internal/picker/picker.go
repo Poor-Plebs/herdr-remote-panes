@@ -304,7 +304,14 @@ func move(selected, n, count int) int {
 // these two stay in agreement.
 func pageStep(entries []Entry, selected int, warning string) int {
 	cols, rows := windowSize()
-	frame := planLayout(len(entries), selected, rows, len(warningLines(cols, warning)))
+	return pageStepIn(len(entries), selected, cols, rows, warning)
+}
+
+// pageStepIn is pageStep at a given popup size, which is what makes it
+// checkable: the whole point of this is that it agrees with what was drawn, and
+// the only way to test agreement is to ask both at the same size.
+func pageStepIn(count, selected, cols, rows int, warning string) int {
+	frame := planLayout(count, selected, rows, len(warningLines(cols, warning)))
 	if step := frame.last - frame.first; step > 0 {
 		return step
 	}
@@ -710,6 +717,37 @@ const (
 	keyBottom     key = 0xE009
 	keyDisconnect key = 0xE00A
 )
+
+// String names a key, so that a failure about one reads as the key rather than
+// as the number in the private-use block it happens to be.
+func (k key) String() string {
+	switch k {
+	case keyUp:
+		return "up"
+	case keyDown:
+		return "down"
+	case keyEnter:
+		return "enter"
+	case keyQuit:
+		return "quit"
+	case keyNone:
+		return "nothing"
+	case keyToggle:
+		return "toggle mirroring"
+	case keyPageUp:
+		return "page up"
+	case keyPageDown:
+		return "page down"
+	case keyTop:
+		return "top"
+	case keyBottom:
+		return "bottom"
+	case keyDisconnect:
+		return "disconnect"
+	}
+	// An ordinary keystroke is itself: a digit picks a machine.
+	return strconv.QuoteRune(rune(k))
+}
 
 // readKey reads one keypress from the popup.
 func readKey() key {

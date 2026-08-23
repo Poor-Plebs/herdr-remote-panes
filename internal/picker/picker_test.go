@@ -1,6 +1,7 @@
 package picker
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -397,6 +398,76 @@ func TestAConfigWarningSaysWhatToFixInTheRoomItGets(t *testing.T) {
 	for _, want := range []string{"max_mirrors", "should be a number", "line 2"} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("the drawn menu never shows %q:\n%s", want, visible(frame))
+		}
+	}
+}
+
+func TestPagingNeverStepsOverAMachine(t *testing.T) {
+	// The step used to be the popup height less a constant, which stopped
+	// matching once the frame learned to give up its parts as room ran short.
+	// It was two rows out at every size, so paging through a long list went
+	// past two machines each time without ever drawing them -- and nothing
+	// about the menu showed that it had happened.
+	//
+	// The property is not "the step is N". It is that pressing the page key
+	// repeatedly puts every machine on screen at some point, at whatever size
+	// the popup happens to be and whether or not a warning is taking up room.
+	sizes := []struct{ cols, rows int }{
+		{80, 24}, {80, 12}, {80, 8}, {80, 6}, {80, 5}, {40, 10}, {200, 40}, {30, 7},
+	}
+	warnings := []string{
+		"",
+		"Could not read the plugin config: max_mirrors should be a number, not text (line 2). Only ~/.ssh/config machines are listed.",
+	}
+
+	for _, size := range sizes {
+		for _, warning := range warnings {
+			for _, count := range []int{1, 2, 5, 9, 30, 100} {
+				entries := make([]Entry, count)
+				for i := range entries {
+					entries[i] = Entry{Target: fmt.Sprintf("machine-%d", i)}
+				}
+
+				seen := map[int]bool{}
+				selected := 0
+				// Enough presses to cross the list several times over, so a
+				// step that is too large shows up as a gap rather than as
+				// slowness.
+				for press := 0; press < 4*count+8; press++ {
+					frame := planLayout(count, selected, size.rows, len(warningLines(size.cols, warning)))
+					for i := frame.first; i < frame.last && i < count; i++ {
+						seen[i] = true
+					}
+					seen[selected] = true
+					selected = move(selected, pageStepIn(count, selected, size.cols, size.rows, warning), count)
+				}
+
+				for i := 0; i < count; i++ {
+					if !seen[i] {
+						t.Fatalf("paging a list of %d in a %dx%d popup (warning: %v) "+
+							"never showed machine %d", count, size.cols, size.rows, warning != "", i)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestAPageStepIsWhatIsOnScreen(t *testing.T) {
+	// Asking the layout is the only way the two stay in agreement, so this
+	// holds them to each other directly rather than to a number.
+	for _, rows := range []int{4, 5, 6, 8, 12, 24, 40} {
+		count := 50
+		frame := planLayout(count, 0, rows, 0)
+		step := pageStepIn(count, 0, 80, rows, "")
+
+		if drawn := frame.last - frame.first; drawn > 0 && step != drawn {
+			t.Errorf("at %d rows the menu draws %d machines but pages by %d",
+				rows, drawn, step)
+		}
+		// A step of zero would leave the page keys dead with no clue why.
+		if step < 1 {
+			t.Errorf("at %d rows the page step is %d", rows, step)
 		}
 	}
 }
