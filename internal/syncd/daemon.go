@@ -1441,11 +1441,25 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 					d.forgetPane(state, paneID)
 					delete(index.alive, paneID)
 				}
-				if live == 0 {
-					log.Printf("%s: restoring terminal after restart", state.host.Target)
+				// As many as there were, not one. The count is what the
+				// snapshot records and what this field is named for, and it was
+				// being read as "there were some": three terminals on a machine
+				// came back as one, quietly, and the other two were closed as
+				// husks a moment earlier.
+				//
+				// One per pass rather than all at once, so restoring a machine
+				// with several is a handful of SSH connections spread over a
+				// few seconds instead of all at the same moment.
+				if planRestoreShell(state.restoreShells, live) {
+					log.Printf("%s: restoring terminal %d of %d after restart",
+						state.host.Target, live+1, state.restoreShells)
 					state.reopenShell = true
 					return nil
 				}
+				// Restored. Forgetting the count matters: without it, closing
+				// one of them afterwards would look like another terminal to
+				// restore, and it would come back.
+				state.restoreShells = 0
 			}
 		}
 

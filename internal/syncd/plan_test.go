@@ -337,6 +337,25 @@ func TestPlanRestoreShell(t *testing.T) {
 	}
 }
 
+func TestPlanRestoreShellBringsBackAllOfThem(t *testing.T) {
+	// The count is what the snapshot records. The reconcile loop had its own
+	// copy of this decision that read it as "there were some", so three
+	// terminals came back as one -- and this function, which reads the count,
+	// was written and tested and never called.
+	if !planRestoreShell(3, 0) {
+		t.Error("three were open and none are back: should open one")
+	}
+	if !planRestoreShell(3, 2) {
+		t.Error("three were open and two are back: should open the third")
+	}
+	if planRestoreShell(3, 3) {
+		t.Error("all three are back: should stop")
+	}
+	if planRestoreShell(3, 4) {
+		t.Error("more than were open: should not keep going")
+	}
+}
+
 func TestPlanNeedsTerminal(t *testing.T) {
 	// Counting terminals ever opened, rather than still open, left a machine
 	// reporting "connected" with nothing to show after its last terminal was
@@ -2126,5 +2145,25 @@ func TestLabelsForNamesEveryTerminal(t *testing.T) {
 	// than both being shown the same.
 	if labels["t2"] == labels["t3"] {
 		t.Errorf("two terminals are both called %q", labels["t2"])
+	}
+}
+
+func TestASnapshotCarriesTheTerminalCount(t *testing.T) {
+	// End to end through the two functions that write and read it, since the
+	// count being right on disk was never the problem -- it was read as a
+	// boolean at the far end.
+	state := &hostSync{
+		mirrors:    map[string]string{},
+		dismissed:  map[string]bool{},
+		abandoned:  map[string]bool{},
+		shellPanes: map[string]bool{"w1:p1": true, "w1:p2": true, "w1:p3": true},
+	}
+	saved := hostSnapshot{Shells: len(state.shellPanes)}
+
+	fresh := &hostSync{mirrors: map[string]string{}, dismissed: map[string]bool{}}
+	restoreFromSnapshot(fresh, saved)
+
+	if fresh.restoreShells != 3 {
+		t.Errorf("restoreShells = %d, want the three that were open", fresh.restoreShells)
 	}
 }

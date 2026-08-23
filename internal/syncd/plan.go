@@ -204,15 +204,19 @@ func planLostPane(failed bool) bool {
 	return failed
 }
 
-// planRestoreShell decides whether a plain SSH machine needs a terminal
-// reopened after the daemon restarts.
+// planRestoreShell decides whether another plain SSH terminal should be opened
+// to bring a machine back to what it had before a restart.
 //
-// Such a machine has nothing to discover: its terminals do not survive a Herdr
-// restart and there is nothing running remotely to re-derive them from, so
-// without this the machine is simply missing from the sidebar afterwards. Only
-// machines that had a terminal open get one back; connecting is not implied.
+// It reads the count, which is what the snapshot records and what this is named
+// for. The reconcile loop had its own copy of this decision that treated the
+// count as "there were some", so three terminals on a machine came back as one
+// -- quietly, with the other two closed as husks a moment earlier. This
+// function was written, tested, and never called.
+//
+// One per pass: restoring a machine with several is then a handful of SSH
+// connections spread over a few seconds rather than all at once.
 func planRestoreShell(hadShells, liveShells int) bool {
-	return hadShells > 0 && liveShells == 0
+	return liveShells < hadShells
 }
 
 // planNeedsTerminal decides whether connecting to a machine should open one.
