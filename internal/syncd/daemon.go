@@ -10,10 +10,12 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
@@ -253,12 +255,27 @@ func (d *Daemon) Run() error {
 		}
 	}
 
+	// Herdr stops a plugin's startup process with a signal, and the default
+	// action is to die on the spot: the deferred cleanup above never ran, so
+	// the control socket was left behind on every shutdown. When the state
+	// directory is deep enough that the socket lives in the temp directory
+	// instead, nothing tidies it afterwards either, because the path it was
+	// derived from has gone.
+	stopping := make(chan os.Signal, 1)
+	signal.Notify(stopping, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(stopping)
+
 	ticker := time.NewTicker(d.config().Interval())
 	defer ticker.Stop()
-	for range ticker.C {
-		d.reconcileAll()
+	for {
+		select {
+		case <-ticker.C:
+			d.reconcileAll()
+		case sig := <-stopping:
+			log.Printf("stopping on %s", sig)
+			return nil
+		}
 	}
-	return nil
 }
 
 // listenControl binds the control socket, clearing a socket left behind by a
@@ -266,7 +283,7 @@ func (d *Daemon) Run() error {
 func listenControl(socket string) (net.Listener, error) {
 	listener, err := net.Listen("unix", socket)
 	if err == nil {
-		return listener, nil
+		return listener, restrict(socket, listener)
 	}
 	if conn, dialErr := net.DialTimeout("unix", socket, time.Second); dialErr == nil {
 		conn.Close()
@@ -275,7 +292,25 @@ func listenControl(socket string) (net.Listener, error) {
 	if rmErr := os.Remove(socket); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
 		return nil, err
 	}
-	return net.Listen("unix", socket)
+	listener, err = net.Listen("unix", socket)
+	if err != nil {
+		return nil, err
+	}
+	return listener, restrict(socket, listener)
+}
+
+// restrict keeps the control socket private to its owner.
+//
+// Its permissions were left to the umask, and connecting to a Unix socket needs
+// write permission on it, so with the usual umask nobody else could reach it.
+// That is a property of the umask rather than of this, though, and what the
+// socket accepts is instructions to open SSH connections to other machines.
+func restrict(socket string, listener net.Listener) error {
+	if err := os.Chmod(socket, 0o600); err != nil {
+		listener.Close()
+		return fmt.Errorf("could not restrict %s: %w", socket, err)
+	}
+	return nil
 }
 
 func (d *Daemon) serveControl(listener net.Listener) {

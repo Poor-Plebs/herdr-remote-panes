@@ -2,6 +2,7 @@ package syncd
 
 import (
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1385,5 +1386,84 @@ func TestALongAgentNameCannotCrowdOutTheLabel(t *testing.T) {
 	// closeOrphans matches on the host suffix, so it has to survive the cut.
 	if !strings.HasSuffix(got, "@bot") {
 		t.Errorf("label %q no longer ends with the machine", got)
+	}
+}
+
+func TestControlSocketIsPrivateToItsOwner(t *testing.T) {
+	// The socket's permissions were left to the umask. Connecting to a Unix
+	// socket needs write permission on it, so with the usual umask nobody else
+	// could reach it -- but that is a property of the umask rather than of this
+	// code, and what the socket accepts is instructions to open SSH connections
+	// to other machines.
+	dir := t.TempDir()
+	socket := filepath.Join(dir, "control-test.sock")
+
+	listener, err := listenControl(socket)
+	if err != nil {
+		t.Fatalf("listenControl: %v", err)
+	}
+	defer listener.Close()
+
+	info, err := os.Stat(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("socket permissions are %o, want 600", perm)
+	}
+}
+
+func TestListenControlClearsASocketLeftBehind(t *testing.T) {
+	// A daemon killed rather than stopped leaves the file there, and binding
+	// over it fails. The next one has to be able to take it.
+	dir := t.TempDir()
+	socket := filepath.Join(dir, "control-test.sock")
+
+	first, err := listenControl(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Go unlinks the socket when the listener closes, which a killed process
+	// never gets to do. Turning that off leaves exactly what a kill leaves.
+	if unix, ok := first.(*net.UnixListener); ok {
+		unix.SetUnlinkOnClose(false)
+	} else {
+		t.Fatalf("expected a unix listener, got %T", first)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(socket); err != nil {
+		t.Fatalf("the socket should still be there: %v", err)
+	}
+
+	second, err := listenControl(socket)
+	if err != nil {
+		t.Fatalf("could not take over a socket left behind: %v", err)
+	}
+	defer second.Close()
+
+	info, err := os.Stat(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("socket permissions are %o after taking over, want 600", perm)
+	}
+}
+
+func TestListenControlRefusesToStealALiveSocket(t *testing.T) {
+	// Two daemons on one socket would each answer half the commands.
+	dir := t.TempDir()
+	socket := filepath.Join(dir, "control-test.sock")
+
+	first, err := listenControl(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+
+	if _, err := listenControl(socket); err == nil {
+		t.Error("a second daemon took a socket that was already being served")
 	}
 }
