@@ -2050,3 +2050,81 @@ func TestGivingUpDoesNotStrandTheCountThatGaveUp(t *testing.T) {
 		t.Error("the count survived the terminal it counted")
 	}
 }
+
+func TestANewDaemonHasEveryMapItWillWriteTo(t *testing.T) {
+	// Writing to a nil map panics, and the panic is nowhere near the map that
+	// was forgotten. This is the constructor's whole job beyond holding the
+	// config, and adding a map without adding it here is a mistake nothing
+	// else would catch until the daemon ran and something wrote to it.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+
+	d := New(config.Defaults())
+
+	// Each of these is written to during an ordinary pass.
+	d.hosts["bot"] = &hostSync{}
+	d.rootPanes["w1"] = "w1:p1"
+	d.markedWorkspaces["w1"] = "remote_up"
+	d.seenStray["w1:p2"] = true
+
+	if d.config().PollInterval == "" {
+		t.Error("the config was not carried")
+	}
+	if d.snapshot.Hosts == nil {
+		t.Error("the snapshot was not loaded, so restoring would panic")
+	}
+	if err := d.configWarning(); err != "" {
+		t.Errorf("a good config warned: %q", err)
+	}
+}
+
+func TestADaemonToldItsConfigIsUnreadableSaysSo(t *testing.T) {
+	// Built this way when the file could not be read at all: the daemon still
+	// runs, because the menu and every action reach it over its socket and
+	// exiting would leave them all failing with no visible reason.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+
+	d := NewWithConfigError(config.Defaults(), errors.New("unexpected end of JSON input"))
+
+	warning := d.configWarning()
+	if !strings.Contains(warning, "could not be read") {
+		t.Errorf("warning = %q, want it to say the file was unreadable", warning)
+	}
+	if !strings.Contains(warning, "JSON") {
+		t.Errorf("warning = %q, want it to say why", warning)
+	}
+	// And it is still usable: the maps are there and the defaults apply.
+	d.hosts["bot"] = &hostSync{}
+	if !d.config().ShouldAutoStart() {
+		t.Error("the defaults did not take effect")
+	}
+}
+
+func TestLabelsForNamesEveryTerminal(t *testing.T) {
+	// What ends up in the sidebar for a machine's terminals, including the
+	// disambiguation when two of them would otherwise read the same.
+	d := withConfig(&Daemon{}, config.Defaults())
+	host := config.Host{Target: "bot"}
+
+	labels := d.labelsFor(host, []herdrcli.Pane{
+		{TerminalID: "t1", PaneID: "w1:p1", Title: "vim notes.md"},
+		{TerminalID: "t2", PaneID: "w1:p2", Title: "deploy@box: ~"},
+		{TerminalID: "t3", PaneID: "w1:p3", Title: "deploy@box: ~"},
+	})
+
+	if len(labels) != 3 {
+		t.Fatalf("named %d of 3 terminals", len(labels))
+	}
+	for id, label := range labels {
+		if !strings.HasSuffix(label, "@bot") {
+			t.Errorf("%s is named %q, which does not say which machine it is on", id, label)
+		}
+	}
+	if !strings.Contains(labels["t1"], "vim notes.md") {
+		t.Errorf("t1 = %q, want the command it is running", labels["t1"])
+	}
+	// The two prompt banners would read alike, so they are told apart rather
+	// than both being shown the same.
+	if labels["t2"] == labels["t3"] {
+		t.Errorf("two terminals are both called %q", labels["t2"])
+	}
+}

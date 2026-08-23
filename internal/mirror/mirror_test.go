@@ -190,3 +190,33 @@ func TestEveryModeSupervisesItsChild(t *testing.T) {
 		}
 	}
 }
+
+func TestTakeoverIsOnUnlessTurnedOff(t *testing.T) {
+	// Attaching to a terminal is exclusive, and a pane that closed without
+	// tidying up leaves the claim behind. Taking it over is how a mirror
+	// recovers from that, so it is on by default; the setting exists for
+	// somebody who would rather two ends never fight over one terminal.
+	t.Setenv(EnvTakeover, "")
+	if !takeoverEnabled() {
+		t.Error("takeover should be on when nothing says otherwise")
+	}
+
+	t.Setenv(EnvTakeover, "true")
+	if !takeoverEnabled() {
+		t.Error("takeover should be on when asked for")
+	}
+
+	t.Setenv(EnvTakeover, "false")
+	if takeoverEnabled() {
+		t.Error("takeover should be off when turned off")
+	}
+
+	// Only the exact word turns it off. Anything else means somebody wrote
+	// something unexpected, and the default is the recovering one.
+	for _, odd := range []string{"False", "FALSE", "0", "no", "off", " false"} {
+		t.Setenv(EnvTakeover, odd)
+		if !takeoverEnabled() {
+			t.Errorf("%q turned takeover off; only \"false\" should", odd)
+		}
+	}
+}
