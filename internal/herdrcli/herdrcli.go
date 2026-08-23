@@ -445,9 +445,6 @@ func AgentState(status string) string {
 	}
 }
 
-// ClosePaneByID closes any pane, plugin-owned or not. Plugin panes are closed
-// through ClosePane; this is for ordinary panes such as the shell Herdr creates
-// alongside a new workspace.
 // FocusWorkspace brings a workspace to the front.
 //
 // A space that has gone counts as focused: it is asked for after connecting,
@@ -458,6 +455,9 @@ func FocusWorkspace(workspaceID string) error {
 	return ignoreNotFound(err)
 }
 
+// ClosePaneByID closes any pane, plugin-owned or not. Plugin panes are closed
+// through ClosePane; this is for ordinary panes such as the shell Herdr creates
+// alongside a new workspace.
 func ClosePaneByID(paneID string) error {
 	_, err := Run("pane", "close", paneID)
 	return ignoreNotFound(err)

@@ -13,9 +13,8 @@ import (
 // about, an escape sequence changed the colour of everything after it, and a
 // long name ran past the edge of what it was drawn into.
 
-// sanitizeName makes a name safe to draw: one line, no control characters, no
+// Sanitize makes a name safe to draw: one line, no control characters, no
 // escape sequences.
-// Sanitize makes a name safe to draw.
 func Sanitize(name string) string {
 	var b strings.Builder
 	b.Grow(len(name))
@@ -39,11 +38,10 @@ func Sanitize(name string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// displayWidth is how many terminal cells a string occupies.
+// Width is how many terminal cells a string occupies.
 //
 // Padding by rune count misaligns anything that is not narrow: East Asian
 // characters and most emoji take two cells, and combining marks take none.
-// Width is how many terminal cells a string occupies.
 func Width(s string) int {
 	width := 0
 	for _, r := range s {
@@ -85,9 +83,8 @@ func isWide(r rune) bool {
 	return false
 }
 
-// truncateToWidth shortens a string to at most width cells, marking that it was
-// cut. Cutting by bytes or runes would overshoot on wide characters.
-// Truncate shortens a string to at most width cells.
+// Truncate shortens a string to at most width cells, marking that it was cut.
+// Cutting by bytes or runes would overshoot on wide characters.
 func Truncate(s string, width int) string {
 	if width <= 0 {
 		return ""
@@ -109,9 +106,8 @@ func Truncate(s string, width int) string {
 	return b.String() + "…"
 }
 
-// padToWidth pads a string on the right so columns line up, measuring cells
-// rather than characters.
-// Pad pads a string on the right so columns line up.
+// Pad pads a string on the right so columns line up, measuring cells rather
+// than characters.
 func Pad(s string, width int) string {
 	if pad := width - Width(s); pad > 0 {
 		return s + strings.Repeat(" ", pad)

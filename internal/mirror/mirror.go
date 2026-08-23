@@ -93,7 +93,6 @@ func watchForStop(proc *os.Process) func() {
 	}
 }
 
-// reportFailure leaves a trace a user can actually find.
 // describeCommand names a command for an error message without repeating every
 // option it was given.
 //
@@ -114,6 +113,7 @@ func describeCommand(argv []string) string {
 	return strings.Join(argv, " ")
 }
 
+// reportFailure leaves a trace a user can actually find.
 func reportFailure(err error) {
 	MarkFailed(os.Getenv("HERDR_PANE_ID"))
 

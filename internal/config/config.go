@@ -635,7 +635,6 @@ func (c Config) WorkspaceFor(h Host) string {
 	return strings.ReplaceAll(c.WorkspaceFormat, "{host}", h.DisplayLabel())
 }
 
-// WorkspaceLabelFor names a host's space for its current reachability.
 // SharesWorkspace reports whether a machine's terminals land in a space named
 // outright rather than one of its own.
 //
@@ -647,6 +646,7 @@ func (c Config) SharesWorkspace(h Host) bool {
 	return h.Workspace != "" || c.Workspace != ""
 }
 
+// WorkspaceLabelFor names a host's space for its current reachability.
 func (c Config) WorkspaceLabelFor(h Host, reachable bool) string {
 	if h.Workspace != "" || c.Workspace != "" {
 		// An explicitly chosen name is used as given, marker and all.

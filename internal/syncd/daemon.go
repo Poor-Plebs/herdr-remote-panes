@@ -211,7 +211,6 @@ func (p *paneIndex) add(pane herdrcli.Pane) {
 	}
 }
 
-// New builds a daemon from the on-disk configuration.
 // config reports the current configuration.
 func (d *Daemon) config() config.Config {
 	if cfg := d.cfg.Load(); cfg != nil {
@@ -225,6 +224,7 @@ func (d *Daemon) setConfig(cfg config.Config) {
 	d.cfg.Store(&cfg)
 }
 
+// New builds a daemon from the on-disk configuration.
 func New(cfg config.Config) *Daemon {
 	return NewWithConfigError(cfg, nil)
 }
@@ -1405,7 +1405,6 @@ func (d *Daemon) persist() {
 	d.mu.Unlock()
 }
 
-// reconcileHost brings one host's mirrors in line with its remote panes.
 // forgetTerminals drops what is remembered about terminals the machine no
 // longer has.
 //
@@ -1453,6 +1452,7 @@ func forgetTerminals(state *hostSync, seen map[string]bool) {
 	}
 }
 
+// reconcileHost brings one host's mirrors in line with its remote panes.
 func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	// A plain SSH host exposes no panes to discover, so there is nothing to add
 	// or retire. Its terminals are still watched, because one whose connection
@@ -1774,13 +1774,6 @@ func (d *Daemon) findLocalWorkspace(state *hostSync) (bool, error) {
 	return false, nil
 }
 
-// planStrayCapture lists local panes sitting in a machine's space that should
-// be moved onto that machine. Herdr's plus icon and new-tab key always open a
-// local shell and neither can be intercepted by a plugin, so they are corrected
-// a moment later instead.
-//
-// This only decides. Acting on the list needs the host lock released, because
-// opening a terminal on the machine takes that lock again.
 // hostList is the tracked machines as a slice. Callers hold d.mu.
 func (d *Daemon) hostList() []*hostSync {
 	out := make([]*hostSync, 0, len(d.hosts))
@@ -1811,6 +1804,13 @@ func (d *Daemon) claimedPanes(also *hostSync) map[string]bool {
 	return claimed
 }
 
+// planStrayCapture lists local panes sitting in a machine's space that should
+// be moved onto that machine. Herdr's plus icon and new-tab key always open a
+// local shell and neither can be intercepted by a plugin, so they are corrected
+// a moment later instead.
+//
+// This only decides. Acting on the list needs the host lock released, because
+// opening a terminal on the machine takes that lock again.
 func (d *Daemon) planStrayCapture(state *hostSync, index *paneIndex) []strayPane {
 	if state.sshOnly || state.workspaceID == "" {
 		return nil
@@ -1986,7 +1986,6 @@ func (d *Daemon) label(host config.Host, rp herdrcli.Pane, name string) string {
 	return replacer.Replace(d.config().LabelFormat)
 }
 
-// openMirror creates the local pane that bridges one remote terminal.
 // takeRequest reports how somebody asked for a terminal to appear, and returns
 // a function that forgets the request.
 //
@@ -2007,6 +2006,7 @@ func takeRequest(state *hostSync, terminalID, fallback string) (placement string
 	}
 }
 
+// openMirror creates the local pane that bridges one remote terminal.
 func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, index *paneIndex) error {
 	workspaceID, err := d.ensureWorkspace(state, index)
 	if err != nil {
@@ -2147,10 +2147,6 @@ const (
 	remoteGlyph     = "☁"
 )
 
-// markWorkspaceState publishes the remote marker for a host's workspace,
-// reporting whichever token matches the connection state and clearing the
-// other. Herdr shows these only where the sidebar template asks for them, so
-// the workspace name carries a plain marker too.
 // forgetWorkspace drops a space that Herdr says is gone.
 //
 // A machine's space disappears when its last pane closes, and the id was kept
@@ -2165,6 +2161,10 @@ func (d *Daemon) forgetWorkspace(state *hostSync, workspaceID string) {
 	delete(d.markedWorkspaces, workspaceID)
 }
 
+// markWorkspaceState publishes the remote marker for a host's workspace,
+// reporting whichever token matches the connection state and clearing the
+// other. Herdr shows these only where the sidebar template asks for them, so
+// the workspace name carries a plain marker too.
 func (d *Daemon) markWorkspaceState(state *hostSync, connected bool) {
 	workspaceID := state.workspaceID
 	if workspaceID == "" {

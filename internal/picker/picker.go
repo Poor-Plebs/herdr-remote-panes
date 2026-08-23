@@ -716,12 +716,6 @@ func readKey() key {
 	return parseKey(os.Stdin)
 }
 
-// parseKey reads one keypress, translating the escape sequences a terminal
-// sends for arrows and paging.
-//
-// Both cursor-key encodings are handled: a terminal in application mode sends
-// ESC O A for Up rather than ESC [ A, and reading only the second form leaves
-// the arrow keys dead with no clue why.
 // swallowPaste reads to the end of a bracketed paste and reports that nothing
 // was pressed.
 //
@@ -767,6 +761,12 @@ const maxPasteBytes = 1 << 16
 // up on it, so a stream that never ends one cannot be read forever.
 const maxEscapeParams = 16
 
+// parseKey reads one keypress, translating the escape sequences a terminal
+// sends for arrows and paging.
+//
+// Both cursor-key encodings are handled: a terminal in application mode sends
+// ESC O A for Up rather than ESC [ A, and reading only the second form leaves
+// the arrow keys dead with no clue why.
 func parseKey(r io.Reader) key {
 	var buf [1]byte
 	read := func() (byte, bool) {
