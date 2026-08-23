@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -457,5 +458,32 @@ func TestOpenPaneArgsAsksForFocusOrRefusesIt(t *testing.T) {
 	unwanted := strings.Join(openPaneArgs(OpenOptions{PluginID: "p", Entrypoint: "e"}), " ")
 	if !strings.Contains(unwanted, "--no-focus") {
 		t.Errorf("args = %q, want --no-focus", unwanted)
+	}
+}
+
+func TestRunBoundsACommandThatNeverReturns(t *testing.T) {
+	// These calls go to a socket on this machine and answer in milliseconds,
+	// but the reconcile loop holds the daemon's lock while one runs: a call
+	// that never returns takes the status listing, the menu and every machine
+	// with it. The calls to other machines have been bounded since the day one
+	// of them froze everything; these were not, and they run far more often.
+	original := commandTimeout
+	commandTimeout = 200 * time.Millisecond
+	defer func() { commandTimeout = original }()
+
+	t.Setenv("HERDR_BIN_PATH", "/bin/sleep")
+
+	start := time.Now()
+	_, err := Run("30")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("a command that outlives the deadline should fail")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error = %v, want it to say it timed out", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("took %s, want it bounded near %s", elapsed, commandTimeout)
 	}
 }

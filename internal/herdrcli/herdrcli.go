@@ -11,8 +11,10 @@ import (
 	"sort"
 	"strings"
 
+	"context"
 	"errors"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
+	"time"
 )
 
 // Bin resolves the Herdr binary, preferring the path Herdr injects.
@@ -179,6 +181,16 @@ func IsNotFound(err error) bool {
 	return errors.As(err, &api) && strings.HasSuffix(api.Code, "_not_found")
 }
 
+// commandTimeout bounds any single call to the Herdr CLI.
+//
+// These go to a socket on this machine and answer in milliseconds, so this is
+// far beyond anything ordinary -- it is there because the reconcile loop holds
+// the daemon's lock while it runs, and one call that never returns would take
+// the status listing, the menu and every machine down with it. The calls to
+// other machines have been bounded since the day one of them froze everything;
+// the calls to this one were not, and they run far more often.
+var commandTimeout = 30 * time.Second
+
 // Run executes a Herdr CLI command and returns its decoded `result` object.
 func Run(args ...string) (json.RawMessage, error) {
 	return RunWith(nil, args...)
@@ -187,14 +199,23 @@ func Run(args ...string) (json.RawMessage, error) {
 // RunWith executes a Herdr CLI command with extra environment variables,
 // which is how remote invocations select a non-default HERDR_SESSION.
 func RunWith(env []string, args ...string) (json.RawMessage, error) {
-	cmd := exec.Command(Bin(), args...)
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, Bin(), args...)
 	if env != nil {
 		cmd.Env = append(os.Environ(), env...)
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+
+	err := cmd.Run()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil, fmt.Errorf("herdr %s: timed out after %s",
+			strings.Join(args, " "), commandTimeout)
+	}
+	if err != nil {
 		return nil, RunError(err, args, stderr.Bytes(), stdout.Bytes())
 	}
 	return Decode(stdout.Bytes(), args)
