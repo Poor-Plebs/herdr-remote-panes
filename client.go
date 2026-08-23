@@ -8,6 +8,9 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/version"
+	"strconv"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 )
 
 // call runs a command that only reports success or failure.
@@ -51,24 +54,67 @@ func status() error {
 		report("no hosts connected")
 		return nil
 	}
-	for _, h := range reply.Hosts {
-		state := "ok"
-		switch {
-		case h.GaveUp:
-			state = "unreachable, not retrying: " + h.LastError
-		case !h.Connected:
-			state = "error: " + h.LastError
-		}
-		count, kind := h.Mirrors, "mirrored"
-		if h.SSHOnly {
-			count, kind = h.Terminals, "ssh"
-		}
-		fmt.Printf("  %-22s %2d %-9s %s\n", h.Label, count, kind, state)
+	for _, line := range statusLines(reply.Hosts) {
+		fmt.Println(line)
 	}
 	if os.Getenv("HERDR_PLUGIN_ACTION_ID") != "" {
 		herdrcli.Notify(statusSummary(reply.Hosts))
 	}
 	return nil
+}
+
+// statusLines is one line per connected machine, as columns.
+//
+// The columns are sized to what is in them. They were fixed at twenty-two for
+// the name and nine for the kind, so the usual case -- machines called bot,
+// prod, ci, all on plain SSH -- put every state some twenty columns from the
+// machine it belongs to. Names are measured in terminal cells rather than
+// characters, since a label can hold anything the user wrote in the config.
+func statusLines(hosts []syncd.HostInfo) []string {
+	type row struct{ name, count, kind, state string }
+
+	rows := make([]row, 0, len(hosts))
+	for _, h := range hosts {
+		r := row{name: text.Sanitize(h.Label), state: "ok"}
+		switch {
+		case h.GaveUp:
+			r.state = "unreachable, not retrying: " + h.LastError
+		case !h.Connected:
+			r.state = "error: " + h.LastError
+		}
+		open := h.Mirrors
+		r.kind = "mirrored"
+		if h.SSHOnly {
+			open, r.kind = h.Terminals, "ssh"
+		}
+		// The kind is worth saying even for a machine that is not answering:
+		// it is how you know which way the m key would toggle. The count is
+		// not -- "0 mirrored" reads as a tally rather than as the mode, and a
+		// machine that cannot be reached has nothing to tally.
+		if h.Connected && !h.GaveUp {
+			r.count = strconv.Itoa(open)
+		}
+		rows = append(rows, r)
+	}
+
+	var nameCol, countCol, kindCol int
+	for _, r := range rows {
+		nameCol = max(nameCol, text.Width(r.name))
+		countCol = max(countCol, text.Width(r.count))
+		kindCol = max(kindCol, text.Width(r.kind))
+	}
+
+	lines := make([]string, 0, len(rows))
+	for _, r := range rows {
+		lines = append(lines, strings.TrimRight(fmt.Sprintf("  %s  %s %s  %s",
+			text.Pad(r.name, nameCol),
+			// Counts right-aligned, so a two-digit one does not shift the
+			// column that follows it.
+			strings.Repeat(" ", countCol-text.Width(r.count))+r.count,
+			text.Pad(r.kind, kindCol),
+			r.state), " "))
+	}
+	return lines
 }
 
 // statusSummary is the one line Herdr shows as a notification.
