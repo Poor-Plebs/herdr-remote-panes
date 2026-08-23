@@ -1976,6 +1976,15 @@ func (d *Daemon) markWorkspaceState(state *hostSync, connected bool) {
 		}
 	}
 
+	// A space named outright can hold several machines, and its name is used as
+	// given for that reason. The state marker is the same: two machines in
+	// different states would each claim it, every couple of seconds, for as
+	// long as both were connected. The rename above still runs, because that is
+	// what keeps the name matching the config and so findable.
+	if d.config().SharesWorkspace(state.host) {
+		return
+	}
+
 	if _, err := herdrcli.Run("workspace", "report-metadata", workspaceID,
 		"--source", agentSource,
 		"--token", want+"="+remoteGlyph,

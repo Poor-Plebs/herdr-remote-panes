@@ -505,3 +505,43 @@ func TestUnknownSettingsSurviveAToggle(t *testing.T) {
 		t.Errorf("after a toggle the unknown setting is no longer reported: %v", toggled.Problems())
 	}
 }
+
+func TestSharesWorkspace(t *testing.T) {
+	// A space named outright can hold several machines at once, so nothing
+	// about one machine's state belongs on it. Two machines in different states
+	// would each mark it as their own, every couple of seconds, for as long as
+	// both were connected.
+	cfg := Defaults()
+	if cfg.SharesWorkspace(Host{Target: "bot"}) {
+		t.Error("a machine with a space of its own is not sharing")
+	}
+
+	// Named for one machine.
+	if !cfg.SharesWorkspace(Host{Target: "bot", Workspace: "remote"}) {
+		t.Error("a machine given a space by name is sharing")
+	}
+
+	// Named for all of them.
+	shared := Defaults()
+	shared.Workspace = "remote"
+	if !shared.SharesWorkspace(Host{Target: "bot"}) {
+		t.Error("every machine is sharing when one space is named for all")
+	}
+
+	// And the name is used as given either way, so the down marker does not
+	// rewrite a space somebody else's machine is also in.
+	for _, reachable := range []bool{true, false} {
+		if got := shared.WorkspaceLabelFor(Host{Target: "bot"}, reachable); got != "remote" {
+			t.Errorf("WorkspaceLabelFor(reachable=%v) = %q, want the name as given",
+				reachable, got)
+		}
+	}
+
+	// A machine with its own space still gets the marker in its name.
+	own := Defaults()
+	up := own.WorkspaceLabelFor(Host{Target: "bot"}, true)
+	down := own.WorkspaceLabelFor(Host{Target: "bot"}, false)
+	if up == down {
+		t.Errorf("a machine's own space reads the same up and down: %q", up)
+	}
+}

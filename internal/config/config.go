@@ -494,6 +494,17 @@ func (c Config) WorkspaceFor(h Host) string {
 }
 
 // WorkspaceLabelFor names a host's space for its current reachability.
+// SharesWorkspace reports whether a machine's terminals land in a space named
+// outright rather than one of its own.
+//
+// Such a space can hold several machines at once, so nothing about one
+// machine's state belongs on it: two machines in different states would each
+// mark it as their own, every couple of seconds, for as long as both were
+// connected.
+func (c Config) SharesWorkspace(h Host) bool {
+	return h.Workspace != "" || c.Workspace != ""
+}
+
 func (c Config) WorkspaceLabelFor(h Host, reachable bool) string {
 	if h.Workspace != "" || c.Workspace != "" {
 		// An explicitly chosen name is used as given, marker and all.
