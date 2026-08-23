@@ -666,3 +666,76 @@ func TestLabelIsSafeToDraw(t *testing.T) {
 		t.Errorf("label = %q, want build@bot", got)
 	}
 }
+
+func TestStatusOrderIsStable(t *testing.T) {
+	// Ranging over the map of machines reshuffled the list between runs, so the
+	// same machines came back in a different order each time. Config order is
+	// what someone wrote down, so it is the order they expect to read back.
+	d := &Daemon{
+		cfg: config.Config{Hosts: []config.Host{
+			{Target: "bot"}, {Target: "prod"}, {Target: "staging"},
+		}},
+		hosts: map[string]*hostSync{
+			"staging": {host: config.Host{Target: "staging"}},
+			"bot":     {host: config.Host{Target: "bot"}},
+			"prod":    {host: config.Host{Target: "prod"}},
+			// Reached from ~/.ssh/config rather than named in the plugin config.
+			"zeta":  {host: config.Host{Target: "zeta"}},
+			"alpha": {host: config.Host{Target: "alpha"}},
+		},
+	}
+
+	want := []string{"bot", "prod", "staging", "alpha", "zeta"}
+	// Repeat: map order is randomised per range, so one pass proves nothing.
+	for attempt := 0; attempt < 50; attempt++ {
+		var got []string
+		for _, state := range d.orderedHosts() {
+			got = append(got, state.host.Target)
+		}
+		if len(got) != len(want) {
+			t.Fatalf("got %d machines, want %d", len(got), len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("order = %v, want %v", got, want)
+			}
+		}
+	}
+}
+
+func TestStatusSkipsMachinesThatAreNotConnected(t *testing.T) {
+	// A machine listed in the config but never connected has no state, and
+	// including it would report on something that is not being tracked.
+	d := &Daemon{
+		cfg: config.Config{Hosts: []config.Host{
+			{Target: "bot"}, {Target: "never-connected"}, {Target: "prod"},
+		}},
+		hosts: map[string]*hostSync{
+			"bot":  {host: config.Host{Target: "bot"}},
+			"prod": {host: config.Host{Target: "prod"}},
+		},
+	}
+
+	var got []string
+	for _, state := range d.orderedHosts() {
+		got = append(got, state.host.Target)
+	}
+	if len(got) != 2 || got[0] != "bot" || got[1] != "prod" {
+		t.Errorf("order = %v, want [bot prod]", got)
+	}
+}
+
+func TestStatusToleratesADuplicateInTheConfig(t *testing.T) {
+	// The config can be edited by hand, and a machine listed twice should not
+	// be reported twice.
+	d := &Daemon{
+		cfg: config.Config{Hosts: []config.Host{
+			{Target: "bot"}, {Target: "bot"},
+		}},
+		hosts: map[string]*hostSync{"bot": {host: config.Host{Target: "bot"}}},
+	}
+
+	if got := d.orderedHosts(); len(got) != 1 {
+		t.Errorf("got %d entries, want 1", len(got))
+	}
+}

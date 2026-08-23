@@ -848,12 +848,43 @@ func (d *Daemon) connectAll() ([]string, error) {
 	return connected, nil
 }
 
+// orderedHosts lists the tracked machines in a stable order: those named in
+// the config first, in the order they appear there, then anything else picked
+// up along the way, sorted by name. Callers must already hold d.mu.
+func (d *Daemon) orderedHosts() []*hostSync {
+	out := make([]*hostSync, 0, len(d.hosts))
+	seen := make(map[string]bool, len(d.hosts))
+
+	for _, host := range d.cfg.Hosts {
+		if state, ok := d.hosts[host.Target]; ok && !seen[host.Target] {
+			seen[host.Target] = true
+			out = append(out, state)
+		}
+	}
+
+	rest := make([]string, 0, len(d.hosts)-len(out))
+	for target := range d.hosts {
+		if !seen[target] {
+			rest = append(rest, target)
+		}
+	}
+	sort.Strings(rest)
+	for _, target := range rest {
+		out = append(out, d.hosts[target])
+	}
+	return out
+}
+
 func (d *Daemon) status() []HostInfo {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	// Ranging over the map directly reshuffled the list between runs, so the
+	// same three machines came back in a different order each time and could
+	// not be compared at a glance. Config order is what someone wrote down, so
+	// it is the order they expect to read back.
 	out := make([]HostInfo, 0, len(d.hosts))
-	for _, state := range d.hosts {
+	for _, state := range d.orderedHosts() {
 		info := HostInfo{
 			Target:    state.host.Target,
 			Label:     state.host.DisplayLabel(),

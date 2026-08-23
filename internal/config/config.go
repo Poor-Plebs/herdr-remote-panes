@@ -210,7 +210,42 @@ func Save(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(raw, '\n'), 0o600)
+	return writeFileAtomically(path, append(raw, '\n'))
+}
+
+// writeFileAtomically replaces a file's contents in one step.
+//
+// Writing in place truncates first, so an interruption — a crash, a full disk,
+// the machine losing power — leaves the file empty or half written. This file
+// is edited by hand and holds the list of machines, and it is rewritten
+// whenever mirroring is toggled from the menu, so losing it that way is a real
+// prospect rather than a theoretical one.
+func writeFileAtomically(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	temp, err := os.CreateTemp(dir, filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	tempName := temp.Name()
+	defer os.Remove(tempName) // No-op once the rename below succeeds.
+
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return err
+	}
+	// Flush to disk before the rename, so a power loss cannot leave the new
+	// name pointing at a file whose contents never arrived.
+	if err := temp.Sync(); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tempName, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tempName, path)
 }
 
 func (c Config) normalized() Config {

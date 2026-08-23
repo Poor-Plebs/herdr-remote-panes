@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -141,5 +142,64 @@ func TestUnknownModeFallsBackToSSH(t *testing.T) {
 		if got := cfg.EffectiveMode(host); got != mode {
 			t.Errorf("EffectiveMode(%q) = %q, want it unchanged", mode, got)
 		}
+	}
+}
+
+func TestSaveNeverLeavesAPartialFile(t *testing.T) {
+	// Writing in place truncates first, so an interruption leaves the file
+	// empty or half written. This file holds the list of machines, is edited by
+	// hand, and is rewritten whenever mirroring is toggled from the menu.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+
+	cfg := Defaults()
+	cfg.Hosts = []Host{{Target: "bot"}, {Target: "ci", Mode: ModeAttach}}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Whatever is at the path must parse, always.
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load after Save: %v", err)
+	}
+	if len(loaded.Hosts) != 2 {
+		t.Errorf("hosts = %+v, want both", loaded.Hosts)
+	}
+
+	// Rewriting repeatedly must leave exactly one file behind, with no
+	// temporary ones abandoned beside it.
+	for i := 0; i < 5; i++ {
+		if err := Save(cfg); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "config.json" {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("directory holds %v, want only config.json", names)
+	}
+}
+
+func TestSaveKeepsThePermissionsPrivate(t *testing.T) {
+	// The file names the machines someone connects to, so it should not become
+	// world-readable by being rewritten.
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", t.TempDir())
+	if err := Save(Defaults()); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := Path()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("permissions are %o, want 600", perm)
 	}
 }
