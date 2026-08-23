@@ -59,8 +59,37 @@ func (p Pane) DisplayName() string {
 
 // looksLikeShellTitle reports whether a terminal title is just the shell's
 // default "user@host:dir" banner rather than a meaningful process name.
+//
+// This used to treat any title containing "@" or ":" as a banner, which threw
+// away most of the useful ones: "npm run build:prod", "vim: notes.md",
+// "make test:unit" and "ssh user@server" all became the name of the directory
+// the pane happened to be in. The shape is what identifies a banner, not the
+// punctuation -- the host part of "user@host:dir" runs up to the colon with no
+// spaces in it, which is exactly what a command line does not do.
 func looksLikeShellTitle(title string) bool {
-	return strings.ContainsAny(title, "@:")
+	// "user@host" and "user@host:~/dir".
+	if at := strings.IndexByte(title, '@'); at > 0 && !hasSpace(title[:at]) {
+		host := title[at+1:]
+		end := strings.IndexAny(host, " \t:")
+		if end < 0 {
+			return true // Nothing after the host at all.
+		}
+		if host[end] == ':' {
+			return true // A path follows, as in a prompt.
+		}
+	}
+	// "host:~/dir" and "host:/path", the same banner without the user part.
+	if colon := strings.IndexByte(title, ':'); colon > 0 && !hasSpace(title[:colon]) {
+		switch rest := strings.TrimLeft(title[colon+1:], " \t"); {
+		case strings.HasPrefix(rest, "~"), strings.HasPrefix(rest, "/"):
+			return true
+		}
+	}
+	return false
+}
+
+func hasSpace(s string) bool {
+	return strings.ContainsAny(s, " \t")
 }
 
 type envelope struct {

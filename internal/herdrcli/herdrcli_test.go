@@ -233,3 +233,70 @@ func TestTruncateKeepsValidUTF8(t *testing.T) {
 		t.Errorf("truncate(%q) = %q", "fine", got)
 	}
 }
+
+func TestLooksLikeShellTitle(t *testing.T) {
+	// Any title containing "@" or ":" used to count as the shell's prompt
+	// banner, which threw away most of the useful ones: a pane running
+	// "npm run build:prod" was named after whichever directory it sat in.
+	//
+	// The shape identifies a banner, not the punctuation. The host part of
+	// "user@host:dir" runs up to the colon with no spaces in it, which is
+	// exactly what a command line does not do.
+	banners := []string{
+		"deploy@binance-futures-bot: ~",
+		"ounos@L14:~",
+		"ounos@L14:~/work/project",
+		"root@10.0.0.4:/var/log",
+		"user@host",
+		"L14:~",
+		"L14:/var/log",
+		"L14: ~/work",
+	}
+	for _, title := range banners {
+		if !looksLikeShellTitle(title) {
+			t.Errorf("%q should be recognised as a prompt banner", title)
+		}
+	}
+
+	titles := []string{
+		"npm run build:prod",
+		"vim: notes.md",
+		"make test:unit",
+		"docker:postgres",
+		"ssh user@server",
+		"git rebase -i HEAD~3",
+		"cargo build",
+		"htop",
+		"psql -U deploy -h db",
+		"tail -f /var/log/syslog",
+		"make: *** [all] Error 1",
+		"",
+	}
+	for _, title := range titles {
+		if looksLikeShellTitle(title) {
+			t.Errorf("%q is a command, not a prompt banner", title)
+		}
+	}
+}
+
+func TestDisplayNamePrefersARealTitleOverTheDirectory(t *testing.T) {
+	// The point of the tightening: a pane running something recognisable
+	// should say so rather than being named after where it happens to be.
+	p := Pane{Title: "npm run build:prod", Cwd: "/home/ounos/work", PaneID: "w1:p1"}
+	if got := p.DisplayName(); got != "npm run build:prod" {
+		t.Errorf("DisplayName() = %q, want the command", got)
+	}
+
+	// A prompt banner still falls through to the directory, which is the more
+	// useful of the two.
+	p = Pane{Title: "ounos@L14:~", Cwd: "/home/ounos/work", PaneID: "w1:p1"}
+	if got := p.DisplayName(); got != "work" {
+		t.Errorf("DisplayName() = %q, want the directory", got)
+	}
+
+	// An explicit label always wins, whatever the title says.
+	p = Pane{Label: "build", Title: "npm run build:prod", Cwd: "/home/ounos/work"}
+	if got := p.DisplayName(); got != "build" {
+		t.Errorf("DisplayName() = %q, want the label", got)
+	}
+}
