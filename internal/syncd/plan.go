@@ -66,18 +66,16 @@ const (
 	mirrorReplace
 )
 
-// planTrackedMirror decides what to do with a mirror recorded from before.
+// planTrackedMirrorFor decides what to do with a mirror recorded from before.
 //
 // adopted reports whether this host has already been reconciled by this daemon.
 // Until it has, a pane recorded in the snapshot needs checking: Herdr restores
 // a plugin pane after a restart as an ordinary shell without re-running its
 // command, so the pane id survives while the mirror does not. Adopting such a
 // husk leaves a dead local shell wearing a remote pane's name.
-func planTrackedMirror(adopted, paneAlive, mirrorRunning bool) mirrorAction {
-	return planTrackedMirrorFor(adopted, paneAlive, mirrorRunning, "", "")
-}
-
-// planTrackedMirrorFor is planTrackedMirror with the identity check.
+//
+// wantTerminal and hasTerminal are the identity check: a pane id alone does not
+// say which terminal is in it, and Herdr reuses pane ids.
 //
 // wantTerminal is the terminal the bookkeeping says this pane mirrors, and
 // hasTerminal is what the running mirror says it is actually bridging. They

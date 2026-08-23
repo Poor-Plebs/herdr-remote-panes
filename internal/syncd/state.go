@@ -180,13 +180,6 @@ func loadSnapshot() snapshot {
 
 // saveSnapshot writes the bookkeeping, replacing the file atomically so a
 // crash mid-write cannot leave a truncated snapshot behind.
-func saveSnapshot(s snapshot) error {
-	raw, err := marshalSnapshot(s)
-	if err != nil {
-		return err
-	}
-	return writeSnapshot(raw)
-}
 
 // marshalSnapshot renders a snapshot. Map keys are sorted by encoding/json, so
 // the same state always renders to the same bytes and can be compared with what

@@ -100,8 +100,14 @@ func TestSnapshotRoundTrip(t *testing.T) {
 			Dismissed: []string{"term_b"},
 		},
 	}}
-	if err := saveSnapshot(want); err != nil {
-		t.Fatalf("saveSnapshot: %v", err)
+	// Written the way the daemon writes it: it renders the snapshot, compares
+	// it with what it last wrote, and only then puts it on disk.
+	raw, err := marshalSnapshot(want)
+	if err != nil {
+		t.Fatalf("marshalSnapshot: %v", err)
+	}
+	if err := writeSnapshot(raw); err != nil {
+		t.Fatalf("writeSnapshot: %v", err)
 	}
 
 	got := loadSnapshot()

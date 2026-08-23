@@ -127,9 +127,11 @@ func TestPlanTrackedMirror(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := planTrackedMirror(tt.adopted, tt.paneAlive, tt.mirrorRunning)
+			// Empty terminal ids: these cases are about the pane, not about
+			// which terminal is in it, and that is checked separately below.
+			got := planTrackedMirrorFor(tt.adopted, tt.paneAlive, tt.mirrorRunning, "", "")
 			if got != tt.want {
-				t.Errorf("planTrackedMirror(adopted=%v, alive=%v, running=%v) = %v, want %v",
+				t.Errorf("planTrackedMirrorFor(adopted=%v, alive=%v, running=%v) = %v, want %v",
 					tt.adopted, tt.paneAlive, tt.mirrorRunning, got, tt.want)
 			}
 		})
