@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -1493,5 +1494,98 @@ func TestAPlainSSHPaneIsNamedAfterItsMachine(t *testing.T) {
 		if !strings.Contains(label, "shell") {
 			t.Errorf("label %q lost the name", label)
 		}
+	}
+}
+
+func TestCoalescerRunsOneAtATime(t *testing.T) {
+	// Herdr fires a pane.created event for every pane, and this plugin creates
+	// panes, so opening a few at once started that many full reconciles on top
+	// of one another -- six inside six hundred milliseconds on one startup,
+	// each with its own pane listing and its own round trips to every machine.
+	var c coalescer
+	var mu sync.Mutex
+	inFlight, peak, runs := 0, 0, 0
+
+	job := func() {
+		mu.Lock()
+		inFlight++
+		runs++
+		if inFlight > peak {
+			peak = inFlight
+		}
+		mu.Unlock()
+
+		time.Sleep(time.Millisecond)
+
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.run(job)
+		}()
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if peak != 1 {
+		t.Errorf("%d jobs ran at once, want 1", peak)
+	}
+	if runs < 1 {
+		t.Error("the job never ran")
+	}
+	if runs > 20 {
+		t.Errorf("the job ran %d times for 20 requests", runs)
+	}
+}
+
+func TestCoalescerDoesNotLoseARequest(t *testing.T) {
+	// A request arriving while one is running must still be acted on, or the
+	// pane that prompted it goes unnoticed until the next tick of the clock.
+	var c coalescer
+	var runs atomic.Int64
+	started := make(chan struct{})
+	release := make(chan struct{})
+
+	go c.run(func() {
+		if runs.Add(1) == 1 {
+			close(started)
+			<-release
+		}
+	})
+
+	<-started
+	// Arrives mid-run: folded into one further pass rather than starting a
+	// second one.
+	done := make(chan struct{})
+	go func() { defer close(done); c.run(func() { t.Error("a second job ran alongside the first") }) }()
+	<-done
+
+	close(release)
+	// The folded request runs as a second pass of the original job.
+	deadline := time.Now().Add(2 * time.Second)
+	for runs.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := runs.Load(); got != 2 {
+		t.Errorf("the job ran %d times, want a second pass for the folded request", got)
+	}
+}
+
+func TestCoalescerRunsAgainAfterItFinishes(t *testing.T) {
+	// Folding is only for requests that overlap; a later one is its own run.
+	var c coalescer
+	runs := 0
+	for i := 0; i < 3; i++ {
+		c.run(func() { runs++ })
+	}
+	if runs != 3 {
+		t.Errorf("the job ran %d times, want 3", runs)
 	}
 }

@@ -59,6 +59,9 @@ type Daemon struct {
 	// not changed is not written again.
 	lastSaved []byte
 
+	// reconciles folds overlapping reconcile requests into one.
+	reconciles coalescer
+
 	// markedWorkspaces avoids re-reporting the same workspace metadata.
 	markedWorkspaces map[string]string
 
@@ -1024,7 +1027,58 @@ func (d *Daemon) maybePrune(alive map[string]bool) {
 	mirror.Prune(alive)
 }
 
+// coalescer runs a job, folding requests that arrive while it is running into
+// a single further run.
+//
+// The alternative -- a flag saying "one is running", cleared on the way out --
+// drops a request that arrives between the last check and the clearing. Doing
+// both under one lock is what makes that impossible.
+type coalescer struct {
+	mu      sync.Mutex
+	running bool
+	wanted  bool
+}
+
+func (c *coalescer) run(job func()) {
+	c.mu.Lock()
+	if c.running {
+		// One is under way. Ask it to go round again rather than starting a
+		// second, so whatever prompted this is still seen.
+		c.wanted = true
+		c.mu.Unlock()
+		return
+	}
+	c.running = true
+	c.mu.Unlock()
+
+	for {
+		job()
+
+		c.mu.Lock()
+		if !c.wanted {
+			c.running = false
+			c.mu.Unlock()
+			return
+		}
+		c.wanted = false
+		c.mu.Unlock()
+	}
+}
+
+// reconcileAll brings every connected machine in line, folding calls that
+// arrive while one is already running into a single further pass.
+//
+// Herdr fires a pane.created event for every pane, and this plugin creates
+// panes, so opening a few at once started that many full reconciles on top of
+// one another -- six inside six hundred milliseconds on one startup, each with
+// its own pane listing and its own round trips to every machine. They cannot
+// usefully overlap in any case: reconciling a host holds the lock for as long
+// as it takes.
 func (d *Daemon) reconcileAll() {
+	d.reconciles.run(d.reconcileOnce)
+}
+
+func (d *Daemon) reconcileOnce() {
 	d.mu.Lock()
 	states := make([]*hostSync, 0, len(d.hosts))
 	for _, state := range d.hosts {
