@@ -275,6 +275,13 @@ func streamOnce(client *remote.Client, terminal string, cols, rows int, winch <-
 		return err
 	}
 
+	// The same supervision the other two modes have. Without it a stop signal
+	// killed this process outright and left the ssh it had started to notice on
+	// its own, and nothing recorded that the pane had been closed deliberately
+	// rather than dropping.
+	stop := watchForStop(cmd.Process)
+	defer stop()
+
 	done := make(chan struct{})
 	var wasResized atomic.Bool
 	go func() {

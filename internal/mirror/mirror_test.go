@@ -162,3 +162,31 @@ func TestFailureLogIsCreatedPrivate(t *testing.T) {
 		t.Errorf("permissions are %o, want 600", perm)
 	}
 }
+
+func TestEveryModeSupervisesItsChild(t *testing.T) {
+	// A pane closes when somebody shuts it and when its link drops, and those
+	// have to be told apart: one should stay shut, the other should come back.
+	// That is what the stop signal records, and it is also what forwards the
+	// signal on to the ssh underneath. Two of the three modes did it; observe
+	// did not, so a stop killed it outright and left its ssh to work out on its
+	// own that nobody was listening.
+	source, err := os.ReadFile("mirror.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+
+	for _, mode := range []string{"func shell(", "func attach(", "func streamOnce("} {
+		start := strings.Index(body, mode)
+		if start < 0 {
+			t.Fatalf("%s is gone; this test needs rewriting", mode)
+		}
+		end := strings.Index(body[start:], "\n}\n")
+		if end < 0 {
+			t.Fatalf("could not find the end of %s", mode)
+		}
+		if !strings.Contains(body[start:start+end], "watchForStop") {
+			t.Errorf("%s does not supervise its child", mode)
+		}
+	}
+}
