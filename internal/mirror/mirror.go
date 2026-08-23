@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/logfile"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
 )
 
@@ -402,19 +403,15 @@ func sttyOutput(args ...string) ([]byte, error) {
 // One generation is kept, so the space used is bounded at twice this.
 const maxLogBytes = 256 * 1024
 
-// appendToLog records a failure, rolling the file over when it gets large.
+// appendToLog records a failure.
 //
-// Nothing trimmed this. Every failed pane appended to it and it was never read
-// by anything that shortened it, so it grew for as long as the plugin was
-// installed -- slowly, but with no end to it, in a directory nobody thinks to
-// look in.
+// Nothing trimmed this once. Every failed pane appended to it and nothing ever
+// shortened it, so it grew for as long as the plugin was installed -- slowly,
+// but with no end to it, in a directory nobody thinks to look in. The bounding
+// is shared with the daemon's own log rather than written twice, since two
+// copies of a policy are two things to keep in step.
 func appendToLog(path, message string) {
-	if info, err := os.Stat(path); err == nil && info.Size() >= maxLogBytes {
-		// Keep one generation: the failures worth reading are the recent ones,
-		// but the one that started a run of them is worth not losing outright.
-		_ = os.Rename(path, path+".1")
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := logfile.Open(path, maxLogBytes)
 	if err != nil {
 		return
 	}

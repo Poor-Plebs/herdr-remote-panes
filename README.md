@@ -133,6 +133,17 @@ forever. Picking it from the menu is an explicit "try now".
 **Machines without Herdr just work.** They get a plain SSH terminal; mirroring
 is the only part that needs Herdr on both ends.
 
+**Terminals you open on a machine stay on it.** Disconnecting closes the panes
+here, not the work there — a build running in one keeps running. With mirroring,
+that also means the space this creates on the machine outlives the session, and
+the terminals in it are still there next time. That is what makes reconnecting
+pick up where you left off, and it also means they accumulate if you never look:
+
+```bash
+ssh workbox 'herdr pane list'          # what is still open there
+ssh workbox 'herdr pane close wG:p3'   # close one you are done with
+```
+
 ## Settings
 
 All optional, in `$(herdr plugin config-dir poorplebs.remote-panes)/config.json`:
