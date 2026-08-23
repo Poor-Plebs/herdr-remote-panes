@@ -2507,3 +2507,225 @@ func TestALocalFailureIsNotMistakenForAnSSHOne(t *testing.T) {
 		t.Error("ssh refusing a key should still stop the machine")
 	}
 }
+
+func TestEveryNamedFailureIsReachableAndDecided(t *testing.T) {
+	// Mutation testing found two rows of this table that no test could reach.
+	// Both were "covered" by a case whose message matched an earlier row first:
+	// "Could not resolve hostname" sits behind "Name or service not known",
+	// which Linux prints in the same sentence, and "Connection closed by" sits
+	// behind kex_exchange_identification for the same reason. Flipping either
+	// row's retry decision changed nothing any test noticed.
+	//
+	// The first attempt at this test read the expected decision out of the same
+	// table, which meant flipping a row flipped both sides of the comparison
+	// and it agreed with whatever it was given. So the decisions are written
+	// out here instead, and the two lists are held to each other below: adding
+	// a cause to the table without deciding here is a failure, not a silence.
+	settled := map[string]bool{
+		"REMOTE HOST IDENTIFICATION HAS CHANGED": true,
+		"Host key verification failed":           true,
+		"Permission denied":                      true,
+		"Too many authentication failures":       true,
+		"Name or service not known":              true,
+		"Could not resolve hostname":             true,
+		"no herdr on the remote host":            true,
+
+		"Connection refused":          false,
+		"Connection timed out":        false,
+		"Operation timed out":         false,
+		"Network is unreachable":      false,
+		"kex_exchange_identification": false,
+		"Connection closed by":        false,
+		"Connection reset by peer":    false,
+		"No route to host":            false,
+	}
+
+	for _, known := range knownFailures {
+		t.Run(known.needle, func(t *testing.T) {
+			want, decided := settled[known.needle]
+			if !decided {
+				t.Fatalf("%q was added to the table without a decision here: "+
+					"does trying again stand any chance of a different answer?", known.needle)
+			}
+			// Each row on its own, rather than through a message that a
+			// different row might answer first.
+			err := errors.New(known.needle)
+			if got := summarizeError(err); got != known.summary {
+				t.Errorf("summarizeError(%q) = %q, want %q", known.needle, got, known.summary)
+			}
+			if got := planGiveUp(0, err); got != want {
+				t.Errorf("planGiveUp on %q = %v, want %v", known.needle, got, want)
+			}
+		})
+	}
+
+	if len(settled) != len(knownFailures) {
+		t.Errorf("%d causes decided here but %d in the table", len(settled), len(knownFailures))
+	}
+	inTable := map[string]bool{}
+	for _, known := range knownFailures {
+		inTable[known.needle] = true
+	}
+	for needle := range settled {
+		if !inTable[needle] {
+			t.Errorf("%q is decided here but is no longer a cause the code knows", needle)
+		}
+	}
+}
+
+func TestNoNamedFailureIsHiddenBehindAnEarlierOne(t *testing.T) {
+	// The table is read in order and the first match wins, so a row whose
+	// phrase contains an earlier row's phrase can never be reached. It would
+	// look like a case that is handled and behave like one that is not.
+	for i, later := range knownFailures {
+		for _, earlier := range knownFailures[:i] {
+			if strings.Contains(later.needle, earlier.needle) {
+				t.Errorf("%q can never match: %q comes first and is inside it",
+					later.needle, earlier.needle)
+			}
+		}
+	}
+}
+
+func TestANameThatDoesNotResolveIsRecognisedOnBothPlatforms(t *testing.T) {
+	// The two rows exist because the two systems word it differently, and the
+	// Linux wording carries both phrases -- which is exactly what hid the macOS
+	// row from every test that thought it was covering this.
+	messages := map[string]string{
+		"linux": "prd is not reachable over ssh: exit status 255: ssh: Could not resolve hostname prd: Name or service not known",
+		"macos": "prd is not reachable over ssh: exit status 255: ssh: Could not resolve hostname prd: nodename nor servname provided, or not known",
+	}
+	for platform, message := range messages {
+		t.Run(platform, func(t *testing.T) {
+			err := errors.New(message)
+			if got := summarizeError(err); got != "host name does not resolve" {
+				t.Errorf("summarizeError = %q, want %q", got, "host name does not resolve")
+			}
+			// A name that does not resolve does not start resolving because
+			// this tried again.
+			if !planGiveUp(0, err) {
+				t.Error("a name that does not resolve should not be retried")
+			}
+		})
+	}
+}
+
+func TestAConnectionClosedAfterTheBannerIsStillWorthRetrying(t *testing.T) {
+	// The row for this sits behind kex_exchange_identification, which is
+	// deliberate -- when both appear the specific cause is the better line --
+	// but it does happen alone, when the link drops after the banner exchange.
+	err := errors.New("bot is not reachable over ssh: exit status 255: Connection closed by 10.0.0.1 port 22")
+	if got := summarizeError(err); got != "the machine closed the connection" {
+		t.Errorf("summarizeError = %q", got)
+	}
+	if planGiveUp(0, err) {
+		t.Error("a connection that closed can come good; it should be retried")
+	}
+
+	// And with both, the more specific one is what gets said.
+	both := errors.New("kex_exchange_identification: Connection closed by remote host")
+	if got := summarizeError(both); !strings.Contains(got, "before login") {
+		t.Errorf("summarizeError = %q, want the kex wording", got)
+	}
+}
+
+func TestMirroredTerminalsKeepTheOrderTheyHaveOnTheMachine(t *testing.T) {
+	// The whole promise of "shared" scope is that both ends show the same
+	// terminals in the same order: the first tab here is the first tab there.
+	// Herdr does not promise an order in a pane listing, so without this the
+	// two sides drift apart as panes come and go -- which reads as tabs
+	// shuffling themselves for no reason.
+	//
+	// Every comparison in the sort could be reversed without a test noticing.
+	// The pane ids deliberately run against the tab order. Sorted by id alone
+	// these come out p1, p2, p5, p9 -- which is what a comparator that ignores
+	// the tab produces, so data where the two agree cannot tell the difference.
+	panes := []herdrcli.Pane{
+		{PaneID: "p2", TabID: "t3", WorkspaceID: "shared"},
+		{PaneID: "p9", TabID: "t1", WorkspaceID: "shared"},
+		{PaneID: "p5", TabID: "t2", WorkspaceID: "shared"},
+		{PaneID: "p1", TabID: "t3", WorkspaceID: "shared"},
+		{PaneID: "p7", TabID: "t2", WorkspaceID: "elsewhere"},
+	}
+	// What the machine's own tab bar looks like, left to right.
+	tabOrder := map[string]int{"t1": 0, "t2": 1, "t3": 2}
+
+	t.Run("tabs come in the machine's order, and splits within a tab in theirs", func(t *testing.T) {
+		got := planSharedPanes(panes, "shared", tabOrder, true)
+		var ids []string
+		for _, pane := range got {
+			ids = append(ids, pane.PaneID)
+		}
+		// t1 first (p9), then t2 (p5), then t3 (p1 before p2 by id).
+		want := []string{"p9", "p5", "p1", "p2"}
+		if len(ids) != len(want) {
+			t.Fatalf("got %v, want %v", ids, want)
+		}
+		for i := range want {
+			if ids[i] != want[i] {
+				t.Fatalf("got %v, want %v", ids, want)
+			}
+		}
+	})
+
+	t.Run("a pane outside the shared space is left where it is", func(t *testing.T) {
+		for _, pane := range planSharedPanes(panes, "shared", tabOrder, true) {
+			if pane.PaneID == "p7" {
+				t.Error("a pane from the machine's own work was mirrored")
+			}
+		}
+	})
+
+	t.Run("scope all takes everything, still in order", func(t *testing.T) {
+		got := planSharedPanes(panes, "shared", tabOrder, false)
+		if len(got) != len(panes) {
+			t.Fatalf("got %d panes, want all %d", len(got), len(panes))
+		}
+		// p5 and p7 share tab t2, so the pane id decides between them.
+		if got[1].PaneID != "p5" || got[2].PaneID != "p7" {
+			t.Errorf("within a tab the order is by pane id; got %s then %s",
+				got[1].PaneID, got[2].PaneID)
+		}
+	})
+
+	t.Run("a tab the machine did not list sorts first, not randomly", func(t *testing.T) {
+		// An unknown tab reads as position zero. It has to land somewhere
+		// definite, or its pane moves about between passes.
+		withUnknown := append([]herdrcli.Pane{{PaneID: "p0", TabID: "t9", WorkspaceID: "shared"}}, panes...)
+		first := planSharedPanes(withUnknown, "shared", tabOrder, true)
+		second := planSharedPanes(withUnknown, "shared", tabOrder, true)
+		for i := range first {
+			if first[i].PaneID != second[i].PaneID {
+				t.Fatalf("the order is not stable: %v then %v", first, second)
+			}
+		}
+		if first[0].PaneID != "p0" {
+			t.Errorf("an unlisted tab landed at %s, not first", first[0].PaneID)
+		}
+	})
+}
+
+func TestTruncateRunesKeepsAsMuchAsFits(t *testing.T) {
+	// This is what stops an ssh error filling the sidebar, and it cuts by runes
+	// so a non-ASCII host name is not split mid-character. Both boundaries
+	// could move by one unnoticed.
+	for _, tt := range []struct {
+		in   string
+		max  int
+		want string
+	}{
+		{"abcdef", 6, "abcdef"},
+		{"abcdef", 5, "abcd…"},
+		{"abcdef", 1, "…"},
+		{"abcdef", 0, ""},
+		{"abcdef", -1, ""},
+		{"", 0, ""},
+		// By runes, not bytes: six characters that are eighteen bytes.
+		{"日本語です。ね", 7, "日本語です。ね"},
+		{"日本語です。ね", 6, "日本語です…"},
+	} {
+		if got := truncateRunes(tt.in, tt.max); got != tt.want {
+			t.Errorf("truncateRunes(%q, %d) = %q, want %q", tt.in, tt.max, got, tt.want)
+		}
+	}
+}

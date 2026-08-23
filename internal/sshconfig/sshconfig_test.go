@@ -1,9 +1,11 @@
 package sshconfig
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestHostsFrom(t *testing.T) {
@@ -181,5 +183,130 @@ func TestOnlyMachinesSomebodyCouldConnectToAreOffered(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAnIncludeThatIncludesItselfStops(t *testing.T) {
+	// maxIncludeDepth exists so a cycle cannot loop forever, and nothing tested
+	// it -- mutation testing walked the limit off by one and every test stayed
+	// green. A config that includes itself is not exotic: two machines sharing
+	// a dotfiles repo where each end includes the other's fragment is the
+	// ordinary way to arrive at one.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ssh := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(ssh, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// a includes b, b includes a, and both name a machine so the answer is
+	// checkable rather than merely finite.
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(ssh, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("config", "Include a\nHost bot\n")
+	write("a", "Include b\nHost from-a\n")
+	write("b", "Include a\nHost from-b\n")
+
+	done := make(chan []string, 1)
+	go func() { done <- Hosts() }()
+
+	select {
+	case hosts := <-done:
+		want := map[string]bool{"bot": true, "from-a": true, "from-b": true}
+		for _, host := range hosts {
+			if !want[host] {
+				t.Errorf("unexpected machine %q from %q", host, hosts)
+			}
+			delete(want, host)
+		}
+		if len(want) > 0 {
+			t.Errorf("a cycle swallowed machines that are in the files: %v", want)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a config that includes itself never finished being read")
+	}
+}
+
+func TestAnIncludeIsFoundRelativeToTheSSHDirectory(t *testing.T) {
+	// ssh resolves a bare Include against ~/.ssh, and "~/" against the home
+	// directory. Getting either wrong loses every machine in the included file
+	// and says nothing, because a missing include is not an error to ssh.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ssh := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(filepath.Join(ssh, "conf.d"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write := func(path, content string) {
+		if err := os.WriteFile(filepath.Join(home, path), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".ssh/config", "Include conf.d/*\nInclude ~/elsewhere\nHost bot\n")
+	write(".ssh/conf.d/work", "Host work-box\n")
+	write("elsewhere", "Host tilde-box\n")
+
+	got := map[string]bool{}
+	for _, host := range Hosts() {
+		got[host] = true
+	}
+	for _, want := range []string{"bot", "work-box", "tilde-box"} {
+		if !got[want] {
+			t.Errorf("machine %q was not found; got %v", want, got)
+		}
+	}
+}
+
+func TestIncludesAreFollowedAsDeepAsSSHFollowsThem(t *testing.T) {
+	// The depth limit is there for cycles, and it has to sit past any nesting
+	// somebody actually wrote -- which means past anything ssh will read, since
+	// a machine this stops short of is one ssh can still connect to and the
+	// menu cannot offer. It was set to half what ssh allows.
+	//
+	// An off-by-one here does not fail loudly. The machines past the cut are
+	// simply not in the menu, and a missing Include is not an error to ssh
+	// either, so there is nothing to read anywhere.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ssh := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(ssh, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// config includes link0, link0 includes link1, and so on, each naming a
+	// machine. The main config is depth zero and each Include is one deeper, so
+	// link0 is read at depth one and link<n-1> at exactly the limit. One more
+	// is written past it, to hold the other side of the boundary.
+	const beyond = maxIncludeDepth
+	for i := 0; i <= beyond; i++ {
+		content := fmt.Sprintf("Host machine%d\n", i)
+		if i < beyond {
+			content = fmt.Sprintf("Include link%d\n", i+1) + content
+		}
+		if err := os.WriteFile(filepath.Join(ssh, fmt.Sprintf("link%d", i)),
+			[]byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(ssh, "config"), []byte("Include link0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]bool{}
+	for _, host := range Hosts() {
+		got[host] = true
+	}
+	for i := 0; i < beyond; i++ {
+		if machine := fmt.Sprintf("machine%d", i); !got[machine] {
+			t.Errorf("%q was not found: a chain of includes ssh would follow was cut short", machine)
+		}
+	}
+	// And the far side, so the limit is pinned in both directions rather than
+	// only against being too small.
+	if machine := fmt.Sprintf("machine%d", beyond); got[machine] {
+		t.Errorf("%q was read from past the depth limit", machine)
 	}
 }

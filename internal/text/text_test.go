@@ -180,3 +180,87 @@ func TestWrapKeepsAWordTogetherWhereItCan(t *testing.T) {
 		}
 	}
 }
+
+func TestTruncateKeepsAsMuchAsFits(t *testing.T) {
+	// The width contract alone does not pin this: cutting one character too
+	// early still fits, so a mutation that dropped an extra character from
+	// every shortened name passed every test. What it costs is a letter of
+	// every machine name in a narrow popup, which is exactly where the letters
+	// matter most.
+	cases := []struct {
+		in    string
+		width int
+		want  string
+	}{
+		// The ellipsis takes one cell, so a limit of n keeps n-1 cells of text.
+		{"abcdef", 6, "abcdef"},
+		{"abcdef", 5, "abcd…"},
+		{"abcdef", 3, "ab…"},
+		{"abcdef", 2, "a…"},
+		{"abcdef", 1, "…"},
+		{"abcdef", 0, ""},
+
+		// A wide character takes two cells, so it is kept only if both fit.
+		{"日本語", 6, "日本語"},
+		{"日本語", 5, "日本…"},
+		{"日本語", 4, "日…"},
+		{"日本語", 3, "日…"},
+		{"日本語", 2, "…"},
+
+		// A zero-width mark rides along with the character it belongs to.
+		{"éxyz", 3, "éx…"},
+	}
+	for _, tt := range cases {
+		if got := Truncate(tt.in, tt.width); got != tt.want {
+			t.Errorf("Truncate(%q, %d) = %q, want %q", tt.in, tt.width, got, tt.want)
+		}
+	}
+}
+
+func TestWrapAtNoRoomGivesNothing(t *testing.T) {
+	// A popup can be reported as having no room -- windowSize falls back when
+	// stty says nothing useful -- and the callers draw whatever comes back.
+	// Returning a line for a zero-width popup puts characters where there are
+	// no columns to hold them.
+	for _, tt := range []struct{ width, maxLines int }{
+		{0, 4}, {-1, 4}, {10, 0}, {10, -1}, {0, 0},
+	} {
+		if got := Wrap("a message that would otherwise wrap", tt.width, tt.maxLines); len(got) != 0 {
+			t.Errorf("Wrap(..., %d, %d) = %q, want nothing", tt.width, tt.maxLines, got)
+		}
+	}
+}
+
+func TestTheWidthTableCoversItsRangesExactly(t *testing.T) {
+	// Padding by rune count misaligns anything that is not narrow, so these
+	// ranges are what keeps a column of machine names lined up. Every boundary
+	// here could be moved by one without a single test noticing.
+	wide := []rune{
+		0x1100, 0x115F, // Hangul Jamo
+		0x2E80, 0xA4CF, // CJK radicals through Yi
+		0xAC00, 0xD7A3, // Hangul syllables
+		0xF900, 0xFAFF, // CJK compatibility ideographs
+		0xFE30, 0xFE6F, // CJK compatibility forms
+		0xFF00, 0xFF60, // Fullwidth forms
+		0xFFE0, 0xFFE6,
+		0x1F300, 0x1FAFF, // Emoji
+		0x20000, 0x3FFFD, // CJK extensions
+	}
+	for _, r := range wide {
+		if got := Width(string(r)); got != 2 {
+			t.Errorf("Width(%U) = %d, want 2: it is inside a wide range", r, got)
+		}
+	}
+
+	// One step outside each range, which is what an off-by-one would move.
+	narrow := []rune{
+		0x10FF, 0x1160, 0x2E7F, 0xA4D0, 0xABFF, 0xD7A4, 0xF8FF, 0xFB00,
+		0xFE2F, 0xFE70, 0xFEFF, 0xFF61, 0xFFDF, 0xFFE7, 0x1F2FF, 0x1FB00,
+		0x1FFFF, 0x3FFFE,
+	}
+	for _, r := range narrow {
+		if got := Width(string(r)); got == 2 {
+			t.Errorf("Width(%U) = 2, but it is outside every wide range", r)
+		}
+	}
+}

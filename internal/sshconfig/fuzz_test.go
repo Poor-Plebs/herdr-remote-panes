@@ -18,6 +18,8 @@ import (
 func FuzzHostsFrom(f *testing.F) {
 	for _, seed := range []string{
 		"Host bot\n",
+		"Host bot\nHost bot\n",
+		"Host bot prod\nHost prod\n",
 		"Host bot prod\nHostName 10.0.0.1\n",
 		"Host \"my server\"\n",
 		"Host bot # work laptop\n",

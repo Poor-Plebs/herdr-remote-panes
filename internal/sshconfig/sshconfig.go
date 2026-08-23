@@ -29,7 +29,16 @@ func Hosts() []string {
 }
 
 // maxIncludeDepth stops a cyclic Include from looping forever.
-const maxIncludeDepth = 8
+//
+// Set to what ssh itself allows, MAX_READCONF_DEPTH, and counted the same way:
+// the main config is depth zero and each Include is one deeper. The limit is
+// there for cycles, so it has to sit past any nesting somebody actually wrote
+// -- and the only nesting that matters is the nesting ssh will read, since a
+// machine this stops short of is one ssh can still connect to and the menu
+// cannot offer. It was 8, which cut a legal chain in half without a word:
+// machines past the cut are simply absent, and a missing Include is not an
+// error to ssh either, so there is nothing to read anywhere.
+const maxIncludeDepth = 16
 
 func hostsFrom(path string, depth int) []string {
 	if path == "" || depth > maxIncludeDepth {
