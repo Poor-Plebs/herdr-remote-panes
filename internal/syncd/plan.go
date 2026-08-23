@@ -431,3 +431,26 @@ func planRemoteWorkspaceIsStale(workspaceID string, panes []herdrcli.Pane) bool 
 	}
 	return true
 }
+
+// planSnapshotRestore lists the machines to reconnect at startup beyond those
+// written in the config.
+//
+// A machine picked from ~/.ssh/config is never written to the config file, so
+// the only record that it was connected is the snapshot. Starting up walked the
+// config alone, which made "restarting brings your machines back" true for the
+// ones written down and quietly false for the rest.
+//
+// A machine turned off in the config stays off: it is not connected at startup
+// for the same reason it is not offered in the menu, and a snapshot from before
+// it was turned off should not undo that.
+func planSnapshotRestore(remembered []string, connected, disabled map[string]bool) []string {
+	var out []string
+	for _, target := range remembered {
+		if connected[target] || disabled[target] {
+			continue
+		}
+		out = append(out, target)
+	}
+	sort.Strings(out)
+	return out
+}

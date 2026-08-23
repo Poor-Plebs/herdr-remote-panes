@@ -244,6 +244,29 @@ func NewWithConfigError(cfg config.Config, configErr error) *Daemon {
 	return d
 }
 
+// rememberedHosts lists machines the snapshot says were connected and that
+// starting up has not already dealt with.
+func (d *Daemon) rememberedHosts() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	remembered := make([]string, 0, len(d.snapshot.Hosts))
+	for target := range d.snapshot.Hosts {
+		remembered = append(remembered, target)
+	}
+	connected := make(map[string]bool, len(d.hosts))
+	for target := range d.hosts {
+		connected[target] = true
+	}
+	disabled := map[string]bool{}
+	for _, h := range d.config().Hosts {
+		if h.Disabled {
+			disabled[h.Target] = true
+		}
+	}
+	return planSnapshotRestore(remembered, connected, disabled)
+}
+
 // Run starts the control listener and blocks, polling every connected host.
 func (d *Daemon) Run() error {
 	socket, err := ControlSocket()
@@ -265,6 +288,19 @@ func (d *Daemon) Run() error {
 		}
 		if err := d.connect(h); err != nil {
 			log.Printf("connect %s: %s", h.Target, summarizeError(err))
+		}
+	}
+
+	// Then the machines that were connected but are not written down: one
+	// picked from ~/.ssh/config never reaches the config file, so the snapshot
+	// is the only record that it was there at all.
+	for _, target := range d.rememberedHosts() {
+		host, ok := d.hostConfig(target)
+		if !ok {
+			continue
+		}
+		if err := d.connect(host); err != nil {
+			log.Printf("connect %s: %s", target, summarizeError(err))
 		}
 	}
 

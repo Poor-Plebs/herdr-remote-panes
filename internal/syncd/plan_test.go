@@ -2257,3 +2257,42 @@ func TestTheSpaceOnAMachineIsFoundAfterTheFormatChanges(t *testing.T) {
 		t.Error("the machine's own local space was claimed")
 	}
 }
+
+func TestMachinesNotWrittenDownAreStillBroughtBack(t *testing.T) {
+	// A machine picked from ~/.ssh/config is never written to the config file,
+	// so the snapshot is the only record that it was connected. Starting up
+	// walked the config alone, which made "restarting brings your machines
+	// back" true for the ones written down and quietly false for the rest --
+	// including the sentence to that effect I put in the README.
+	remembered := []string{"laptop", "bot", "retired", "ci"}
+	connected := map[string]bool{"bot": true, "ci": true} // already done from the config
+	disabled := map[string]bool{"retired": true}
+
+	got := planSnapshotRestore(remembered, connected, disabled)
+
+	if len(got) != 1 || got[0] != "laptop" {
+		t.Errorf("restoring %v, want just the machine that is not written down", got)
+	}
+}
+
+func TestATurnedOffMachineIsNotBroughtBackByASnapshot(t *testing.T) {
+	// It is not connected at startup for the same reason it is not offered in
+	// the menu, and a snapshot from before it was turned off should not undo
+	// that.
+	got := planSnapshotRestore([]string{"retired"}, map[string]bool{}, map[string]bool{"retired": true})
+	if len(got) != 0 {
+		t.Errorf("restoring %v, want nothing: that machine is turned off", got)
+	}
+}
+
+func TestRestoringFromASnapshotIsInAStableOrder(t *testing.T) {
+	// Two machines coming back in a different order each start is the sort of
+	// thing that makes a log impossible to compare with the one before it.
+	remembered := []string{"zeta", "alpha", "mid"}
+	for i := 0; i < 20; i++ {
+		got := planSnapshotRestore(remembered, map[string]bool{}, map[string]bool{})
+		if len(got) != 3 || got[0] != "alpha" || got[1] != "mid" || got[2] != "zeta" {
+			t.Fatalf("order = %v, want it sorted", got)
+		}
+	}
+}
