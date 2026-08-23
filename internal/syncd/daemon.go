@@ -1481,11 +1481,23 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	// Restrict to this machine's own space on the remote, and put the panes in
 	// the order they appear there so the tabs line up on both ends.
 	sharedWorkspace := state.remoteWorkspaceID
-	if d.config().SharedOnly() && sharedWorkspace == "" {
-		if found, lookupErr := d.findRemoteWorkspace(state); lookupErr != nil {
+	if d.config().SharedOnly() && planRemoteWorkspaceIsStale(sharedWorkspace, remotePanes) {
+		found, lookupErr := d.findRemoteWorkspace(state)
+		if lookupErr != nil {
 			return lookupErr
-		} else if found {
+		}
+		if found {
 			sharedWorkspace = state.remoteWorkspaceID
+		} else {
+			// Gone on the machine. Forgetting it means the next pass makes one
+			// rather than filtering every pane against something that is not
+			// there any more.
+			if state.remoteWorkspaceID != "" {
+				log.Printf("%s: its space on the machine is gone; will make one again",
+					state.host.Target)
+			}
+			state.remoteWorkspaceID = ""
+			sharedWorkspace = ""
 		}
 	}
 	tabOrder, err := state.client.TabOrder()

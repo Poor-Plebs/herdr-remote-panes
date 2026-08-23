@@ -1923,3 +1923,50 @@ Host key verification failed.`)
 		t.Errorf("reply is %d characters, too long for a popup", len([]rune(got)))
 	}
 }
+
+func TestARememberedRemoteSpaceIsCheckedBeforeItIsTrusted(t *testing.T) {
+	// The id is remembered from when the space was found or made, and a space
+	// goes when its last terminal does. A remembered id that matches nothing
+	// filters every pane out, so the machine looks as though it has no
+	// terminals -- with nothing said. The local side had the same fault and at
+	// least complained about it twice a second; this one was silent.
+	panes := []herdrcli.Pane{
+		{PaneID: "wA:p1", WorkspaceID: "wA", TerminalID: "t1"},
+		{PaneID: "wB:p1", WorkspaceID: "wB", TerminalID: "t2"},
+	}
+
+	if planRemoteWorkspaceIsStale("wA", panes) {
+		t.Error("a space with panes in it was treated as gone")
+	}
+	if !planRemoteWorkspaceIsStale("wZ", panes) {
+		t.Error("a space nothing is in should be looked up again")
+	}
+	if !planRemoteWorkspaceIsStale("", panes) {
+		t.Error("nothing remembered means it has to be looked up")
+	}
+
+	// A machine with nothing open at all: asked again, which costs one call
+	// and is the only way to tell an empty space from one that has gone.
+	if !planRemoteWorkspaceIsStale("wA", nil) {
+		t.Error("with no panes at all it should be looked up rather than assumed")
+	}
+}
+
+func TestSharedPanesFilterOutEverythingWhenTheSpaceIsWrong(t *testing.T) {
+	// Why the above matters: this is what a stale id does to the listing.
+	panes := []herdrcli.Pane{
+		{PaneID: "wA:p1", WorkspaceID: "wA", TerminalID: "t1"},
+		{PaneID: "wA:p2", WorkspaceID: "wA", TerminalID: "t2"},
+	}
+	order := map[string]int{}
+
+	kept := planSharedPanes(panes, "wA", order, true)
+	if len(kept) != 2 {
+		t.Errorf("with the right space, kept %d of 2", len(kept))
+	}
+
+	gone := planSharedPanes(panes, "wZ", order, true)
+	if len(gone) != 0 {
+		t.Errorf("with a space that is gone, kept %+v", gone)
+	}
+}

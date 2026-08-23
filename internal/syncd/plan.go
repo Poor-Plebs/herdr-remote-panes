@@ -408,3 +408,24 @@ func planOrphanedPane(label, hostSuffix string, tracked, mirrorRunning bool) boo
 	}
 	return strings.HasSuffix(label, hostSuffix)
 }
+
+// planRemoteWorkspaceIsStale reports whether a remembered remote space should
+// be looked up again before it is trusted.
+//
+// The id is remembered from when the space was found or made, and a space goes
+// when its last terminal does. A remembered id that matches nothing filters
+// every pane out, so the machine looks as though it has no terminals -- with
+// nothing said, which is worse than the noisy version of this the local side
+// had. An empty space matches nothing either, so this asks once more and finds
+// it again; that costs one call while a machine has nothing open in it.
+func planRemoteWorkspaceIsStale(workspaceID string, panes []herdrcli.Pane) bool {
+	if workspaceID == "" {
+		return true
+	}
+	for _, pane := range panes {
+		if pane.WorkspaceID == workspaceID {
+			return false
+		}
+	}
+	return true
+}
