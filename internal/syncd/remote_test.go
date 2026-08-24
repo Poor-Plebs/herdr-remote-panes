@@ -1066,3 +1066,73 @@ func TestARestartDoesNotAddATerminalToAMirroredMachine(t *testing.T) {
 		t.Errorf("%d mirrors here, want 1", got)
 	}
 }
+
+func TestWhichSessionOnTheMachineIsShared(t *testing.T) {
+	// A machine's terminals live in a Herdr session, and which one is a
+	// setting: the machine's own default, so that plain `herdr` there shows the
+	// shared terminals, or a named one to keep them apart from its own work.
+	//
+	// It reaches the machine as an environment variable on every command, and
+	// as one handed to the pane that bridges a terminal. Getting it wrong does
+	// not fail: it quietly talks to a different session, which looks like a
+	// machine with nothing open.
+	for _, tt := range []struct {
+		name    string
+		session string
+		want    string
+	}{
+		{"the machine's own default", "default", ""},
+		{"a session of its own", "remote-work", "HERDR_SESSION=remote-work"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			here := withFakeHerdr(t)
+			there, _ := withRemoteHerdr(t)
+
+			cfg := machineConfig("bot")
+			cfg.Hosts[0].Mode = "attach"
+			cfg.Hosts[0].Session = tt.session
+			d := New(cfg)
+			if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+				t.Fatalf("connect: %s", reply.Message)
+			}
+			settle(t, d, here, 3, there)
+
+			// Every command carries it, or none does.
+			var carried, plain int
+			for _, line := range asked(t) {
+				if !strings.Contains(line, "herdr") {
+					continue
+				}
+				if strings.Contains(line, "HERDR_SESSION=") {
+					carried++
+				} else {
+					plain++
+				}
+			}
+			if tt.want == "" {
+				if carried > 0 {
+					t.Errorf("%d commands named a session; the machine's default is unnamed", carried)
+				}
+			} else {
+				if plain > 0 {
+					t.Errorf("%d commands went to the machine without naming the session", plain)
+				}
+				found := false
+				for _, line := range asked(t) {
+					if strings.Contains(line, tt.want) {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("no command named %q", tt.want)
+				}
+			}
+
+			// And the pane that bridges a terminal is told the same, or it
+			// would attach to a different session than the one being listed.
+			if got := len(here().Panes); got != 1 {
+				t.Fatalf("%d panes here, want 1", got)
+			}
+		})
+	}
+}

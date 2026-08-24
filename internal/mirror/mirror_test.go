@@ -312,3 +312,37 @@ func TestClosingAPaneTakesTheSSHWithIt(t *testing.T) {
 		t.Fatal("the ssh was left running after the pane was closed")
 	}
 }
+
+func TestTakeoverEvictsAStaleAttachUnlessTurnedOff(t *testing.T) {
+	// A killed mirror pane can leave `herdr terminal attach` running on the
+	// machine, and every later attempt to mirror that terminal then fails with
+	// "already has an attached client". Taking over evicts it.
+	//
+	// The default is on, and the default matters more than usual here: off
+	// means a terminal that stops being mirrorable until somebody logs into the
+	// machine and finds the stale client themselves.
+	t.Run("on unless said otherwise", func(t *testing.T) {
+		t.Setenv(EnvTakeover, "")
+		if !takeoverEnabled() {
+			t.Error("takeover is off with nothing set; a stale attach would block the terminal")
+		}
+	})
+
+	t.Run("on when set to anything else", func(t *testing.T) {
+		// Only the exact word turns it off, so a setting written as "0" or
+		// "no" does not quietly disable it.
+		for _, value := range []string{"true", "yes", "1", "0", "no"} {
+			t.Setenv(EnvTakeover, value)
+			if !takeoverEnabled() {
+				t.Errorf("takeover is off for %q, which is not how it is turned off", value)
+			}
+		}
+	})
+
+	t.Run("off when asked", func(t *testing.T) {
+		t.Setenv(EnvTakeover, "false")
+		if takeoverEnabled() {
+			t.Error("takeover is still on after being turned off")
+		}
+	})
+}
