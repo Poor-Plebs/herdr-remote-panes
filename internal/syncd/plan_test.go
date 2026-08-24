@@ -89,6 +89,8 @@ func TestPlanTrackedMirror(t *testing.T) {
 		paneAlive     bool
 		mirrorRunning bool
 		want          mirrorAction
+
+		failed bool
 	}{
 		{
 			// A daemon restart used to open a second mirror for every terminal,
@@ -116,6 +118,15 @@ func TestPlanTrackedMirror(t *testing.T) {
 			adopted: true, paneAlive: false, mirrorRunning: false, want: mirrorDismiss,
 		},
 		{
+			// Unless its bridge said why it went. A pane that dropped is not a
+			// pane somebody shut, and treating it as one closes the terminal on
+			// the machine: a moment of trouble reaching a machine would destroy
+			// the work on it.
+			name:    "a pane whose bridge failed dropped, it was not closed",
+			adopted: true, paneAlive: false, mirrorRunning: false, failed: true,
+			want: mirrorForget,
+		},
+		{
 			name:    "a healthy mirror is left alone",
 			adopted: true, paneAlive: true, mirrorRunning: true, want: mirrorKeep,
 		},
@@ -131,10 +142,10 @@ func TestPlanTrackedMirror(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Empty terminal ids: these cases are about the pane, not about
 			// which terminal is in it, and that is checked separately below.
-			got := planTrackedMirrorFor(tt.adopted, tt.paneAlive, tt.mirrorRunning, "", "")
+			got := planTrackedMirrorFor(tt.adopted, tt.paneAlive, tt.mirrorRunning, tt.failed, "", "")
 			if got != tt.want {
-				t.Errorf("planTrackedMirrorFor(adopted=%v, alive=%v, running=%v) = %v, want %v",
-					tt.adopted, tt.paneAlive, tt.mirrorRunning, got, tt.want)
+				t.Errorf("planTrackedMirrorFor(adopted=%v, alive=%v, running=%v, failed=%v) = %v, want %v",
+					tt.adopted, tt.paneAlive, tt.mirrorRunning, tt.failed, got, tt.want)
 			}
 		})
 	}
@@ -765,24 +776,24 @@ func TestPlanTrackedMirrorChecksIdentity(t *testing.T) {
 	// w1:p2" can survive to meet a pane that is now mirroring something else,
 	// and adopting it would leave t1 unmirrored and the other terminal
 	// mirrored twice — two mirrors then fight over the exclusive attach.
-	if got := planTrackedMirrorFor(false, true, true, "t1", "t5"); got != mirrorReplace {
+	if got := planTrackedMirrorFor(false, true, true, false, "t1", "t5"); got != mirrorReplace {
 		t.Errorf("a pane mirroring another terminal should be replaced, got %v", got)
 	}
 
 	// The same terminal is the mirror the record meant.
-	if got := planTrackedMirrorFor(false, true, true, "t1", "t1"); got != mirrorKeep {
+	if got := planTrackedMirrorFor(false, true, true, false, "t1", "t1"); got != mirrorKeep {
 		t.Errorf("a matching mirror should be kept, got %v", got)
 	}
 
 	// A mark written before the terminal was recorded is taken at its word,
 	// or upgrading would replace every working mirror.
-	if got := planTrackedMirrorFor(false, true, true, "t1", ""); got != mirrorKeep {
+	if got := planTrackedMirrorFor(false, true, true, false, "t1", ""); got != mirrorKeep {
 		t.Errorf("an older mark should be kept, got %v", got)
 	}
 
 	// Once running, the identity is not rechecked: a mirror can be between
 	// processes without being the wrong one.
-	if got := planTrackedMirrorFor(true, true, false, "t1", "t5"); got != mirrorKeep {
+	if got := planTrackedMirrorFor(true, true, false, false, "t1", "t5"); got != mirrorKeep {
 		t.Errorf("after adoption the pane should be left alone, got %v", got)
 	}
 }

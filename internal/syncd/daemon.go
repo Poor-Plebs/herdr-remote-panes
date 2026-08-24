@@ -1817,7 +1817,8 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	var closedHere []string
 	for terminalID, paneID := range state.mirrors {
 		running, live := mirror.LiveTerminal(paneID)
-		switch planTrackedMirrorFor(state.adopted, index.alive[paneID], live, terminalID, running) {
+		switch planTrackedMirrorFor(state.adopted, index.alive[paneID], live,
+			mirror.Failed(paneID), terminalID, running) {
 		case mirrorKeep:
 		case mirrorForget:
 			delete(state.mirrors, terminalID)

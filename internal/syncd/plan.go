@@ -85,9 +85,16 @@ const (
 // it is now showing something else, and adopting it would leave one terminal
 // unmirrored and another mirrored twice. An empty hasTerminal means the mark
 // predates this being recorded and is taken at its word.
-func planTrackedMirrorFor(adopted, paneAlive, mirrorRunning bool, wantTerminal, hasTerminal string) mirrorAction {
+func planTrackedMirrorFor(adopted, paneAlive, mirrorRunning, failed bool, wantTerminal, hasTerminal string) mirrorAction {
 	if !paneAlive {
-		if adopted {
+		// A bridge that fails records why on its way out, which is the whole
+		// point of that record: it tells a pane that dropped from one somebody
+		// shut. Without reading it here, a mirror whose attach failed looked
+		// exactly like a closed tab -- and a closed tab closes the terminal on
+		// the machine, so a moment of trouble reaching a machine destroyed the
+		// work on it. Forgetting it instead leaves the terminal alone and lets
+		// the next pass mirror it again.
+		if adopted && !failed {
 			// It was live a moment ago and is not now: the user closed it.
 			return mirrorDismiss
 		}

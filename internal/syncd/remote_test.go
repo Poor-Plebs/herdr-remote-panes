@@ -1136,3 +1136,72 @@ func TestWhichSessionOnTheMachineIsShared(t *testing.T) {
 		})
 	}
 }
+
+func TestAMirrorThatFailsDoesNotCloseTheWorkOnTheMachine(t *testing.T) {
+	// Closing a mirrored tab closes the terminal on the machine too, which is
+	// the point of close_propagates. So whether a pane that has gone was closed
+	// or merely dropped decides whether somebody's work is destroyed.
+	//
+	// A bridge that fails records why on its way out, which is what that record
+	// is for. The mirrored path never read it: a mirror whose attach failed --
+	// a moment of trouble reaching the machine, a terminal briefly held by
+	// something else -- looked exactly like a tab somebody had shut, and the
+	// terminal on the machine was closed to match.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+
+	remote := there()
+	if len(remote.Panes) != 1 {
+		t.Fatalf("the machine has %d terminals, want 1 to start from", len(remote.Panes))
+	}
+	var terminal string
+	for id := range remote.Panes {
+		terminal = id
+	}
+
+	// The bridge failed and said so, and its pane went with it.
+	terminalDied(t, onlyPane(t, here()),
+		"bot: exit status 1 running: herdr terminal attach term_1")
+	settle(t, d, here, 4, there)
+
+	if _, alive := there().Panes[terminal]; !alive {
+		t.Error("the terminal on the machine was closed because a mirror of it failed")
+	}
+	if got := len(there().Panes); got != 1 {
+		t.Errorf("the machine has %d terminals, want the one it had: %+v", got, there().Panes)
+	}
+	// And it is mirrored again, rather than left showing nothing.
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Errorf("%d mirrors here, want the terminal mirrored again", got)
+	}
+}
+
+func TestAMirroredTabYouCloseStillClosesTheTerminal(t *testing.T) {
+	// The other half, which the fix must not cost: a tab somebody shuts leaves
+	// no record of a failure, and that is still a deliberate close.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+
+	closePaneByHand(t, onlyPane(t, here()))
+	settle(t, d, here, 4, there)
+
+	if got := len(there().Panes); got != 0 {
+		t.Errorf("the machine has %d terminals after the tab was closed, want none", got)
+	}
+}
