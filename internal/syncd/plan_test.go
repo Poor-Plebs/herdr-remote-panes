@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"encoding/json"
+	"fmt"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
@@ -2786,12 +2787,15 @@ func TestASlowCommandStillGetsItsAnswer(t *testing.T) {
 	restore := exchangeTimeout
 	exchangeTimeout = 50 * time.Millisecond
 	defer func() { exchangeTimeout = restore }()
+	// Read once, here: the dispatch below runs in its own goroutine and must
+	// not read the package variable that the deferred restore writes.
+	slow := 10 * exchangeTimeout
 
 	server, client := net.Pipe()
 	defer client.Close()
 
 	go serveExchange(server, func(Command) Reply {
-		time.Sleep(10 * exchangeTimeout)
+		time.Sleep(slow)
 		return Reply{OK: true, Message: "worked it out eventually"}
 	})
 
@@ -2871,5 +2875,66 @@ func TestAnEndlessRequestIsCutOff(t *testing.T) {
 	}
 	if reply.OK {
 		t.Error("a request that never ended was accepted")
+	}
+}
+
+func TestConnectAllReachesTheMachinesTogether(t *testing.T) {
+	// One at a time, an unreachable machine costs its whole connect timeout
+	// and the next one has not started yet, so the total is the sum. Three of
+	// them was enough to outlast the deadline on the connection carrying the
+	// answer back, and the caller was told the connection broke rather than
+	// what happened.
+	//
+	// Checked by watching when the ssh processes overlap rather than by timing
+	// the whole thing, so the result does not depend on how loaded the machine
+	// running the test is.
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	script := "#!/bin/sh\necho start >> " + log + "\nsleep 0.4\necho end >> " + log + "\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	const machines = 4
+	cfg := config.Defaults()
+	for i := 0; i < machines; i++ {
+		cfg.Hosts = append(cfg.Hosts, config.Host{Target: fmt.Sprintf("machine%d", i)})
+	}
+	d := withConfig(&Daemon{hosts: map[string]*hostSync{}}, cfg)
+
+	connected, err := d.connectAll()
+	if err != nil {
+		t.Fatalf("connectAll: %v", err)
+	}
+	if len(connected) != machines {
+		t.Fatalf("connected %v, want all %d", connected, machines)
+	}
+	// Reported in the order they are written in the config, however the
+	// connections finished.
+	for i, target := range connected {
+		if want := fmt.Sprintf("machine%d", i); target != want {
+			t.Errorf("connected %v, want them in config order", connected)
+			break
+		}
+	}
+
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Fields(string(raw))
+	started := 0
+	for _, line := range lines {
+		if line == "end" {
+			break
+		}
+		started++
+	}
+	if started < machines {
+		t.Errorf("only %d of %d connections had started before the first finished: %v",
+			started, machines, lines)
 	}
 }

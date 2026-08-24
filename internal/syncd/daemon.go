@@ -1183,25 +1183,50 @@ func (d *Daemon) liveTerminalCount(target string) int {
 
 // connectAll connects every configured host that is not disabled, reporting
 // which ones answered. It fails only when none of them do.
+//
+// The machines are reached at the same time rather than one after another.
+// They are independent, and connect does its ssh work before it takes the lock,
+// so nothing was gained by the queue -- while an unreachable machine costs up
+// to its own connect timeout, and one at a time those add up. Three of them was
+// enough to outlast the deadline on the connection carrying the answer, so the
+// caller was told the connection broke rather than what happened. Reaching them
+// together bounds the whole thing by the slowest one instead of by the sum.
 func (d *Daemon) connectAll() ([]string, error) {
+	hosts := make([]config.Host, 0, len(d.config().Hosts))
+	for _, host := range d.config().Hosts {
+		if !host.Disabled {
+			hosts = append(hosts, host)
+		}
+	}
+	if len(hosts) == 0 {
+		return nil, fmt.Errorf("no hosts configured")
+	}
+
+	// Indexed rather than appended, so the machines are reported in the order
+	// they appear in the config however the connections finish.
+	errs := make([]error, len(hosts))
+	var wg sync.WaitGroup
+	for i, host := range hosts {
+		wg.Add(1)
+		go func(i int, host config.Host) {
+			defer wg.Done()
+			errs[i] = d.connect(host)
+		}(i, host)
+	}
+	wg.Wait()
+
 	var connected []string
 	var lastErr error
-	for _, host := range d.config().Hosts {
-		if host.Disabled {
-			continue
-		}
-		if err := d.connect(host); err != nil {
-			log.Printf("connect %s: %s", host.Target, summarizeError(err))
-			lastErr = err
+	for i, host := range hosts {
+		if errs[i] != nil {
+			log.Printf("connect %s: %s", host.Target, summarizeError(errs[i]))
+			lastErr = errs[i]
 			continue
 		}
 		connected = append(connected, host.Target)
 	}
 	if len(connected) == 0 {
-		if lastErr != nil {
-			return nil, lastErr
-		}
-		return nil, fmt.Errorf("no hosts configured")
+		return nil, lastErr
 	}
 	return connected, nil
 }
