@@ -410,9 +410,16 @@ func summarizeError(err error) string {
 		return known.summary
 	}
 
-	// Otherwise the first line, which is where the cause usually is.
-	if i := strings.IndexByte(message, '\n'); i >= 0 {
-		message = message[:i]
+	// Otherwise the first line with anything on it, which is where the cause
+	// usually is. The first line rather than the first non-empty one left a
+	// message that opens with a blank line summarised as nothing at all -- and
+	// nothing is what the listing and the menu would then show for a machine
+	// that is not working, which is the one moment they have a job to do.
+	for _, line := range strings.Split(message, "\n") {
+		if strings.TrimSpace(line) != "" {
+			message = line
+			break
+		}
 	}
 	// Trimmed by runes, not bytes: a host name or path can be non-ASCII, and
 	// cutting mid-character would emit a broken rune into the sidebar.

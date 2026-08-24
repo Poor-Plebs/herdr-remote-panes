@@ -3107,3 +3107,31 @@ func TestEveryPaneClosedInAPassLeavesTheListing(t *testing.T) {
 		t.Fatalf("only %d closes found inside a pass; this is not reaching the code", closes)
 	}
 }
+
+func TestSummarisingAFailureAlwaysSaysSomething(t *testing.T) {
+	// The summary is what the listing and the menu show for a machine that is
+	// not working, so an empty one is the worst answer available: it reads as
+	// a machine with nothing wrong.
+	for _, tt := range []struct {
+		name string
+		err  string
+		want string
+	}{
+		{"an ordinary one line failure", "no route to that machine", "no route to that machine"},
+		{"the first line of several", "cannot reach it\nand here is why", "cannot reach it"},
+		{"one that opens with a blank line", "\n\ncannot reach it\nmore", "cannot reach it"},
+		{"one that is only blank lines", "\n\n  \n", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := summarizeError(errors.New(tt.err))
+			if got != tt.want {
+				t.Errorf("summarizeError(%q) = %q, want %q", tt.err, got, tt.want)
+			}
+		})
+	}
+
+	// And nothing at all is still nothing, rather than a panic or a stray line.
+	if got := summarizeError(nil); got != "" {
+		t.Errorf("summarizeError(nil) = %q", got)
+	}
+}
