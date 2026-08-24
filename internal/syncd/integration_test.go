@@ -1151,3 +1151,36 @@ func TestATargetThatIsAnInstructionIsRefusedHoweverItArrived(t *testing.T) {
 		t.Fatal("a ProxyCommand ran")
 	}
 }
+
+func TestTheWarningAboutTwoMachinesSharingANameReachesYou(t *testing.T) {
+	// Reporting it inside the config package is only half of it: what decides
+	// whether anybody finds out is whether it comes back with status, which is
+	// what the menu draws its warning line from.
+	withFakeHerdr(t)
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{
+		{Target: "bot", Label: "build"},
+		{Target: "ci", Label: "build"},
+	}
+	d := New(cfg)
+
+	reply := d.dispatch(Command{Cmd: "status"})
+	if !reply.OK {
+		t.Fatalf("status: %s", reply.Message)
+	}
+	if reply.Warning == "" {
+		t.Fatal("status carries no warning, so nothing in the menu will say the two machines collide")
+	}
+	for _, want := range []string{"bot", "ci", "build"} {
+		if !strings.Contains(reply.Warning, want) {
+			t.Errorf("the warning does not name %q: %q", want, reply.Warning)
+		}
+	}
+
+	// And a config with nothing wrong with it says nothing, or the line becomes
+	// furniture that nobody reads.
+	quiet := New(machineConfig("bot"))
+	if reply := quiet.dispatch(Command{Cmd: "status"}); reply.Warning != "" {
+		t.Errorf("an ordinary config produced a warning: %q", reply.Warning)
+	}
+}

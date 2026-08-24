@@ -27,27 +27,34 @@ func TestLivenessLifecycle(t *testing.T) {
 }
 
 func TestLivenessRejectsDeadAndCorruptMarks(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 
-	panes := filepath.Join(dir, "panes")
-	if err := os.MkdirAll(panes, 0o755); err != nil {
-		t.Fatal(err)
+	// Written where the code looks, taken from the code. These marks used to be
+	// put in panes/ while the layout has a session directory below that, so
+	// nothing here was ever read: the test passed because the file was missing,
+	// and went on passing with the checks it is about removed altogether.
+	write := func(paneID, contents string) {
+		t.Helper()
+		path := livenessPath(paneID)
+		if path == "" {
+			t.Fatal("no liveness path")
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// A Herdr restart leaves the pane behind without its process; the stale
 	// mark must not make the husk look like a running mirror.
-	dead := filepath.Join(panes, "w1-p9.pid")
-	if err := os.WriteFile(dead, []byte(strconv.Itoa(deadPID(t))), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	write("w1:p9", strconv.Itoa(deadPID(t)))
 	if IsLive("w1:p9") {
 		t.Error("a mark for a dead process must not read as live")
 	}
 
-	if err := os.WriteFile(filepath.Join(panes, "w1-p8.pid"), []byte("nonsense"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	write("w1:p8", "nonsense")
 	if IsLive("w1:p8") {
 		t.Error("an unreadable mark must not read as live")
 	}
@@ -339,5 +346,102 @@ func TestALongFailureIsNotKeptWhole(t *testing.T) {
 	MarkFailed("w1:p2", strings.Repeat("x", 4*maxFailureReason))
 	if got := len(FailureReason("w1:p2")); got > maxFailureReason {
 		t.Errorf("kept %d bytes of the reason, want at most %d", got, maxFailureReason)
+	}
+}
+
+func TestAPaneIdKeepsItsIdentityWhenItBecomesAFilename(t *testing.T) {
+	// The mark for a pane is a file named after it, and whether a mirror is
+	// running is read back from that file. Two panes whose names come out the
+	// same share one mark, and then one pane's liveness is answered from the
+	// other's -- a husk read as a running mirror, or a live pane replaced.
+	//
+	// Every edge of every range, because an off-by-one at any of them turns an
+	// ordinary character into the same dash everything else becomes.
+	for _, tt := range []struct{ in, want string }{
+		{"w1:p2", "w1-p2"},
+		{"az", "az"},
+		{"AZ", "AZ"},
+		{"09", "09"},
+		{"a-z_A-Z_0-9", "a-z_A-Z_0-9"},
+		// Just outside each range, in ASCII order.
+		{"`", "-"}, // before 'a'
+		{"{", "-"}, // after 'z'
+		{"@", "-"}, // before 'A'
+		{"[", "-"}, // after 'Z'
+		{"/", "-"}, // before '0'
+		{":", "-"}, // after '9'
+		{"../evil", "---evil"},
+	} {
+		if got := sanitizePaneID(tt.in); got != tt.want {
+			t.Errorf("sanitizePaneID(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+
+	// The property behind the cases, over ids shaped the way Herdr writes them:
+	// panes that differ still differ afterwards.
+	seen := map[string]string{}
+	for _, paneID := range []string{
+		"w1:p1", "w1:p2", "w1:p9", "w1:p10", "w2:p1", "w10:p1", "w4A:p2", "w4a:p2", "wZ:p0",
+	} {
+		got := sanitizePaneID(paneID)
+		if other, clash := seen[got]; clash {
+			t.Errorf("panes %q and %q both become %q, so they share one mark", other, paneID, got)
+		}
+		seen[got] = paneID
+	}
+}
+
+func TestAMarkWithNoRealProcessInItIsNotAlive(t *testing.T) {
+	// A mark is a pid written to a file, and the file can be anything: a write
+	// interrupted partway, a leftover from an older layout, a zero.
+	//
+	// Zero especially. Signal 0 to pid 0 goes to the caller's own process
+	// group, which exists, so a mark that has lost its number would report the
+	// pane as live -- and a husk that reads as a running mirror is never
+	// replaced.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	// Written where the code looks for it, taken from the code rather than
+	// rebuilt here: the layout has a session directory in it, and a mark put
+	// beside that directory is simply never read.
+	mark := livenessPath("w1:p7")
+	if mark == "" {
+		t.Fatal("no liveness path")
+	}
+	if err := os.MkdirAll(filepath.Dir(mark), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// First: a mark this test writes is a mark the code reads. Without this the
+	// cases below would pass for a file nobody opens, which is exactly how the
+	// test beside this one came to assert nothing for as long as it existed.
+	if err := os.WriteFile(mark, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !IsLive("w1:p7") {
+		t.Fatal("a mark holding this test's own pid does not read as live, so nothing below is being read")
+	}
+
+	for _, tt := range []struct{ what, contents string }{
+		{"a zero, which would signal our own process group", "0"},
+		{"a negative pid, which would signal a whole group", "-1"},
+		{"the group of the process that wrote it", "-12345"},
+		{"an empty file, from a write that never happened", ""},
+		{"nothing but space", "   \n"},
+		{"a number with something after it", "123x"},
+		{"something enormous", "999999999999999999999999"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			const paneID = "w1:p7"
+			if err := os.WriteFile(mark, []byte(tt.contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if IsLive(paneID) {
+				t.Errorf("a mark holding %q read as a live mirror", tt.contents)
+			}
+			if _, live := LiveTerminal(paneID); live {
+				t.Errorf("a mark holding %q named a live terminal", tt.contents)
+			}
+		})
 	}
 }
