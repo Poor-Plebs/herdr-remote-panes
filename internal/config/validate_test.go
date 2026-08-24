@@ -1031,3 +1031,58 @@ func TestProblemsCatchesTwoMachinesAnsweringToOneName(t *testing.T) {
 		}
 	})
 }
+
+func TestProblemsCatchesALabelThatCannotBeDrawn(t *testing.T) {
+	// A label is made safe to draw before it is used, and one made only of
+	// things that cannot be drawn is left with nothing. The machine's space
+	// then has no name in it and its terminals are called "shell@" -- while the
+	// file says otherwise, and nothing anywhere connects the two.
+	for _, label := range []string{"\x01\x02", "   ", "\n\t", "\x7f"} {
+		cfg := Defaults()
+		cfg.Hosts = []Host{{Target: "bot", Label: label}}
+		problems := strings.Join(cfg.Problems(), "\n")
+		if !strings.Contains(problems, "named after nothing") {
+			t.Errorf("label %q should be reported as unusable, got %q", label, problems)
+		}
+		// The report must not carry the label's own control characters into
+		// the log or the menu; %q escapes them.
+		for _, r := range problems {
+			if r < 0x20 && r != '\n' {
+				t.Errorf("the report for %q carries a control character itself: %q", label, problems)
+				break
+			}
+		}
+	}
+
+	// A label with something in it is fine, control characters or not.
+	// "\x1b[31m" belongs here, not above: the escape byte goes and "[31m" is
+	// left, which is a name -- an odd one, but drawable and its own.
+	for _, label := range []string{"build", "build\x01", " build ", "\x1b[31m"} {
+		cfg := Defaults()
+		cfg.Hosts = []Host{{Target: "bot", Label: label}}
+		for _, problem := range cfg.Problems() {
+			if strings.Contains(problem, "named after nothing") {
+				t.Errorf("label %q is usable but was reported: %q", label, problem)
+			}
+		}
+	}
+
+	// A machine with no label answers to its target, so an ordinary one must
+	// not be reported.
+	cfg := Defaults()
+	cfg.Hosts = []Host{{Target: "bot"}}
+	for _, problem := range cfg.Problems() {
+		if strings.Contains(problem, "named after nothing") {
+			t.Errorf("a machine with no label was reported: %q", problem)
+		}
+	}
+
+	// But a target of nothing but spaces leaves it just as nameless. ssh
+	// reaches `Host "my server"`, so a space in a target is allowed and this
+	// gets that far -- and then has nothing left to name anything with.
+	cfg = Defaults()
+	cfg.Hosts = []Host{{Target: "   "}}
+	if problems := strings.Join(cfg.Problems(), "\n"); !strings.Contains(problems, "named after nothing") {
+		t.Errorf("a target of nothing but spaces should be reported, got %q", problems)
+	}
+}

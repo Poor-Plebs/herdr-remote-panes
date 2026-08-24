@@ -289,3 +289,36 @@ func TestAnEmptyConfigComesOutAsTheDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizingLeavesTheConfigItWasGivenAlone(t *testing.T) {
+	// Config is taken by value, which makes normalized() look like it cannot
+	// touch its caller's. Its Hosts share the caller's backing array, though,
+	// so dropping a host by compacting into that array rewrites what the caller
+	// is still holding: the entry after the dropped one moves down a place, and
+	// the last one appears twice.
+	//
+	// Nothing calls it that way today. It is one allocation to make the shape
+	// safe rather than to leave it depending on that staying true.
+	original := Config{Hosts: []Host{
+		{Target: "", Label: "mistyped"},
+		{Target: "bot"},
+		{Target: "ci"},
+	}}
+	held := original.Hosts
+
+	got := original.normalized()
+
+	for i, want := range []string{"", "bot", "ci"} {
+		if held[i].Target != want {
+			t.Errorf("the caller's host %d is now %q, want %q -- normalizing rewrote it",
+				i, held[i].Target, want)
+		}
+	}
+	// And it did its own job: the machine with no target is not in the result.
+	if len(got.Hosts) != 2 || got.Hosts[0].Target != "bot" || got.Hosts[1].Target != "ci" {
+		t.Errorf("the normalized copy holds %+v, want bot and ci", got.Hosts)
+	}
+	if len(got.Problems()) == 0 {
+		t.Error("dropping a machine somebody wrote down should be reported")
+	}
+}

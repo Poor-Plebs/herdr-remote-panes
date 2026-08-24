@@ -76,6 +76,23 @@ func (c Config) Problems() []string {
 			// of its own -- so a label copied from another machine's target
 			// collides just as surely as one copied from its label.
 			name := host.DisplayLabel()
+			// A label is made safe to draw before it is used anywhere, and one
+			// made only of things that cannot be drawn is left with nothing at
+			// all -- so the machine's space and every terminal in it end up
+			// named after nothing, and the file says otherwise.
+			if name == "" {
+				// Either half can be the cause. A target of nothing but spaces
+				// is a valid destination -- ssh reaches `Host "my server"` --
+				// but it cannot name anything once it is trimmed.
+				cause := fmt.Sprintf("label %q", host.Label)
+				if host.Label == "" {
+					cause = "target, which is nothing but spaces,"
+				}
+				problems = append(problems, fmt.Sprintf(
+					"host %q has a %s that is empty once it is made safe to draw; "+
+						"its space and its terminals would be named after nothing",
+					host.Target, cause))
+			}
 			if first, taken := labelledBy[name]; taken && first != host.Target {
 				problems = append(problems, fmt.Sprintf(
 					"hosts %q and %q are both called %q, so they would share one space "+

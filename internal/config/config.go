@@ -540,7 +540,12 @@ func (c Config) normalized() Config {
 	// ones went is remembered: dropping an entry somebody deliberately wrote
 	// and saying nothing is how a mistyped "targt" turns into a machine that
 	// is simply missing from the menu, with nowhere to look for why.
-	kept := c.Hosts[:0]
+	// A new slice, not a filter in place. Config is taken by value but its
+	// Hosts share the caller's backing array, so compacting into it rewrites
+	// what the caller is still holding -- and the caller here is whoever asked
+	// for a normalized copy, which is not the same as asking for theirs to be
+	// changed.
+	kept := make([]Host, 0, len(c.Hosts))
 	for i, host := range c.Hosts {
 		if host.Target != "" {
 			kept = append(kept, host)
