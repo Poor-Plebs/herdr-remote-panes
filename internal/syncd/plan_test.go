@@ -3135,3 +3135,35 @@ func TestSummarisingAFailureAlwaysSaysSomething(t *testing.T) {
 		t.Errorf("summarizeError(nil) = %q", got)
 	}
 }
+
+func TestATerminalIsNeverLeftWithoutAName(t *testing.T) {
+	// A terminal's name comes from whatever is running on the far machine, and
+	// is made safe to draw before it reaches the sidebar. One made only of
+	// things that cannot be drawn is left with nothing at all, and the terminal
+	// arrives called "@bot" -- which says which machine it is on and nothing
+	// else, so two of them cannot be told apart.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	d := New(machineConfig("bot"))
+
+	for _, tt := range []struct{ what, name string }{
+		{"a name of control characters", "\x01\x02\x03"},
+		{"a bell and nothing else", "\a"},
+		{"nothing at all", ""},
+		{"only whitespace", "   \t "},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			label := d.label(config.Host{Target: "bot"}, herdrcli.Pane{PaneID: "w4A:p2"}, tt.name)
+			if label == "@bot" || !strings.Contains(label, "@bot") {
+				t.Fatalf("label is %q, which names no terminal", label)
+			}
+			if !strings.Contains(label, "w4A:p2") {
+				t.Errorf("label is %q; with no name to use it should fall back to the pane", label)
+			}
+		})
+	}
+
+	// A name that survives being made safe is used as it is.
+	if got := d.label(config.Host{Target: "bot"}, herdrcli.Pane{PaneID: "w4A:p2"}, "build"); got != "build@bot" {
+		t.Errorf("an ordinary name came out %q, want build@bot", got)
+	}
+}

@@ -2290,6 +2290,14 @@ func (d *Daemon) label(host config.Host, rp herdrcli.Pane, name string) string {
 	// sidebar here. A newline or an escape sequence in one would be drawn
 	// rather than read, and a long one crowds out everything beside it.
 	name = text.Truncate(text.Sanitize(name), maxLabelWidth)
+	if name == "" {
+		// A name made only of things that cannot be drawn is left with nothing
+		// once it is made safe, and the terminal arrives in the sidebar called
+		// "@bot" -- which says only which machine it is on, and cannot be told
+		// from any other terminal on that machine. The pane's own id is not a
+		// name anybody chose, but it is the one thing that distinguishes it.
+		name = text.Sanitize(rp.PaneID)
+	}
 
 	// The agent name comes from the far machine as well, and reaches the
 	// sidebar the same way a terminal's name does whenever {agent} is used in
