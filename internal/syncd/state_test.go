@@ -3,6 +3,7 @@ package syncd
 import (
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -157,5 +158,80 @@ func TestCorruptSnapshotLoadsEmpty(t *testing.T) {
 	// Unreadable bookkeeping must not stop the daemon starting.
 	if got := loadSnapshot(); len(got.Hosts) != 0 {
 		t.Fatalf("corrupt snapshot should load empty, got %+v", got)
+	}
+}
+
+func TestASessionNameBecomesAFilenameWithoutTwoOfThemColliding(t *testing.T) {
+	// The name goes into a socket path, so anything a filesystem or a shell
+	// would read as something else is replaced. What matters is that the
+	// replacing does not run two different sessions together: they would then
+	// derive the same socket, and the second daemon would find the first one's
+	// and exit.
+	for _, tt := range []struct{ in, want string }{
+		// Every edge of every range the allow-list names, because an
+		// off-by-one at any of them silently rewrites an ordinary character.
+		{"az", "az"},
+		{"AZ", "AZ"},
+		{"09", "09"},
+		{"a-z_A-Z_0-9", "a-z_A-Z_0-9"},
+		{"hub", "hub"},
+		// Just outside each range, in the ASCII order: these are replaced.
+		{"`", "-"}, // before 'a'
+		{"{", "-"}, // after 'z'
+		{"@", "-"}, // before 'A'
+		{"[", "-"}, // after 'Z'
+		{"/", "-"}, // before '0'
+		{":", "-"}, // after '9'
+		{"a/b", "a-b"},
+		{"..", "--"},
+		{"work session", "work-session"},
+		{"日本語", "---"},
+		// Nothing usable left, and a socket still has to be named something.
+		{"", "default"},
+	} {
+		if got := sanitize(tt.in); got != tt.want {
+			t.Errorf("sanitize(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+
+	// The property behind the cases: two names that differ still differ after.
+	// Only for names made of characters the allow-list keeps -- outside it,
+	// running them together is the whole point.
+	seen := map[string]string{}
+	for _, name := range []string{"hub", "work", "a", "z", "A", "Z", "0", "9", "a-z", "a_z"} {
+		got := sanitize(name)
+		if other, clash := seen[got]; clash {
+			t.Errorf("sessions %q and %q both become %q, so they share a socket", other, name, got)
+		}
+		seen[got] = name
+	}
+}
+
+func TestTheSocketPathStaysShortEnoughToBind(t *testing.T) {
+	// Binding a path over the kernel's limit fails with "invalid argument",
+	// which says nothing about the cause, so an overlong one falls back to a
+	// short deterministic path instead. The boundary is the whole of it: one
+	// byte either side decides between a path that binds and an error nobody
+	// can read.
+	temp := t.TempDir()
+
+	// A state directory chosen so the path lands exactly on the limit.
+	const name = "control-hub.sock"
+	for _, over := range []int{-1, 0, 1} {
+		dir := "/" + strings.Repeat("d", maxUnixSocketPath-len(name)-1+over)
+		path := socketPathFor(dir, "hub", temp)
+		fits := len(filepath.Join(dir, name)) <= maxUnixSocketPath
+		inState := strings.HasPrefix(path, dir)
+		switch {
+		case fits && !inState:
+			t.Errorf("a path of %d bytes fits but was moved to %q",
+				len(filepath.Join(dir, name)), path)
+		case !fits && inState:
+			t.Errorf("a path of %d bytes is over the limit but was kept: %q",
+				len(filepath.Join(dir, name)), path)
+		}
+		if len(path) > maxUnixSocketPath {
+			t.Errorf("the path handed back is %d bytes, over the limit: %q", len(path), path)
+		}
 	}
 }
