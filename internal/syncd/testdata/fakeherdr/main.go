@@ -16,6 +16,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 // fakeHerdr is the whole of the Herdr CLI this plugin needs, over a JSON file.
@@ -50,10 +51,45 @@ func (f *fakeHerdr) paneID(workspace string) string {
 	return fmt.Sprintf("%s:p%d", workspace, f.Next)
 }
 
+// lockState takes an exclusive lock held for the whole of one call, and returns
+// the release. The lock is its own file so that renaming the state into place
+// does not pull the lock out from under anybody waiting on it.
+func lockState(path string) func() {
+	if path == "" {
+		return func() {}
+	}
+	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return func() {}
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return func() {}
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}
+}
+
 // main answers one CLI call and exits, as the real binary would.
 func main() {
 	args := os.Args[1:]
 	path := os.Getenv("HRP_TEST_FAKE_HERDR_STATE")
+
+	// One call at a time, across processes. The daemon lets go of its lock
+	// before it talks to Herdr, so a poll and a command from the menu reach the
+	// CLI at the same moment -- and every call here is read the file, change
+	// it, write it back. Without this the later write simply loses whatever the
+	// earlier one did, and a test of two things happening at once would be
+	// testing this file instead of the daemon. Real Herdr is one process with
+	// one copy of the state; this is the nearest a file gets to that.
+	unlock := lockState(path)
+	// Released by hand in ok and fail below, which end the process rather than
+	// returning. Exiting would release it anyway when the descriptor closes,
+	// but a lock whose release depends on that reads like a lock nobody holds.
+	defer unlock()
+
 	state := fakeHerdr{
 		Panes:      map[string]map[string]any{},
 		Workspaces: map[string]map[string]any{},
@@ -61,18 +97,27 @@ func main() {
 	if raw, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(raw, &state)
 	}
+	// Written whole and moved into place, so a reader never sees half a file:
+	// os.WriteFile truncates first, and anything reading in that moment gets
+	// nothing at all.
 	save := func() {
 		raw, _ := json.Marshal(state)
-		_ = os.WriteFile(path, raw, 0o600)
+		tmp := path + ".writing"
+		if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+			return
+		}
+		_ = os.Rename(tmp, path)
 	}
 	ok := func(result any) {
 		out, _ := json.Marshal(map[string]any{"result": result, "id": "cli:fake"})
+		unlock()
 		fmt.Println(string(out))
 		os.Exit(0)
 	}
 	fail := func(code, message string) {
 		out, _ := json.Marshal(map[string]any{
 			"error": map[string]string{"code": code, "message": message}, "id": "cli:fake"})
+		unlock()
 		fmt.Println(string(out))
 		os.Exit(1)
 	}

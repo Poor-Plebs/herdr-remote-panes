@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1182,5 +1183,133 @@ func TestTheWarningAboutTwoMachinesSharingANameReachesYou(t *testing.T) {
 	quiet := New(machineConfig("bot"))
 	if reply := quiet.dispatch(Command{Cmd: "status"}); reply.Warning != "" {
 		t.Errorf("an ordinary config produced a warning: %q", reply.Warning)
+	}
+}
+
+func TestPollingAndCommandsAtTheSameTimeIsSafe(t *testing.T) {
+	// This is the shape the daemon actually runs in: a poll every couple of
+	// seconds, and commands from the menu arriving whenever somebody presses
+	// something. They are not serialised — reconcileOnce takes the lock only
+	// to copy the list of machines and lets go of it before it talks to Herdr —
+	// so a connect can be halfway through while a poll is walking the same
+	// machine's panes.
+	//
+	// The concurrency tests before this one built a Daemon by hand and pointed
+	// the race detector at one map. This runs the real paths against the
+	// stand-in, which is where a fault would actually be.
+	// SKIPPED, and the reason is a real fault rather than a flaky test.
+	//
+	// The reconcile path locks correctly: each host's goroutine holds d.mu for
+	// its whole body. The command path does not -- openRemotePane and
+	// ensureRemotePresence take d.mu only to look the machine up, release it,
+	// and then work on the *hostSync unlocked. So a command from the menu and a
+	// poll touch the same machine's fields at the same time. The race detector
+	// finds it in under a second with this test:
+	//
+	//   state.workspaceID  written by ensureWorkspace, read by markWorkspaceState
+	//   state.labels       written by forgetPane, read and written by retitle
+	//
+	// The second is worse than stale data: concurrent read and write of a Go
+	// map is a runtime throw, which takes the daemon down and every machine
+	// with it.
+	//
+	// Not fixed here because the fix is not local. Hoisting d.mu to the two
+	// command entry points means removing the five nested locks below them --
+	// openShellPane holds two, rememberPlacement another -- and Go's mutexes do
+	// not nest. Getting that wrong deadlocks the daemon, which freezes the menu
+	// and every machine for good rather than intermittently. That is a worse
+	// failure than the one being fixed, and the call belongs to whoever owns
+	// this.
+	//
+	// Remove the skip to reproduce.
+	t.Skip("known data race between the poll and the command path; see the comment above")
+
+	held := withFakeHerdr(t)
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{{Target: "bot"}, {Target: "prod"}, {Target: "ci"}}
+	d := New(cfg)
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	// The poll, running as fast as it can rather than every two seconds.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				d.reconcileAll()
+			}
+		}
+	}()
+
+	// The menu: status and the machine list, which is what the picker asks for
+	// while somebody is looking at it.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				d.dispatch(Command{Cmd: "status"})
+			}
+		}
+	}()
+
+	// Somebody pressing things: connecting, opening terminals, disconnecting,
+	// and asking for a refresh. Every one of these changes what the poll is
+	// walking while it walks it.
+	commands := []Command{
+		{Cmd: "connect", Host: "bot"},
+		{Cmd: "open", Host: "bot"},
+		{Cmd: "connect", Host: "prod"},
+		{Cmd: "refresh"},
+		{Cmd: "open", Host: "prod", Placement: "tab"},
+		{Cmd: "disconnect", Host: "bot"},
+		{Cmd: "connect", Host: "ci"},
+		{Cmd: "set-mode", Host: "ci", Mode: "ssh"},
+		{Cmd: "disconnect", Host: "prod"},
+	}
+	for i := 0; i < 3; i++ {
+		for _, cmd := range commands {
+			// The reply is not checked: a command racing a disconnect can
+			// legitimately fail. What is being tested is that it answers at all
+			// rather than deadlocking, panicking, or tearing the state.
+			d.dispatch(cmd)
+		}
+	}
+
+	close(stop)
+	wg.Wait()
+
+	// Still coherent afterwards: every machine either answers or does not, and
+	// the panes that are left belong to machines that are still connected.
+	status := d.status()
+	if len(status) == 0 {
+		t.Fatal("no machines left at all")
+	}
+	connected := map[string]bool{}
+	for _, h := range status {
+		connected[h.Label] = h.Connected
+	}
+	for id, pane := range held().Panes {
+		label, _ := pane["label"].(string)
+		at := strings.LastIndex(label, "@")
+		if at < 0 {
+			continue
+		}
+		machine := label[at+1:]
+		if _, known := connected[machine]; !known {
+			t.Errorf("pane %s is named for %q, which is not a machine this knows about", id, machine)
+		}
 	}
 }
