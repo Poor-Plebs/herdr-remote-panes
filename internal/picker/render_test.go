@@ -5,6 +5,8 @@ import (
 
 	"fmt"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -659,5 +661,102 @@ func TestAMachineWithNothingToSayStillReadsProperly(t *testing.T) {
 	}
 	if !strings.Contains(line, "unreachable") || !strings.Contains(line, "enter to retry") {
 		t.Errorf("%q is missing part of what it should say", line)
+	}
+}
+
+// fakeStty puts an stty on PATH that answers "size" with the given output.
+func fakeStty(t *testing.T, output string, status int) {
+	t.Helper()
+	dir := t.TempDir()
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s' '%s'\nexit %d\n", output, status)
+	if err := os.WriteFile(filepath.Join(dir, "stty"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestThePopupIsDrawnAtTheSizeItIs(t *testing.T) {
+	// Everything about the frame is decided from this: how many machines fit,
+	// how wide a name may be, how far a page key moves. Reading it wrong is not
+	// a crash but a menu drawn for a terminal somebody does not have.
+	t.Run("the size the terminal reports", func(t *testing.T) {
+		// stty prints rows first, and this returns columns first.
+		fakeStty(t, "24 100", 0)
+		cols, rows := windowSize()
+		if cols != 100 || rows != 24 {
+			t.Errorf("got %dx%d, want 100x24 — rows and columns are the wrong way round", cols, rows)
+		}
+	})
+
+	for _, tt := range []struct {
+		name   string
+		output string
+		status int
+	}{
+		{"a terminal that cannot be asked", "", 1},
+		{"an answer that is not two numbers", "24", 0},
+		{"an answer that is not numbers at all", "rows columns", 0},
+		{"an answer of nothing", "", 0},
+		{"a size of zero", "0 0", 0},
+	} {
+		t.Run(tt.name+" falls back to something usable", func(t *testing.T) {
+			// A popup drawn at zero columns shows nothing at all, so anything
+			// that cannot be believed has to give way to a size that works.
+			fakeStty(t, tt.output, tt.status)
+			cols, rows := windowSize()
+			if cols < 20 || rows < 5 {
+				t.Errorf("got %dx%d, which is too small to draw a menu in", cols, rows)
+			}
+		})
+	}
+
+	t.Run("one number readable and the other not", func(t *testing.T) {
+		// Half an answer is still half an answer: keep the half that parsed.
+		fakeStty(t, "40 wide", 0)
+		cols, rows := windowSize()
+		if rows != 40 {
+			t.Errorf("rows = %d, want the 40 the terminal reported", rows)
+		}
+		if cols < 20 {
+			t.Errorf("cols = %d, want the fallback rather than nothing", cols)
+		}
+	})
+}
+
+func TestOnlyTheMachinesADigitCanReachAreNumbered(t *testing.T) {
+	// The menu offers "1-9 pick", so the tenth machine down has no digit to be
+	// picked by. Numbering it anyway offers a key that does nothing, and a key
+	// that does nothing in a menu is the quietest kind of broken.
+	entries := make([]Entry, 12)
+	for i := range entries {
+		entries[i] = Entry{Target: fmt.Sprintf("machine-%d", i), Configured: true}
+	}
+
+	drawn := lines(entries, 0, 80, 30)
+	numbered := 0
+	for _, line := range drawn {
+		plain := visible(line)
+		for digit := 1; digit <= 9; digit++ {
+			if strings.Contains(plain, fmt.Sprintf(" %d. machine-", digit)) {
+				numbered++
+			}
+		}
+	}
+	if numbered != 9 {
+		t.Errorf("%d machines are numbered, want the nine a digit can reach:\n%s",
+			numbered, strings.Join(drawn, "\n"))
+	}
+	// And the tenth is drawn, just without one.
+	found := false
+	for _, line := range drawn {
+		if strings.Contains(visible(line), "machine-9") {
+			found = true
+			if strings.Contains(visible(line), "10.") {
+				t.Errorf("the tenth machine is numbered %q, and no key presses that", visible(line))
+			}
+		}
+	}
+	if !found {
+		t.Error("the tenth machine is not drawn at all")
 	}
 }
