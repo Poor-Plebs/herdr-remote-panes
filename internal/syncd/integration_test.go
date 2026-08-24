@@ -1471,3 +1471,63 @@ func TestPollingAndCommandsUnderRealContention(t *testing.T) {
 		}
 	}
 }
+
+// withSlowMachine replaces ssh with one that takes its time for a named
+// destination and answers at once for every other.
+func withSlowMachine(t *testing.T, slow string, delay time.Duration) {
+	t.Helper()
+	script := "#!/bin/sh\n" +
+		"for a in \"$@\"; do case \"$a\" in " + slow + ") sleep " +
+		strings.TrimSuffix(delay.String(), "s") + ";; esac; done\n" +
+		"exit 0\n"
+	bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConnectingToASlowMachineDoesNotFreezeTheMenu(t *testing.T) {
+	// Connecting talks to the machine before it takes the daemon's lock, and
+	// only takes it to write down what it found. That ordering is the whole
+	// reason the menu stays usable while somebody connects to a machine that is
+	// not answering — an ssh to a blackholed address takes ten seconds to fail
+	// and there are several of them.
+	//
+	// It is also exactly what a well-meaning fix for a data race would undo:
+	// the two entry points beside this one had their locks hoisted to cover
+	// their whole bodies, and doing the same here would trade one bug for a
+	// menu that hangs whenever a machine is slow.
+	withFakeHerdr(t)
+	withSlowMachine(t, "slowbox", 2*time.Second)
+
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{{Target: "bot"}, {Target: "slowbox"}}
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect bot: %s", reply.Message)
+	}
+
+	connecting := make(chan struct{})
+	go func() {
+		defer close(connecting)
+		d.dispatch(Command{Cmd: "connect", Host: "slowbox"})
+	}()
+	// Long enough to be inside the slow machine's ssh.
+	time.Sleep(300 * time.Millisecond)
+
+	start := time.Now()
+	reply := d.dispatch(Command{Cmd: "status"})
+	took := time.Since(start)
+
+	if !reply.OK {
+		t.Errorf("status while connecting to a slow machine: %s", reply.Message)
+	}
+	// Generous, because this measures a machine under load rather than a
+	// deadline. Held against the second the slow machine still has to run: the
+	// point is that the menu is not waiting for it.
+	if took > time.Second {
+		t.Errorf("status took %s while a machine was being connected to; "+
+			"the menu is waiting for ssh", took.Round(time.Millisecond))
+	}
+	<-connecting
+}

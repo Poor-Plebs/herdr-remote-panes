@@ -295,6 +295,19 @@ someone sitting between you and it. Check the fingerprint against the machine
 itself before removing the old entry — the whole point of the warning is that
 you cannot tell the two cases apart from here.
 
+**The menu takes a moment to open while a machine is dropping out.** A poll
+talks to each machine in turn and holds the daemon while it does, so a machine
+that has stopped answering — one that swallows packets rather than refusing,
+which takes the operating system's own timeout to fail — makes everything else
+wait for it. The wait is bounded: ten seconds for a connection to be given up
+on, thirty for a command, and after two failed passes the machine is given up
+on and stops being polled at all. So it clears by itself; it is not something
+to wait out for long.
+
+Connecting to a slow machine does not do this. That path talks to the machine
+before it takes the daemon, so the menu stays usable while you connect to
+something that is not answering.
+
 **Terminals on a machine keep disappearing.** Two machines answering to the
 same name share one space, and each pass reads the other's terminals as panes
 that wandered in and closes them. Connecting both leaves one of them with
