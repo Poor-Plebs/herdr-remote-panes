@@ -116,3 +116,35 @@ func TestTheREADMEsExamplesAreConfigThisCanRead(t *testing.T) {
 		})
 	}
 }
+
+func TestTheREADMEQuotesTheCollisionWarningWordForWord(t *testing.T) {
+	// The README quotes this so it can be recognised when it appears. Written
+	// out by hand it agrees with the code until the wording changes, and then
+	// it describes a message nobody has ever seen.
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const marker = "hosts \"bot\" and \"ci\" are both called"
+	i := strings.Index(string(readme), marker)
+	if i < 0 {
+		t.Fatalf("the README no longer quotes the collision warning")
+	}
+	shown := string(readme)[i:]
+	shown = shown[:strings.Index(shown, "\n")]
+
+	cfg := Defaults()
+	cfg.Hosts = []Host{{Target: "bot", Label: "build"}, {Target: "ci", Label: "build"}}
+	var want string
+	for _, problem := range cfg.Problems() {
+		if strings.Contains(problem, "both called") {
+			want = problem
+		}
+	}
+	if want == "" {
+		t.Fatal("the code no longer reports a collision for two machines with one label")
+	}
+	if shown != want {
+		t.Errorf("the README quotes\n\t%q\nbut the code says\n\t%q", shown, want)
+	}
+}

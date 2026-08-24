@@ -295,6 +295,18 @@ someone sitting between you and it. Check the fingerprint against the machine
 itself before removing the old entry — the whole point of the warning is that
 you cannot tell the two cases apart from here.
 
+**Terminals on a machine keep disappearing.** Two machines answering to the
+same name share one space, and each pass reads the other's terminals as panes
+that wandered in and closes them. Connecting both leaves one of them with
+nothing. The menu, `status` and the daemon's log all say so:
+
+```
+hosts "bot" and "ci" are both called "build", so they would share one space and close each other's terminals; give one of them its own label
+```
+
+A machine answers to its `label`, or to its target when it has none, so this
+also happens when one machine's label is another machine's target.
+
 **A change to `config.json` has not taken effect.** The daemon reads that file
 when it starts, so edits apply from the next time Herdr starts. Toggling
 mirroring from the menu also rereads it, which is a quick way to apply an edit
