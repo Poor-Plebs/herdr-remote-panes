@@ -92,10 +92,13 @@ was already there, and opening a terminal on one leaves you in the terminal. A
 pane that opens on its own — a dropped link coming back, or a terminal
 appearing on a mirrored machine — never takes the screen from you.
 
-Opening a tab inside a machine's space gives you one **on that machine**. Herdr's
-own new-tab key and the plus icon always open a local shell and cannot be
-intercepted by a plugin, so such a pane is moved onto the machine a moment
-after. To skip that round trip, bind the new-tab key to the plugin instead:
+Opening a tab inside a machine's space gives you one **on that machine** — use
+the plugin's own new-tab action for that. Herdr's own new-tab key and the plus
+icon always open a local shell, and no plugin can intercept them. On a mirrored
+machine such a pane is moved onto the machine a moment after; on a plain SSH one
+it is left where it is, so a tab opened that way stays a local shell sitting in
+the machine's space. Binding the new-tab key to the plugin avoids the question
+either way:
 
 ```toml
 [keys]

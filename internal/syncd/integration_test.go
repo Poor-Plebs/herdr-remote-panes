@@ -869,3 +869,70 @@ func TestOutsideAMachinesSpaceNewTerminalIsAnOrdinaryOne(t *testing.T) {
 		t.Errorf("open-tab said %q, which does not read as an ordinary tab", tab.Message)
 	}
 }
+
+func TestALocalPaneInAPlainSSHMachinesSpaceIsLeftAlone(t *testing.T) {
+	// Herdr's own new-tab key and the plus icon open a local shell, and no
+	// plugin can intercept them. On a mirrored machine such a pane is replaced
+	// with a terminal on the machine. On a plain SSH one -- the default -- it
+	// is not: the capture is skipped for those outright.
+	//
+	// Written down here because the README promised it in both modes, which is
+	// most of what a promise like that costs: somebody presses their new-tab
+	// key in a machine's space, gets a local shell that looks like it is on the
+	// machine, and reads a document saying it will be corrected.
+	//
+	// Not a decision this test agrees with, only one it records. Making the
+	// capture work here means closing a live SSH session on a judgement about
+	// whose pane it is, and there is a window where a terminal just opened is
+	// not yet claimed.
+	held := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	var workspace string
+	for id := range held().Workspaces {
+		workspace = id
+	}
+	stray := addLocalPane(t, workspace)
+
+	for i := 0; i < 4; i++ {
+		d.reconcileAll()
+	}
+
+	herdr := held()
+	if _, there := herdr.Panes[stray]; !there {
+		t.Error("a local pane in a plain SSH machine's space was closed; " +
+			"if that is now wanted, the README and this test both need saying differently")
+	}
+	// And the machine's own terminal is untouched by any of it.
+	if got := panesFor(herdr, "bot"); got != 1 {
+		t.Errorf("the machine has %d terminals, want the one it started with", got)
+	}
+}
+
+// addLocalPane puts a pane in a space without this plugin having opened it,
+// which is what Herdr's own new-tab key and plus icon do.
+func addLocalPane(t *testing.T, workspace string) string {
+	t.Helper()
+	path := os.Getenv(fakeHerdrState)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held fakeHerdr
+	if err := json.Unmarshal(raw, &held); err != nil {
+		t.Fatal(err)
+	}
+	held.Panes["local-pane"] = map[string]any{
+		"pane_id": "local-pane", "tab_id": "local-tab", "workspace_id": workspace,
+		"terminal_id": "local-term", "label": "zsh",
+	}
+	out, _ := json.Marshal(held)
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return "local-pane"
+}
