@@ -155,6 +155,11 @@ other spaces.
 SSH link fails is reopened. One you deliberately closed stays closed, and is
 still closed after a restart.
 
+A link that keeps dropping is a different thing. If a replacement terminal does
+not last either, the machine is left alone rather than having a pane opened and
+shut every couple of seconds for the rest of the session. It shows as
+unreachable, and picking it from the menu is how you say "try now".
+
 **Restarting Herdr brings your machines back.** Each one you had connected
 reconnects with as many terminals as it had, opened one at a time rather than
 all at once. They are new sessions, though: a plain SSH terminal's shell goes
@@ -163,9 +168,12 @@ under something that outlives it. With mirroring the work is on the machine
 rather than in the pane, so it is still running and the mirror simply finds it
 again.
 
-**An unreachable machine is left alone after two tries** rather than retried
-forever in the background. Fix whatever is wrong and pick it from the menu,
-which is how you say "try now".
+**An unreachable machine is left alone** rather than retried forever in the
+background. How soon depends on the cause: something that might pass on its own
+gets a second try, and something that needs you — a changed host key, a name
+that does not resolve, a key the machine will not take — gets none, because the
+second try would fail in exactly the same way. Fix whatever is wrong and pick
+the machine from the menu, which is how you say "try now".
 
 **Machines without Herdr just work.** They get a plain SSH terminal. Mirroring
 is the only part that needs Herdr at both ends, and a machine that turns out not
@@ -267,6 +275,9 @@ One that needs you gets none, because the second attempt would fail in exactly
 the same way: a changed host key, a name that does not resolve, a key the
 machine will not take. Those stop at once and say what to go and fix.
 
+A machine whose terminals keep dropping stops the same way, after a couple of
+replacements that did not last either.
+
 The most common of them is a changed host key:
 
 ```
@@ -307,14 +318,19 @@ shift+p shift+r shift+t shift+w shift+x shift+tab`.
 
 ## How it works
 
-The daemon starts with your session and polls each connected machine every two
-seconds over one reused SSH connection, opening and closing local panes so that
-what you see here matches what should be there.
+The daemon starts with your session and looks every two seconds at the panes
+Herdr is holding, opening and closing them so that what you see here matches
+what should be there.
 
-A plain SSH pane simply runs `ssh` — the daemon does not talk to the machine at
-all, which is why that mode needs nothing installed on it. A mirrored terminal
-is bridged with Herdr's own direct terminal attach, so it is a live terminal
-rather than a picture of one: what you type goes to the process on the machine.
+That loop is about this machine, not the others. A plain SSH pane simply runs
+`ssh`, and the daemon never talks to the machine at all — which is why that mode
+needs nothing installed on it, and why a machine that goes away is noticed by
+its terminal dying rather than by being asked. Only a mirrored machine is polled
+over SSH, for the list of terminals to keep in step, over one reused connection.
+
+A mirrored terminal is bridged with Herdr's own direct terminal attach, so it is
+a live terminal rather than a picture of one: what you type goes to the process
+on the machine.
 
 Requires Herdr 0.8.0+ and Go 1.25+, on Linux or macOS.
 
