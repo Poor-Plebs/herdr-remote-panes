@@ -938,29 +938,78 @@ func TestTwoMachinesInOneSpaceLeaveEachOtherAlone(t *testing.T) {
 	// than written down as correct.
 }
 
-func TestConnectingAMirroredMachineAfterARestartAddsATerminal(t *testing.T) {
-	// Connecting a machine that already has a terminal should mirror it, not
-	// make a second one. After a restart it makes a second one, so terminals
-	// pile up on the machine one per restart of Herdr.
-	//
-	// What the transcript says: the daemon asks the machine for a new tab,
-	// which it only does when it believes the machine has nothing open. It
-	// believes that because the machine's mirrors are empty at the moment it
-	// asks -- the reconcile immediately before has dropped the mirror the last
-	// daemon left and has not put a new one in its place.
-	//
-	// What is not established is whether that empty moment happens against a
-	// real Herdr. Nothing in these tests runs a mirror process, so a mirror
-	// here never reports itself alive and is replaced on every pass. That is
-	// the one way this could be the stand-in's doing rather than the daemon's,
-	// and it is exactly the gap that made the last stand-in bug invisible for a
-	// week -- so it is not being fixed on a guess.
-	//
-	// Skipped rather than deleted: a failing test nobody can act on is noise,
-	// and a deleted one is a finding nobody remembers. Remove the skip to see
-	// it.
-	t.Skip("known: a restart adds a terminal to a mirrored machine; cause not established")
+// mirrorIsRunning writes the mark a live bridge leaves, so a mirror in these
+// tests can report itself alive the way a real one does.
+//
+// The mark is a pid and the terminal it is bridging; Herdr checks the pid is
+// alive and belongs to the same program, so the test's own pid is exactly what
+// a running mirror's looks like from here. Without this a mirror never reports
+// itself alive and is replaced on every pass, which is a difference from the
+// real thing big enough to hide or invent a bug.
+func mirrorIsRunning(t *testing.T, paneID, terminalID string) {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("HERDR_PLUGIN_STATE_DIR"), "panes",
+		sanitizeForPath(os.Getenv("HERDR_SESSION")))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf("%d\n%s", os.Getpid(), terminalID)
+	if err := os.WriteFile(filepath.Join(dir, sanitizeForPath(paneID)+".pid"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
+// sanitizeForPath matches how the mirror package names its files.
+func sanitizeForPath(s string) string {
+	out := []rune(s)
+	for i, r := range out {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			out[i] = '-'
+		}
+	}
+	return string(out)
+}
+
+// mirrorsAreRunning marks every mirror here as having a live bridge, which is
+// what happens a moment after one is opened.
+func mirrorsAreRunning(t *testing.T, here, there func() fakeHerdr) {
+	t.Helper()
+	remote := there()
+	for id, pane := range here().Panes {
+		label, _ := pane["label"].(string)
+		if !strings.Contains(label, "@") {
+			continue
+		}
+		for _, rp := range remote.Panes {
+			rid, _ := rp["pane_id"].(string)
+			if strings.Contains(label, shortPaneID(rid)) {
+				tid, _ := rp["terminal_id"].(string)
+				mirrorIsRunning(t, id, tid)
+			}
+		}
+	}
+}
+
+// herdrRestarted is what a restart does to the bridges: every mirror process
+// goes with it, so every mark does too.
+func herdrRestarted(t *testing.T) {
+	t.Helper()
+	if err := os.RemoveAll(filepath.Join(os.Getenv("HERDR_PLUGIN_STATE_DIR"), "panes")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestARestartDoesNotAddATerminalToAMirroredMachine(t *testing.T) {
+	// Connecting a machine that already has a terminal should mirror it, not
+	// make a second one. It made a second one, every restart, so terminals
+	// piled up on the machine.
+	//
+	// The replacement mirror was opened as a split beside the pane it was
+	// replacing, a moment after that pane had been closed: Herdr answered
+	// pane_not_found, the mirror never opened, and the machine was then judged
+	// to have nothing open and given a spare terminal.
 	here := withFakeHerdr(t)
 	there, _ := withRemoteHerdr(t)
 
@@ -972,18 +1021,21 @@ func TestConnectingAMirroredMachineAfterARestartAddsATerminal(t *testing.T) {
 	}
 	for i := 0; i < 3; i++ {
 		d.reconcileAll()
+		mirrorsAreRunning(t, here, there)
 	}
 	d.persist()
 	if got := len(there().Panes); got != 1 {
 		t.Fatalf("started with %d terminals on the machine, want 1", got)
 	}
 
+	herdrRestarted(t)
 	after := New(cfg)
 	if reply := after.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
 		t.Fatalf("reconnect: %s", reply.Message)
 	}
 	for i := 0; i < 4; i++ {
 		after.reconcileAll()
+		mirrorsAreRunning(t, here, there)
 	}
 
 	if got := len(there().Panes); got != 1 {

@@ -221,6 +221,50 @@ func (p *paneIndex) add(pane herdrcli.Pane) {
 	}
 }
 
+// remove takes a pane out of the listing, once this pass has closed it.
+//
+// Every field, not just the one the caller happened to think of. Marking a pane
+// no longer alive and leaving it named as the pane to split from is how a
+// replacement mirror came to be opened beside the pane it was replacing, a
+// moment after that pane was closed: Herdr answered pane_not_found, the mirror
+// never opened, and the machine was then judged to have no terminals and given
+// a spare one -- every restart, for as long as it was mirrored.
+func (p *paneIndex) remove(paneID string) {
+	delete(p.alive, paneID)
+	delete(p.labelOf, paneID)
+
+	if workspaceID, ok := p.workspaceOf[paneID]; ok {
+		delete(p.workspaceOf, paneID)
+
+		kept := p.panesIn[workspaceID][:0]
+		for _, id := range p.panesIn[workspaceID] {
+			if id != paneID {
+				kept = append(kept, id)
+			}
+		}
+		p.panesIn[workspaceID] = kept
+
+		// Somewhere else to split from, or nowhere: a space whose last pane has
+		// gone has no pane to place anything beside.
+		if p.anyInWorkspace[workspaceID] == paneID {
+			delete(p.anyInWorkspace, workspaceID)
+			for _, id := range kept {
+				if p.alive[id] {
+					p.anyInWorkspace[workspaceID] = id
+					break
+				}
+			}
+		}
+	}
+
+	if tabID, ok := p.tabOf[paneID]; ok {
+		delete(p.tabOf, paneID)
+		if p.panesPerTab[tabID] > 0 {
+			p.panesPerTab[tabID]--
+		}
+	}
+}
+
 // config reports the current configuration.
 func (d *Daemon) config() config.Config {
 	if cfg := d.cfg.Load(); cfg != nil {
@@ -1661,7 +1705,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 					if err := herdrcli.ClosePaneByID(paneID); err != nil {
 						log.Printf("close mirror %s: %v", paneID, err)
 					}
-					delete(index.alive, paneID)
+					index.remove(paneID)
 				}
 				d.forgetPane(state, paneID)
 				delete(state.mirrors, terminalID)
@@ -1689,7 +1733,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 						log.Printf("close stale terminal %s: %v", paneID, err)
 					}
 					d.forgetPane(state, paneID)
-					delete(index.alive, paneID)
+					index.remove(paneID)
 				}
 			}
 		}
@@ -1789,7 +1833,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 				log.Printf("close stale mirror %s: %v", paneID, err)
 			}
 			d.forgetPane(state, paneID)
-			delete(index.alive, paneID)
+			index.remove(paneID)
 			delete(state.mirrors, terminalID)
 		}
 	}
@@ -1904,7 +1948,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		// onto the machine. So closing a terminal on the machine closed its
 		// mirror here and opened a fresh terminal there in its place: the work
 		// went and something took its seat.
-		delete(index.alive, paneID)
+		index.remove(paneID)
 		d.forgetPane(state, paneID)
 		delete(state.mirrors, terminalID)
 	}
@@ -1960,7 +2004,7 @@ func (d *Daemon) closeOrphans(state *hostSync, index *paneIndex) {
 			log.Printf("close leftover %s: %v", paneID, err)
 		}
 		d.forgetPane(state, paneID)
-		delete(index.alive, paneID)
+		index.remove(paneID)
 	}
 }
 
@@ -2493,5 +2537,5 @@ func (d *Daemon) retireRootPane(workspaceID string, index *paneIndex) {
 		log.Printf("close placeholder pane %s: %v", root, err)
 		return
 	}
-	delete(index.alive, root)
+	index.remove(root)
 }

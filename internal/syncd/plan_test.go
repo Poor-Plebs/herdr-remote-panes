@@ -3031,8 +3031,7 @@ func TestPlanWorkspaceMark(t *testing.T) {
 	})
 }
 
-// TestEveryPaneClosedInAPassLeavesTheListing encodes the rule three bugs in
-// three days broke.
+// TestEveryPaneClosedInAPassLeavesTheListing encodes the rule four bugs broke.
 //
 // A reconcile pass works from one pane listing, taken at the start. Closing a
 // pane during that pass makes the listing untrue, and everything after it goes
@@ -3041,6 +3040,12 @@ func TestPlanWorkspaceMark(t *testing.T) {
 // of a pane somebody opened by hand in a machine's space. Those get moved onto
 // the machine. So a pane this closed came back as a new terminal on the far
 // end, three separate times, by three different routes.
+//
+// The fourth was the same mistake made with the fix for the first three: the
+// pane was struck from the list of live panes and left named as the pane to
+// split from, so the replacement mirror was opened beside the pane it was
+// replacing, a moment after that pane had been closed. Taking a pane out of the
+// listing means taking it out of all of it, which is what index.remove is for.
 //
 // Checked in the source because it cannot be checked anywhere else: the mistake
 // is a line that is not there, in a function that compiles and runs perfectly
@@ -3071,16 +3076,18 @@ func TestEveryPaneClosedInAPassLeavesTheListing(t *testing.T) {
 		// The correction, within the few lines that handle this close.
 		found := false
 		for j := i; j < len(lines) && j < i+12; j++ {
-			if strings.Contains(lines[j], "delete(index.alive,") {
+			if strings.Contains(lines[j], "index.remove(") {
 				found = true
 				break
 			}
 		}
 		if !found {
 			t.Errorf("daemon.go:%d closes a pane and leaves it in the listing:\n  %s\n"+
-				"Add delete(index.alive, ...) beside it. Everything later in the pass reads "+
-				"that listing, and a closed pane still in it looks like somebody else's pane "+
-				"sitting in a machine's space -- which is moved onto the machine.",
+				"Add index.remove(...) beside it -- not delete(index.alive, ...), which "+
+				"leaves the pane named as somewhere to split from. Everything later in the "+
+				"pass reads that listing: a closed pane still in it looks like somebody "+
+				"else's pane sitting in a machine's space, and one still named as a target "+
+				"gets split from after it is gone.",
 				i+1, strings.TrimSpace(line))
 		}
 	}
