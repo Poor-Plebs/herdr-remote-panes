@@ -1796,11 +1796,15 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		if found {
 			sharedWorkspace = state.remoteWorkspaceID
 		} else {
-			// Gone on the machine. Forgetting it means the next pass makes one
-			// rather than filtering every pane against something that is not
-			// there any more.
+			// Gone on the machine. Forgetting it stops every pane being
+			// filtered against something that is not there any more.
+			//
+			// Making one again is not this loop's to do: reconciling does not
+			// open terminals on a machine, deliberately, and a space comes with
+			// one. It is made the next time the machine is connected to, which
+			// is what the message says rather than promising it presently.
 			if state.remoteWorkspaceID != "" {
-				log.Printf("%s: its space on the machine is gone; will make one again",
+				log.Printf("%s: its space on the machine is gone; connect again to make one",
 					state.host.Target)
 			}
 			state.remoteWorkspaceID = ""
@@ -1866,6 +1870,15 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		if err := herdrcli.ClosePane(paneID); err != nil {
 			log.Printf("close mirror %s: %v", paneID, err)
 		}
+		// Struck from the listing this pass works from, as every other place
+		// that closes a pane does. Without it the pane stayed in the listing,
+		// alive as far as anything after this could tell, and no longer
+		// belonging to the machine -- which is the description of a pane
+		// somebody opened by hand in a machine's space, and those are moved
+		// onto the machine. So closing a terminal on the machine closed its
+		// mirror here and opened a fresh terminal there in its place: the work
+		// went and something took its seat.
+		delete(index.alive, paneID)
 		d.forgetPane(state, paneID)
 		delete(state.mirrors, terminalID)
 	}

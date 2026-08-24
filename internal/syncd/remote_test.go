@@ -16,6 +16,17 @@ import (
 // here: the same program, a different set of panes. That makes the mirroring
 // path drivable -- the only mode where this plugin talks to the far end at all.
 func withRemoteHerdr(t *testing.T) (func() fakeHerdr, string) {
+	return withRemoteHerdrRunning(t, true)
+}
+
+// withRemoteHerdrRunning is withRemoteHerdr with a say in whether the machine's
+// Herdr is already up.
+//
+// A machine that is reachable but has no session answering is the ordinary case
+// -- nobody has logged in since it booted -- and auto_start exists for it: the
+// plugin starts one rather than reporting the machine as broken. Until the
+// stand-in could refuse, that could not be told from a machine that was fine.
+func withRemoteHerdrRunning(t *testing.T, up bool) (func() fakeHerdr, string) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -24,13 +35,28 @@ func withRemoteHerdr(t *testing.T) (func() fakeHerdr, string) {
 	// ssh runs whatever it was given, with herdr on the far side being the
 	// stand-in pointed at the machine's own panes. The probe that looks for
 	// herdr is answered with that binary's path.
+	// A file that exists once the machine's Herdr is up. Starting one creates
+	// it; until then every command is answered the way Herdr answers when
+	// nothing is listening.
+	running := filepath.Join(dir, "herdr-is-up")
+	if up {
+		if err := os.WriteFile(running, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	script := "#!/bin/sh\n" +
 		"last=\"\"; for a in \"$@\"; do last=\"$a\"; done\n" +
 		"case \"$last\" in\n" +
 		"  *command\\ -v\\ herdr*) echo " + fakeHerdrBin + "; exit 0;;\n" +
 		"  *--version*) echo 'herdr 0.8.0'; exit 0;;\n" +
 		"  true) exit 0;;\n" +
+		"  *\\ server*) : > " + running + "; exit 0;;\n" +
 		"esac\n" +
+		"if [ ! -f " + running + " ]; then\n" +
+		"  echo '{\"error\":{\"code\":\"server_not_running\",\"message\":\"no herdr server is running\"},\"id\":\"cli:fake\"}'\n" +
+		"  exit 1\n" +
+		"fi\n" +
 		"HRP_TEST_FAKE_HERDR_STATE=" + remoteState + " eval \"$last\"\n"
 
 	bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
@@ -357,5 +383,223 @@ func TestClosingAMirroredTabClosesItOnTheMachine(t *testing.T) {
 				t.Errorf("%d mirrors here, want the one that was not closed", got)
 			}
 		})
+	}
+}
+
+// deleteSpaceOn removes a space and everything in it from a machine, as closing
+// its last tab there does.
+func deleteSpaceOn(t *testing.T, statePath, workspace string) {
+	t.Helper()
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held fakeHerdr
+	if err := json.Unmarshal(raw, &held); err != nil {
+		t.Fatal(err)
+	}
+	delete(held.Workspaces, workspace)
+	for id, pane := range held.Panes {
+		if ws, _ := pane["workspace_id"].(string); ws == workspace {
+			delete(held.Panes, id)
+		}
+	}
+	out, _ := json.Marshal(held)
+	if err := os.WriteFile(statePath, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTheSharedSpaceGoingOnTheMachineIsNotABreakage(t *testing.T) {
+	// A space goes when its last terminal does, and the shared one is a space
+	// like any other: close its last tab on the machine and it is gone. The id
+	// this remembers then matches nothing, which would filter every pane out --
+	// so the machine looks as though it has nothing open, with nothing said
+	// about why.
+	//
+	// It is forgotten instead, and made again the next time the machine is
+	// connected to. Not by the reconcile: that deliberately does not open
+	// terminals on a machine, and a space comes with one.
+	here := withFakeHerdr(t)
+	there, machineState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	for i := 0; i < 2; i++ {
+		d.reconcileAll()
+	}
+
+	var shared string
+	for id := range there().Workspaces {
+		shared = id
+	}
+	if shared == "" {
+		t.Fatal("no shared space was made on the machine")
+	}
+	deleteSpaceOn(t, machineState, shared)
+
+	for i := 0; i < 4; i++ {
+		d.reconcileAll()
+	}
+
+	// Nothing is made behind the user's back, and nothing is left over here.
+	if got := len(there().Panes); got != 0 {
+		t.Errorf("the machine has %d terminals; reconciling should not open any: %+v",
+			got, there().Panes)
+	}
+	if got := panesFor(here(), "bot"); got != 0 {
+		t.Errorf("%d mirrors here of terminals that are gone", got)
+	}
+	// The machine is still connected, because it is: its space went, it did
+	// not break.
+	hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+	if len(hosts) != 1 || !hosts[0].Connected {
+		t.Fatalf("status = %+v, want the machine still connected", hosts)
+	}
+
+	// And connecting again is what brings it back, as the message says.
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("reconnect: %s", reply.Message)
+	}
+	for i := 0; i < 3; i++ {
+		d.reconcileAll()
+	}
+	if got := len(there().Panes); got != 1 {
+		t.Errorf("after connecting again the machine has %d terminals, want 1", got)
+	}
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Errorf("after connecting again there are %d mirrors here, want 1", got)
+	}
+}
+
+func TestAMachineWhoseHerdrIsNotUpIsStartedRatherThanRefused(t *testing.T) {
+	// The ordinary case for a machine nobody has logged into since it booted:
+	// reachable, Herdr installed, no session answering. Without auto_start that
+	// is a machine you cannot mirror until you go and start one by hand; with
+	// it, the plugin starts one and carries on.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdrRunning(t, false)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+
+	reply := d.dispatch(Command{Cmd: "connect", Host: "bot"})
+	if !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	for i := 0; i < 3; i++ {
+		d.reconcileAll()
+	}
+
+	if got := len(there().Panes); got != 1 {
+		t.Errorf("the machine has %d terminals, want the one that comes with its space", got)
+	}
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Errorf("%d mirrors here, want 1", got)
+	}
+	hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+	if len(hosts) != 1 || hosts[0].SSHOnly {
+		t.Fatalf("status = %+v, want the machine mirrored rather than fallen back", hosts)
+	}
+}
+
+func TestWithoutAutoStartAMachineWithNoSessionIsNotStarted(t *testing.T) {
+	// Turning it off means the plugin leaves the machine's sessions alone. It
+	// still connects -- the machine is reachable and its terminals are usable
+	// over plain SSH -- so what it must not do is quietly look the same as
+	// having started one.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdrRunning(t, false)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	off := false
+	cfg.AutoStart = &off
+	d := New(cfg)
+
+	d.dispatch(Command{Cmd: "connect", Host: "bot"})
+	for i := 0; i < 3; i++ {
+		d.reconcileAll()
+	}
+
+	if got := len(there().Panes); got != 0 {
+		t.Errorf("the machine has %d terminals; nothing should have started a session", got)
+	}
+	if got := panesFor(here(), "bot"); got != 0 {
+		t.Errorf("%d mirrors here of a machine with no session", got)
+	}
+}
+
+// closePaneOn closes a terminal on the machine, as somebody sitting at it does.
+func closePaneOn(t *testing.T, statePath, id string) {
+	t.Helper()
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held fakeHerdr
+	if err := json.Unmarshal(raw, &held); err != nil {
+		t.Fatal(err)
+	}
+	delete(held.Panes, id)
+	out, _ := json.Marshal(held)
+	if err := os.WriteFile(statePath, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClosingATerminalOnTheMachineSticks(t *testing.T) {
+	// Mirroring is two-way, so a terminal closed on the machine should take its
+	// mirror here with it and stop. It did the first half and then undid the
+	// second: the mirror was closed but left in the listing the rest of the
+	// pass works from, alive as far as anything could tell and no longer
+	// belonging to the machine -- which is the description of a pane somebody
+	// opened by hand in a machine's space, and those get moved onto the
+	// machine. So the work went and something took its seat.
+	here := withFakeHerdr(t)
+	there, machineState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+	if reply := d.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
+		t.Fatalf("open: %s", reply.Message)
+	}
+	for i := 0; i < 3; i++ {
+		d.reconcileAll()
+	}
+	if got := len(there().Panes); got != 2 {
+		t.Fatalf("the machine has %d terminals, want 2 to start from", got)
+	}
+
+	var closed string
+	for id := range there().Panes {
+		closed = id
+	}
+	closePaneOn(t, machineState, closed)
+
+	for i := 0; i < 4; i++ {
+		d.reconcileAll()
+	}
+
+	remote := there()
+	if _, back := remote.Panes[closed]; back {
+		t.Error("the terminal closed on the machine is back")
+	}
+	if len(remote.Panes) != 1 {
+		t.Errorf("the machine has %d terminals, want the one that was left: %+v",
+			len(remote.Panes), remote.Panes)
+	}
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Errorf("%d mirrors here, want one for the terminal that is left", got)
 	}
 }
