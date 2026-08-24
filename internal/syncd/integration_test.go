@@ -338,3 +338,158 @@ func TestMain(m *testing.M) {
 	}
 	os.Exit(m.Run())
 }
+
+// sshFails makes every ssh call fail with a given message, so a machine can be
+// made unreachable without one being.
+func sshFails(t *testing.T, message string) {
+	t.Helper()
+	dir := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
+	script := "#!/bin/sh\necho \"" + message + "\" >&2\nexit 255\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// closePaneByHand removes a pane from Herdr, as closing it in the sidebar does.
+func closePaneByHand(t *testing.T, id string) {
+	t.Helper()
+	path := os.Getenv(fakeHerdrState)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held fakeHerdr
+	if err := json.Unmarshal(raw, &held); err != nil {
+		t.Fatal(err)
+	}
+	delete(held.Panes, id)
+	out, _ := json.Marshal(held)
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClosingTheLastTerminalLeavesAWayBack(t *testing.T) {
+	// Closing the last one is an ordinary thing to do, and it used to be a
+	// dead end: the machine still counted as connected, so connecting again
+	// answered that it already was and opened nothing. The menu then reported
+	// a connection with nothing to show for it and no way back short of
+	// editing the config.
+	held := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	var pane string
+	for id := range held().Panes {
+		pane = id
+	}
+	if pane == "" {
+		t.Fatal("connecting opened no terminal")
+	}
+	closePaneByHand(t, pane)
+	for i := 0; i < 3; i++ {
+		d.reconcileAll()
+	}
+
+	// Not reopened behind the user's back: closing a terminal means closing it.
+	if got := len(held().Panes); got != 0 {
+		t.Errorf("a terminal closed by hand came back: %d panes", got)
+	}
+	if hosts := d.dispatch(Command{Cmd: "status"}).Hosts; len(hosts) != 1 || hosts[0].Terminals != 0 {
+		t.Errorf("status = %+v, want the machine with no terminals", hosts)
+	}
+
+	// And connecting again gives one back.
+	reply := d.dispatch(Command{Cmd: "connect", Host: "bot"})
+	if !reply.OK {
+		t.Fatalf("reconnect: %s", reply.Message)
+	}
+	if got := panesFor(held(), "bot"); got != 1 {
+		t.Errorf("connecting again opened %d terminals, want 1", got)
+	}
+}
+
+func TestAMachineThatIsNotAnsweringGetsNoSpaceAndNoTerminal(t *testing.T) {
+	// Nothing is created for a machine that cannot be reached: an empty space
+	// named after it would sit in the sidebar looking like somewhere to go.
+	held := withFakeHerdr(t)
+	sshFails(t, "ssh: connect to host bot port 22: Connection refused")
+
+	d := New(machineConfig("bot"))
+	reply := d.dispatch(Command{Cmd: "connect", Host: "bot"})
+	if reply.OK {
+		t.Fatal("connecting to a machine that refused was reported as working")
+	}
+	// Said in the machine's terms, not ssh's fifteen lines.
+	if reply.Message != "connection refused" {
+		t.Errorf("connect said %q", reply.Message)
+	}
+	d.reconcileAll()
+
+	herdr := held()
+	if len(herdr.Panes) != 0 || len(herdr.Workspaces) != 0 {
+		t.Errorf("an unreachable machine left %d panes and %d spaces",
+			len(herdr.Panes), len(herdr.Workspaces))
+	}
+	// It is still tracked, so it shows in the listing as unreachable rather
+	// than vanishing.
+	hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+	if len(hosts) != 1 || hosts[0].Connected {
+		t.Fatalf("status = %+v, want the machine listed and not connected", hosts)
+	}
+	if hosts[0].LastError == "" {
+		t.Error("the machine is listed with nothing said about why it is not connected")
+	}
+}
+
+func TestEachMachineGetsItsOwnSpace(t *testing.T) {
+	// The default: one space per machine, named for it, so the sidebar says
+	// which machine a terminal is on.
+	held := withFakeHerdr(t)
+	d := New(machineConfig("bot", "prod"))
+
+	for _, target := range []string{"bot", "prod"} {
+		if reply := d.dispatch(Command{Cmd: "connect", Host: target}); !reply.OK {
+			t.Fatalf("connect %s: %s", target, reply.Message)
+		}
+	}
+	d.reconcileAll()
+
+	herdr := held()
+	spaces := map[string]string{}
+	for id, workspace := range herdr.Workspaces {
+		label, _ := workspace["label"].(string)
+		spaces[id] = label
+	}
+	if len(spaces) != 2 {
+		t.Fatalf("two machines produced %d spaces: %v", len(spaces), spaces)
+	}
+	for _, target := range []string{"bot", "prod"} {
+		found := false
+		for _, label := range spaces {
+			if strings.Contains(label, target) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no space named for %q: %v", target, spaces)
+		}
+		if got := panesFor(herdr, target); got != 1 {
+			t.Errorf("%s has %d terminals, want 1", target, got)
+		}
+	}
+
+	// And each terminal is in its own machine's space, not pooled.
+	for _, pane := range herdr.Panes {
+		label, _ := pane["label"].(string)
+		workspace, _ := pane["workspace_id"].(string)
+		machine := strings.TrimPrefix(label[strings.Index(label, "@"):], "@")
+		if !strings.Contains(spaces[workspace], machine) {
+			t.Errorf("terminal %q is in the space named %q", label, spaces[workspace])
+		}
+	}
+}
