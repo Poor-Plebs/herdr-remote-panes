@@ -690,11 +690,19 @@ func (c Config) RemoteWorkspaceLabel() string {
 // one. Exposed because finding that space again needs the name without
 // whatever the format puts around it.
 func HubName() string {
-	hub, err := os.Hostname()
-	if err != nil || hub == "" {
-		hub = "herdr"
+	return hubName(os.Hostname())
+}
+
+// hubName is HubName with the answer handed to it, since os.Hostname cannot be
+// made to fail or to come back empty from a test -- and coming back empty is
+// the case worth having an answer for. A machine that does not know its own
+// name would otherwise name the space it creates on every other machine after
+// nothing, and none of those spaces could be told apart.
+func hubName(hostname string, err error) string {
+	if err != nil || hostname == "" {
+		return "herdr"
 	}
-	return hub
+	return hostname
 }
 
 // EffectiveMode is how a machine is actually reached.

@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestSessionFor(t *testing.T) {
 	cfg := Defaults()
@@ -320,5 +323,93 @@ func TestNormalizingLeavesTheConfigItWasGivenAlone(t *testing.T) {
 	}
 	if len(got.Problems()) == 0 {
 		t.Error("dropping a machine somebody wrote down should be reported")
+	}
+}
+
+func TestWhatThisMachineIsCalledOnAnother(t *testing.T) {
+	// This names the space this machine creates on a remote one, so it has to
+	// be something. A machine that cannot say what it is called would otherwise
+	// name every such space after nothing, and none of them could be told apart
+	// from the other end.
+	for _, tt := range []struct {
+		what, hostname string
+		err            error
+		want           string
+	}{
+		{"an ordinary hostname is used", "workbox", nil, "workbox"},
+		{"a fully qualified one is kept whole", "bot.example.com", nil, "bot.example.com"},
+		{"no hostname at all falls back", "", nil, "herdr"},
+		{"and so does an error", "workbox", errors.New("no hostname"), "herdr"},
+		{"an error wins even with a name beside it", "", errors.New("no hostname"), "herdr"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			if got := hubName(tt.hostname, tt.err); got != tt.want {
+				t.Errorf("hubName(%q, %v) = %q, want %q", tt.hostname, tt.err, got, tt.want)
+			}
+		})
+	}
+
+	// And the real one is never empty, whatever this machine is called.
+	if HubName() == "" {
+		t.Error("HubName came back empty")
+	}
+}
+
+func TestWhichLineAnErrorIsOn(t *testing.T) {
+	// The line number is the useful half of a config error: it says which entry
+	// to look at. It is worked out by counting newlines up to an offset the
+	// decoder handed over, and that offset is not this package's to trust --
+	// slicing past the end of the file would take the daemon down on a config
+	// it could not parse, which is the moment it is most needed.
+	raw := []byte("{\n  \"a\": 1,\n  \"b\": 2\n}")
+	for _, tt := range []struct {
+		what   string
+		offset int64
+		want   string
+	}{
+		{"the first line", 1, " (line 1)"},
+		{"after one newline", 5, " (line 2)"},
+		{"the very end", int64(len(raw)), " (line 4)"},
+		{"an offset of zero says nothing", 0, ""},
+		{"nor does a negative one", -1, ""},
+		{"nor one past the end", int64(len(raw)) + 1, ""},
+		{"nor one far past it", 1 << 20, ""},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			// A panic here is the failure being guarded against, so it is
+			// caught rather than left to take the whole run down with it.
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("offset %d panicked: %v", tt.offset, r)
+				}
+			}()
+			if got := atLine(raw, tt.offset); got != tt.want {
+				t.Errorf("atLine(offset %d) = %q, want %q", tt.offset, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTheSettingAtFaultIsNamedWithoutItsPosition(t *testing.T) {
+	// The decoder spells the position differently depending on which Go built
+	// the plugin -- "hosts.disabled" on some, "hosts.0.disabled" on others --
+	// so the index is dropped and the line number that follows says which entry
+	// anyway. Every index, not just the first: nine is a digit like the rest,
+	// and a config with ten machines in it is not unusual.
+	for _, tt := range []struct{ in, want string }{
+		{"poll_interval", "poll_interval"},
+		{"hosts.disabled", "hosts.disabled"},
+		{"hosts.0.disabled", "hosts.disabled"},
+		{"hosts.1.target", "hosts.target"},
+		{"hosts.9.target", "hosts.target"},
+		{"hosts.10.target", "hosts.target"},
+		{"hosts.99.mode", "hosts.mode"},
+		// Nothing left to name is worse than a name with an index in it.
+		{"0", "0"},
+		{"", ""},
+	} {
+		if got := plainField(tt.in); got != tt.want {
+			t.Errorf("plainField(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
