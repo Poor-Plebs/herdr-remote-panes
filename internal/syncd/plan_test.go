@@ -1184,7 +1184,7 @@ func withConfig(d *Daemon, cfg config.Config) *Daemon {
 		d.seenStray = map[string]bool{}
 	}
 	if d.markedWorkspaces == nil {
-		d.markedWorkspaces = map[string]string{}
+		d.markedWorkspaces = map[string]workspaceMark{}
 	}
 	return d
 }
@@ -1733,7 +1733,7 @@ func TestAWorkspaceThatIsGoneIsForgotten(t *testing.T) {
 	// longer existed, two failing calls each time, for as long as the daemon
 	// ran. This machine's log had them every two seconds.
 	d := withConfig(&Daemon{
-		markedWorkspaces: map[string]string{"w37": "remote_up"},
+		markedWorkspaces: map[string]workspaceMark{"w37": {token: "remote_up"}},
 	}, config.Defaults())
 	state := &hostSync{host: config.Host{Target: "prod"}, workspaceID: "w37"}
 
@@ -1750,7 +1750,7 @@ func TestAWorkspaceThatIsGoneIsForgotten(t *testing.T) {
 func TestForgettingLeavesADifferentSpaceAlone(t *testing.T) {
 	// The machine may already have moved on to another space by the time a
 	// stale call comes back saying the old one is gone.
-	d := withConfig(&Daemon{markedWorkspaces: map[string]string{}}, config.Defaults())
+	d := withConfig(&Daemon{markedWorkspaces: map[string]workspaceMark{}}, config.Defaults())
 	state := &hostSync{host: config.Host{Target: "prod"}, workspaceID: "w99"}
 
 	d.forgetWorkspace(state, "w37")
@@ -2134,7 +2134,7 @@ func TestANewDaemonHasEveryMapItWillWriteTo(t *testing.T) {
 	// Each of these is written to during an ordinary pass.
 	d.hosts["bot"] = &hostSync{}
 	d.rootPanes["w1"] = "w1:p1"
-	d.markedWorkspaces["w1"] = "remote_up"
+	d.markedWorkspaces["w1"] = workspaceMark{token: "remote_up"}
 	d.seenStray["w1:p2"] = true
 
 	if d.config().PollInterval == "" {
@@ -2976,4 +2976,57 @@ func TestConnectEachReportsFailuresAgainstTheRightMachine(t *testing.T) {
 			t.Errorf("%s connected but was reported as failed: %v", host.Target, errs[i])
 		}
 	}
+}
+
+func TestPlanWorkspaceMark(t *testing.T) {
+	// This used to run on every pass: a space whose name and marker had not
+	// changed was renamed to the name it already had and marked with the marker
+	// it already carried, a couple of seconds later, for as long as Herdr was
+	// open. Two processes per machine per pass, for ever, to change nothing.
+	now := time.Now()
+	settled := workspaceMark{label: "☁  bot", token: tokenRemoteUp, at: now}
+
+	t.Run("nothing changed and it was recent", func(t *testing.T) {
+		if planWorkspaceMark(settled, "☁  bot", tokenRemoteUp, now.Add(time.Second)) {
+			t.Error("a space that already reads correctly was written again")
+		}
+	})
+
+	t.Run("the machine stopped answering", func(t *testing.T) {
+		// The name and the marker both change, and this is the moment somebody
+		// is looking at the sidebar to find out why something is not working.
+		if !planWorkspaceMark(settled, "⚠  bot", tokenRemoteDown, now.Add(time.Second)) {
+			t.Error("a space did not get its unreachable marker")
+		}
+	})
+
+	t.Run("only the marker changed", func(t *testing.T) {
+		if !planWorkspaceMark(settled, "☁  bot", tokenRemoteDown, now.Add(time.Second)) {
+			t.Error("a changed marker was not written")
+		}
+	})
+
+	t.Run("nothing changed but it has been a while", func(t *testing.T) {
+		// The repair: the marker comes back if anything else cleared it, and
+		// Herdr reuses space ids, so an id this remembers can turn out to
+		// belong to a different space.
+		if !planWorkspaceMark(settled, "☁  bot", tokenRemoteUp, now.Add(workspaceRepairInterval)) {
+			t.Error("a space was never written again, so nothing would repair it")
+		}
+	})
+
+	t.Run("the last attempt failed", func(t *testing.T) {
+		// Nothing was put there to keep, so there is nothing to skip.
+		failed := settled
+		failed.failed = true
+		if !planWorkspaceMark(failed, "☁  bot", tokenRemoteUp, now.Add(time.Second)) {
+			t.Error("a failed attempt was not retried")
+		}
+	})
+
+	t.Run("a space nothing is known about", func(t *testing.T) {
+		if !planWorkspaceMark(workspaceMark{}, "☁  bot", tokenRemoteUp, now) {
+			t.Error("a space never written to was left unnamed")
+		}
+	})
 }

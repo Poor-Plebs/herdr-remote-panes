@@ -7,6 +7,7 @@ import (
 
 	"errors"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
+	"time"
 )
 
 // This file holds the decisions the reconciler makes, separated from the calls
@@ -190,6 +191,30 @@ func planSharedPanes(panes []herdrcli.Pane, sharedWorkspace string, tabOrder map
 		return a.PaneID < b.PaneID
 	})
 	return selected
+}
+
+// planWorkspaceMark decides whether a space needs renaming and marking again.
+//
+// It used to happen on every pass, so a space whose name and marker had not
+// changed since the last one was renamed to the name it already had and marked
+// with the marker it already carried, a couple of seconds later, for as long as
+// Herdr was open. Two processes spawned per machine per pass: with the default
+// interval and five machines, better than five a second, for ever, to change
+// nothing.
+//
+// Re-asserting is still worth doing, and still happens -- just on its own
+// slower clock. The marker comes back if anything else clears it, and Herdr
+// reuses space ids, so an id this remembers can turn out to belong to a
+// different space. Both are repairs rather than the normal case. What the
+// slower clock costs is that such a space reads wrongly for up to that long
+// rather than for up to one pass.
+//
+// A failed attempt is always retried, since nothing was put there to keep.
+func planWorkspaceMark(mark workspaceMark, label, token string, now time.Time) bool {
+	if mark.failed || mark.label != label || mark.token != token {
+		return true
+	}
+	return now.Sub(mark.at) >= workspaceRepairInterval
 }
 
 // planLostPane decides whether a pane that has gone should be reopened.

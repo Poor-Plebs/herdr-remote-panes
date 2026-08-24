@@ -76,8 +76,8 @@ type Daemon struct {
 	// reconciles folds overlapping reconcile requests into one.
 	reconciles coalescer
 
-	// markedWorkspaces avoids re-reporting the same workspace metadata.
-	markedWorkspaces map[string]string
+	// markedWorkspaces is what was last put on each space, and when.
+	markedWorkspaces map[string]workspaceMark
 
 	// lastPrune is when marks left behind by vanished panes were last cleared,
 	// as Unix nanoseconds. This used to happen once, on the first pane listing
@@ -237,7 +237,7 @@ func NewWithConfigError(cfg config.Config, configErr error) *Daemon {
 	d := &Daemon{
 		hosts:            map[string]*hostSync{},
 		rootPanes:        map[string]string{},
-		markedWorkspaces: map[string]string{},
+		markedWorkspaces: map[string]workspaceMark{},
 		seenStray:        map[string]bool{},
 		snapshot:         loadSnapshot(),
 		configErr:        configErr,
@@ -2286,6 +2286,22 @@ func (d *Daemon) forgetWorkspace(state *hostSync, workspaceID string) {
 	delete(d.markedWorkspaces, workspaceID)
 }
 
+// workspaceMark is what was last put on a space: the name it was given, the
+// marker it was told to carry, whether that failed, and when.
+type workspaceMark struct {
+	label  string
+	token  string
+	failed bool
+	at     time.Time
+}
+
+// workspaceRepairInterval is how often a space is renamed and marked again
+// even though nothing has changed, to undo anything that changed it from
+// elsewhere.
+//
+// A variable so a test can shorten it.
+var workspaceRepairInterval = 30 * time.Second
+
 // markWorkspaceState publishes the remote marker for a host's workspace,
 // reporting whichever token matches the connection state and clearing the
 // other. Herdr shows these only where the sidebar template asks for them, so
@@ -2300,18 +2316,24 @@ func (d *Daemon) markWorkspaceState(state *hostSync, connected bool) {
 	if !connected {
 		want, clear = tokenRemoteDown, tokenRemoteUp
 	}
-	// Reported on every pass rather than once. It is a local socket call, and
-	// re-asserting means the marker comes back if anything else clears it.
+	label := d.config().WorkspaceLabelFor(state.host, connected)
+
+	if !planWorkspaceMark(d.markedWorkspaces[workspaceID], label, want, time.Now()) {
+		return
+	}
+	mark := workspaceMark{label: label, token: want, at: time.Now()}
+
 	// The marker also lives in the space's name, because Herdr puts " · "
 	// between sidebar tokens and a name is the only place a marker can sit
 	// directly beside it.
-	if label := d.config().WorkspaceLabelFor(state.host, connected); label != "" {
+	if label != "" {
 		if _, err := herdrcli.Run("workspace", "rename", workspaceID, label); err != nil {
 			if herdrcli.IsNotFound(err) {
 				d.forgetWorkspace(state, workspaceID)
 				return
 			}
 			log.Printf("rename space %s: %v", workspaceID, err)
+			mark.failed = true
 		}
 	}
 
@@ -2321,6 +2343,7 @@ func (d *Daemon) markWorkspaceState(state *hostSync, connected bool) {
 	// long as both were connected. The rename above still runs, because that is
 	// what keeps the name matching the config and so findable.
 	if d.config().SharesWorkspace(state.host) {
+		d.markedWorkspaces[workspaceID] = mark
 		return
 	}
 
@@ -2333,13 +2356,14 @@ func (d *Daemon) markWorkspaceState(state *hostSync, connected bool) {
 			d.forgetWorkspace(state, workspaceID)
 			return
 		}
-		if d.markedWorkspaces[workspaceID] != "failed" {
+		if !d.markedWorkspaces[workspaceID].failed {
 			log.Printf("mark space %s: %v", workspaceID, err)
-			d.markedWorkspaces[workspaceID] = "failed"
 		}
+		mark.failed = true
+		d.markedWorkspaces[workspaceID] = mark
 		return
 	}
-	d.markedWorkspaces[workspaceID] = want
+	d.markedWorkspaces[workspaceID] = mark
 }
 
 // retireRootPane closes the placeholder shell Herdr created with a workspace,
