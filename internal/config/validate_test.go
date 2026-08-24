@@ -939,3 +939,32 @@ func TestASpaceIsSafeButOnlyMeansSomethingWhenNobodyWroteItDown(t *testing.T) {
 		}
 	}
 }
+
+func TestProblemsCatchesAMisspelledScope(t *testing.T) {
+	// scope decides whether a machine's whole Herdr is mirrored or only the
+	// space it shares with this one. A typo fell back to shared, silently, so
+	// somebody who asked for "all" got half of what they asked for and nothing
+	// said why -- the same shape as the misspelled mode above.
+	cfg := Defaults()
+	cfg.Scope = "everything"
+
+	problems := strings.Join(cfg.Problems(), "\n")
+	if !strings.Contains(problems, "everything") {
+		t.Errorf("a misspelled scope should be reported and named, got %q", problems)
+	}
+	if !strings.Contains(problems, "shared") {
+		t.Errorf("the report should say what happens instead, got %q", problems)
+	}
+
+	// And both spellings that do work must not be reported, or the warning
+	// becomes noise that gets ignored.
+	for _, ok := range []string{ScopeShared, ScopeAll} {
+		cfg := Defaults()
+		cfg.Scope = ok
+		for _, problem := range cfg.Problems() {
+			if strings.Contains(problem, "scope") {
+				t.Errorf("scope %q is valid but was reported: %q", ok, problem)
+			}
+		}
+	}
+}

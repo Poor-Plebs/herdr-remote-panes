@@ -160,3 +160,132 @@ func TestWorkspaceLabelFor(t *testing.T) {
 		t.Errorf("per-host workspace = %q, want %q", got, "mine")
 	}
 }
+
+func TestHowOftenMachinesAreChecked(t *testing.T) {
+	// A poll runs an ssh command against every connected machine, so this has
+	// a floor: below it the machines spend their time answering rather than
+	// being worked on. Anything unreadable falls back to the default rather
+	// than to nothing, since a zero interval is a busy loop.
+	for _, tt := range []struct {
+		what, set, want string
+	}{
+		{"unset is the documented default", "", "2s"},
+		{"a plain duration is honoured", "5s", "5s"},
+		{"and a longer one", "1m30s", "1m30s"},
+		{"the floor itself is allowed", "500ms", "500ms"},
+		{"just under it is not", "499ms", "2s"},
+		{"nor is anything far below", "1ms", "2s"},
+		{"nor is zero, which would be a busy loop", "0s", "2s"},
+		{"nor is a negative one", "-5s", "2s"},
+		{"and nonsense falls back rather than failing", "soon", "2s"},
+		{"as does a bare number, which has no unit", "2", "2s"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			cfg := Config{PollInterval: tt.set}
+			if got := cfg.Interval().String(); got != tt.want {
+				t.Errorf("poll_interval %q gives %s, want %s", tt.set, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestASettingYouWriteIsTheSettingThatIsUsed(t *testing.T) {
+	// Blanks are filled in from the defaults, and a version of that which
+	// filled in everything rather than only the blanks would leave every
+	// setting in the README's table silently doing nothing. Each one is
+	// checked, because that mistake is per-field: it was made for some of
+	// these and not others, and only the ones nobody had written a test for.
+	//
+	// Every value here differs from its default, or it proves nothing.
+	set := Config{
+		PollInterval:          "9s",
+		Session:               "work",
+		Mode:                  ModeAttach,
+		Scope:                 ScopeAll,
+		Placement:             "tab",
+		LabelFormat:           "{host}:{name}",
+		WorkspaceFormat:       "remote {host}",
+		WorkspaceFormatDown:   "down {host}",
+		RemoteWorkspaceFormat: "from {hub}",
+		CaptureNewPanes:       boolPtr(false),
+		ClosePropagates:       boolPtr(false),
+		Takeover:              boolPtr(false),
+		AutoStart:             boolPtr(false),
+		MaxMirrors:            4,
+	}
+	d := Defaults()
+	got := set.normalized()
+
+	for _, f := range []struct {
+		name                string
+		got, set, byDefault any
+	}{
+		{"poll_interval", got.PollInterval, set.PollInterval, d.PollInterval},
+		{"session", got.Session, set.Session, d.Session},
+		{"mode", got.Mode, set.Mode, d.Mode},
+		{"scope", got.Scope, set.Scope, d.Scope},
+		{"placement", got.Placement, set.Placement, d.Placement},
+		{"label_format", got.LabelFormat, set.LabelFormat, d.LabelFormat},
+		{"workspace_format", got.WorkspaceFormat, set.WorkspaceFormat, d.WorkspaceFormat},
+		{"workspace_format_down", got.WorkspaceFormatDown, set.WorkspaceFormatDown, d.WorkspaceFormatDown},
+		{"remote_workspace_format", got.RemoteWorkspaceFormat, set.RemoteWorkspaceFormat, d.RemoteWorkspaceFormat},
+		{"max_mirrors", got.MaxMirrors, set.MaxMirrors, d.MaxMirrors},
+	} {
+		if f.set == f.byDefault {
+			t.Errorf("%s is set to its own default here, so this checks nothing", f.name)
+		}
+		if f.got != f.set {
+			t.Errorf("%s was written as %v but came out %v", f.name, f.set, f.got)
+		}
+	}
+
+	// The flags are pointers so that "false" can be told from "unset", which is
+	// the whole reason turning one off is possible at all.
+	for _, f := range []struct {
+		name string
+		got  *bool
+	}{
+		{"capture_new_panes", got.CaptureNewPanes},
+		{"close_propagates", got.ClosePropagates},
+		{"takeover", got.Takeover},
+		{"auto_start", got.AutoStart},
+	} {
+		if f.got == nil {
+			t.Errorf("%s came out unset", f.name)
+			continue
+		}
+		if *f.got {
+			t.Errorf("%s was turned off but came out on", f.name)
+		}
+	}
+}
+
+func TestAnEmptyConfigComesOutAsTheDefaults(t *testing.T) {
+	// The other half: every blank is filled, so nothing downstream has to ask
+	// whether a setting was written down.
+	got := Config{}.normalized()
+	d := Defaults()
+
+	if got.PollInterval != d.PollInterval || got.Session != d.Session ||
+		got.Mode != d.Mode || got.Scope != d.Scope || got.Placement != d.Placement {
+		t.Errorf("blanks were not filled in: %+v", got)
+	}
+	if got.LabelFormat != d.LabelFormat || got.WorkspaceFormat != d.WorkspaceFormat ||
+		got.WorkspaceFormatDown != d.WorkspaceFormatDown ||
+		got.RemoteWorkspaceFormat != d.RemoteWorkspaceFormat {
+		t.Errorf("a name format was left blank, which would name things after nothing: %+v", got)
+	}
+	if got.MaxMirrors != d.MaxMirrors {
+		t.Errorf("max_mirrors = %d, want the default %d", got.MaxMirrors, d.MaxMirrors)
+	}
+	for name, flag := range map[string]*bool{
+		"capture_new_panes": got.CaptureNewPanes,
+		"close_propagates":  got.ClosePropagates,
+		"takeover":          got.Takeover,
+		"auto_start":        got.AutoStart,
+	} {
+		if flag == nil {
+			t.Errorf("%s was left unset, so nothing downstream can tell what it means", name)
+		}
+	}
+}
