@@ -26,28 +26,39 @@ func Short() string {
 			revision = "unknown"
 			return
 		}
-		modified := false
+		recorded, modified := "", false
 		for _, setting := range info.Settings {
 			switch setting.Key {
 			case "vcs.revision":
-				revision = setting.Value
+				recorded = setting.Value
 			case "vcs.modified":
 				modified = setting.Value == "true"
 			}
 		}
-		if len(revision) > 7 {
-			revision = revision[:7]
-		}
-		if revision == "" {
-			// Built outside a checkout, which is normal for `go run` and tests.
-			revision = "unknown"
-			return
-		}
-		if modified {
-			revision += "-dirty"
-		}
+		revision = shortRevision(recorded, modified)
 	})
 	return revision
+}
+
+// shortRevision names a build from what Go recorded about it: a short commit,
+// and a mark when the tree it was built from had uncommitted changes in it.
+//
+// Separate from Short because Short can only ever answer one way inside a test
+// binary -- there is no checkout behind it -- so everything this decides was
+// out of reach of a test, including the answer that matters most: a build with
+// no revision at all is not a dirty build, it is an unknown one.
+func shortRevision(recorded string, modified bool) string {
+	if len(recorded) > 7 {
+		recorded = recorded[:7]
+	}
+	if recorded == "" {
+		// Built outside a checkout, which is normal for `go run` and tests.
+		return "unknown"
+	}
+	if modified {
+		recorded += "-dirty"
+	}
+	return recorded
 }
 
 // StaleMessage describes a daemon running a different build from the installed
@@ -58,7 +69,13 @@ func Short() string {
 // checkout has no revision to compare and stays quiet rather than warning every
 // time and teaching people to ignore it.
 func StaleMessage(running string) string {
-	installed := Short()
+	return staleMessage(running, Short())
+}
+
+// staleMessage is StaleMessage with the installed build handed to it, since
+// Short cannot be anything but "unknown" in a test binary -- which is the one
+// answer that makes this say nothing at all.
+func staleMessage(running, installed string) string {
 	if installed == "" || installed == "unknown" || running == installed {
 		return ""
 	}
