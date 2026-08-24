@@ -35,6 +35,9 @@ func withRemoteHerdrRunning(t *testing.T, up bool) (func(string) fakeHerdr, func
 	t.Helper()
 
 	dir := t.TempDir()
+	// Where the transcript lands, so a test can ask what was actually said to
+	// a machine rather than reasoning about what should have been.
+	t.Setenv("HRP_TEST_REMOTE_DIR", dir)
 	statePath := func(target string) string {
 		return filepath.Join(dir, "machine-"+target+".json")
 	}
@@ -63,6 +66,7 @@ func withRemoteHerdrRunning(t *testing.T, up bool) (func(string) fakeHerdr, func
 		"  echo '{\"error\":{\"code\":\"server_not_running\",\"message\":\"no herdr server is running\"},\"id\":\"cli:fake\"}'\n" +
 		"  exit 1\n" +
 		"fi\n" +
+		"echo \"$prev | $last\" >> " + dir + "/asked.log\n" +
 		"HRP_TEST_FAKE_HERDR_STATE=" + dir + "/machine-$prev.json eval \"$last\"\n"
 
 	bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
@@ -83,6 +87,21 @@ func withRemoteHerdrRunning(t *testing.T, up bool) (func(string) fakeHerdr, func
 		return machine
 	}
 	return held, statePath
+}
+
+// asked is every command the daemon has sent to a machine, in order.
+//
+// A transcript beats reasoning about the conversation, which is how the last
+// several of these were actually found: the line that named this one was the
+// daemon asking a machine for a new tab, which it only does when it believes
+// the machine has none.
+func asked(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(os.Getenv("HRP_TEST_REMOTE_DIR"), "asked.log"))
+	if err != nil {
+		return nil
+	}
+	return strings.Split(strings.TrimSpace(string(raw)), "\n")
 }
 
 // addPaneOn puts a pane into a machine's own state, as work started there does:
@@ -917,4 +936,65 @@ func TestTwoMachinesInOneSpaceLeaveEachOtherAlone(t *testing.T) {
 	// and the sidebar is right either way, so it is a spare terminal on a
 	// machine rather than anything visible. Left as a known loose end rather
 	// than written down as correct.
+}
+
+func TestConnectingAMirroredMachineAfterARestartAddsATerminal(t *testing.T) {
+	// Connecting a machine that already has a terminal should mirror it, not
+	// make a second one. After a restart it makes a second one, so terminals
+	// pile up on the machine one per restart of Herdr.
+	//
+	// What the transcript says: the daemon asks the machine for a new tab,
+	// which it only does when it believes the machine has nothing open. It
+	// believes that because the machine's mirrors are empty at the moment it
+	// asks -- the reconcile immediately before has dropped the mirror the last
+	// daemon left and has not put a new one in its place.
+	//
+	// What is not established is whether that empty moment happens against a
+	// real Herdr. Nothing in these tests runs a mirror process, so a mirror
+	// here never reports itself alive and is replaced on every pass. That is
+	// the one way this could be the stand-in's doing rather than the daemon's,
+	// and it is exactly the gap that made the last stand-in bug invisible for a
+	// week -- so it is not being fixed on a guess.
+	//
+	// Skipped rather than deleted: a failing test nobody can act on is noise,
+	// and a deleted one is a finding nobody remembers. Remove the skip to see
+	// it.
+	t.Skip("known: a restart adds a terminal to a mirrored machine; cause not established")
+
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	for i := 0; i < 3; i++ {
+		d.reconcileAll()
+	}
+	d.persist()
+	if got := len(there().Panes); got != 1 {
+		t.Fatalf("started with %d terminals on the machine, want 1", got)
+	}
+
+	after := New(cfg)
+	if reply := after.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("reconnect: %s", reply.Message)
+	}
+	for i := 0; i < 4; i++ {
+		after.reconcileAll()
+	}
+
+	if got := len(there().Panes); got != 1 {
+		t.Errorf("the machine has %d terminals after a restart, want the one it had", got)
+		for _, line := range asked(t) {
+			if strings.Contains(line, "tab create") {
+				t.Logf("  the daemon asked: %s", line)
+			}
+		}
+	}
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Errorf("%d mirrors here, want 1", got)
+	}
 }
