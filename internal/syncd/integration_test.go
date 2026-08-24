@@ -33,6 +33,7 @@ type fakeHerdr struct {
 	Workspaces map[string]map[string]any `json:"workspaces"`
 	Next       int                       `json:"next"`
 	Focused    []string                  `json:"focused_spaces"`
+	Calls      map[string]int            `json:"calls"`
 }
 
 // withFakeHerdr points the plugin at the stand-in and at an ssh that answers,

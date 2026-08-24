@@ -25,6 +25,13 @@ type fakeHerdr struct {
 	Next       int                       `json:"next"`
 	// Focused is every space that was brought to the front, in order.
 	Focused []string `json:"focused_spaces"`
+	// Calls counts what was asked for, by the verb rather than the whole
+	// command. Several things this plugin does are promises not to make a call
+	// -- not to rename a pane that already carries the name, not to report an
+	// agent that has not changed -- and the outcome of doing the work twice
+	// looks exactly like the outcome of doing it once. Only the count differs,
+	// and at one poll every two seconds that difference is the whole cost.
+	Calls map[string]int `json:"calls"`
 }
 
 func (f *fakeHerdr) id(prefix string) string {
@@ -93,6 +100,22 @@ func main() {
 	}
 
 	join := strings.Join(args, " ")
+
+	// Counted before anything is decided, so a refusal counts too: a call that
+	// fails is still a call that was made.
+	if state.Calls == nil {
+		state.Calls = map[string]int{}
+	}
+	verb := join
+	if n := len(args); n > 2 {
+		verb = strings.Join(args[:2], " ")
+		if args[0] == "plugin" && n > 3 {
+			verb = strings.Join(args[:3], " ")
+		}
+	}
+	state.Calls[verb]++
+	save()
+
 	switch {
 	case join == "pane list":
 		ok(map[string]any{"panes": values(state.Panes)})

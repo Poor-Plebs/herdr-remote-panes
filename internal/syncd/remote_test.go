@@ -1336,3 +1336,85 @@ func TestNewTabOnAMirroredMachineIsATabHereAsWell(t *testing.T) {
 		t.Errorf("the new mirror shares tab %q with the first: it split rather than making a tab", tab)
 	}
 }
+
+func TestASettledMachineStopsAskingForThings(t *testing.T) {
+	// A poll runs every two seconds for as long as Herdr is open, so what a
+	// settled machine costs per pass is what this costs to leave running. It
+	// used to rename every pane, re-report every agent and re-check every
+	// space on every pass -- eleven calls where one would do -- and none of
+	// that is visible in the outcome, which is identical either way. Only the
+	// count differs.
+	//
+	// So: once a machine has settled, a pass asks what is there and does
+	// nothing else.
+	here := withFakeHerdr(t)
+	there, remoteState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	// With an agent running on the machine, because the agent's name and state
+	// reach the sidebar by their own route and carry their own promise not to
+	// be sent again unchanged. Without one here, that route is never taken and
+	// the promise is not being tested at all.
+	var shared string
+	for id := range there().Workspaces {
+		shared = id
+	}
+	if shared == "" {
+		t.Fatal("the machine has no shared space")
+	}
+	addAgentPaneOn(t, remoteState, shared, "claude", "claude", "idle")
+	settle(t, d, here, 5, there)
+
+	taken := func(held fakeHerdr) map[string]int {
+		out := map[string]int{}
+		for verb, n := range held.Calls {
+			out[verb] = n
+		}
+		return out
+	}
+	delta := func(before, after map[string]int) map[string]int {
+		out := map[string]int{}
+		for verb, n := range after {
+			if d := n - before[verb]; d != 0 {
+				out[verb] = d
+			}
+		}
+		return out
+	}
+
+	beforeHere, beforeThere := taken(here()), taken(there())
+	const passes = 5
+	settle(t, d, here, passes, there)
+
+	// Here: one listing a pass, and nothing else at all. Every other verb is a
+	// change being made, and a settled machine has no changes to make.
+	gotHere := delta(beforeHere, taken(here()))
+	if n := gotHere["pane list"]; n != passes {
+		t.Errorf("%d local pane listings over %d passes, want one each", n, passes)
+	}
+	delete(gotHere, "pane list")
+	if len(gotHere) != 0 {
+		t.Errorf("a settled machine still does things here: %v", gotHere)
+	}
+
+	// On the machine: the same, allowing for the two listings mirroring needs
+	// -- what panes are there, and what order the tabs are in.
+	gotThere := delta(beforeThere, taken(there()))
+	for _, listing := range []string{"pane list", "tab list"} {
+		if n := gotThere[listing]; n > passes {
+			t.Errorf("%d %q on the machine over %d passes, want no more than one each",
+				n, listing, passes)
+		}
+		delete(gotThere, listing)
+	}
+	if len(gotThere) != 0 {
+		t.Errorf("a settled machine is still being changed: %v", gotThere)
+	}
+}
