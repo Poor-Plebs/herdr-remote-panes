@@ -50,6 +50,14 @@ func (c Config) Problems() []string {
 	problems = append(problems, c.dropped...)
 
 	seen := map[string]bool{}
+	// Which machine claimed each name. A label names the machine's space, the
+	// panes in it, and the suffix those are matched against, so two machines
+	// answering to one name are not two machines: they share a space, and each
+	// pass reads the other's terminals as strays in its own space and closes
+	// them. Connecting both leaves one of them with nothing, and nothing
+	// anywhere said why.
+	labelledBy := map[string]string{}
+
 	for _, host := range c.Hosts {
 		if err := ValidTarget(host.Target); err != nil {
 			problems = append(problems, err.Error())
@@ -59,6 +67,24 @@ func (c Config) Problems() []string {
 				"host %q is listed more than once; only the last entry counts", host.Target))
 		}
 		seen[host.Target] = true
+
+		// Not for a machine that is switched off: it is not connected to, so
+		// it cannot collide with anything, and saying so would be a warning
+		// about a setting that is behaving itself.
+		if !host.Disabled {
+			// The name it answers to, which is its target when it has no label
+			// of its own -- so a label copied from another machine's target
+			// collides just as surely as one copied from its label.
+			name := host.DisplayLabel()
+			if first, taken := labelledBy[name]; taken && first != host.Target {
+				problems = append(problems, fmt.Sprintf(
+					"hosts %q and %q are both called %q, so they would share one space "+
+						"and close each other's terminals; give one of them its own label",
+					first, host.Target, name))
+			} else if !taken {
+				labelledBy[name] = host.Target
+			}
+		}
 
 		if host.Mode != "" && !knownMode(host.Mode) {
 			problems = append(problems, fmt.Sprintf(

@@ -211,7 +211,7 @@ All optional, in `$(herdr plugin config-dir poorplebs.remote-panes)/config.json`
 | --- | --- | --- |
 | `hosts[].target` | – | The machine, as you would type after `ssh` |
 | `hosts[].mode` | `ssh` | `ssh` plain terminal; `attach` or `observe` to mirror |
-| `hosts[].label` | the target | How it is named here |
+| `hosts[].label` | the target | How it is named here. Must differ from every other machine's: it names the machine's space, and two machines sharing one would take each other's terminals |
 | `hosts[].disabled` | `false` | Skip it without removing it |
 | `hosts[].session` | the global one | Which Herdr session on *this* machine |
 | `hosts[].placement` | the global one | How *this* machine's terminals are placed |

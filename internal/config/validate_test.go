@@ -968,3 +968,66 @@ func TestProblemsCatchesAMisspelledScope(t *testing.T) {
 		}
 	}
 }
+
+func TestProblemsCatchesTwoMachinesAnsweringToOneName(t *testing.T) {
+	// A label names the machine's space, the panes in it, and the suffix those
+	// are matched against. Two machines answering to one name therefore share a
+	// space, and each pass reads the other's terminals as strays in its own
+	// space and closes them: connecting both leaves one with nothing, and
+	// nothing said why. Only the duplicate target was reported, and these have
+	// different targets.
+	t.Run("two labels the same", func(t *testing.T) {
+		cfg := Defaults()
+		cfg.Hosts = []Host{{Target: "bot", Label: "build"}, {Target: "ci", Label: "build"}}
+		problems := strings.Join(cfg.Problems(), "\n")
+		for _, want := range []string{"bot", "ci", "build"} {
+			if !strings.Contains(problems, want) {
+				t.Errorf("the report should name %q: %q", want, problems)
+			}
+		}
+	})
+
+	t.Run("a label copied from another machine's target", func(t *testing.T) {
+		// The one with no label of its own answers to its target, so this
+		// collides just as surely.
+		cfg := Defaults()
+		cfg.Hosts = []Host{{Target: "bot"}, {Target: "ci", Label: "bot"}}
+		if problems := strings.Join(cfg.Problems(), "\n"); !strings.Contains(problems, "ci") {
+			t.Errorf("a label copied from another machine's target should be reported: %q", problems)
+		}
+	})
+
+	t.Run("a machine that is switched off collides with nothing", func(t *testing.T) {
+		// It is not connected to, so saying anything here is a warning about a
+		// setting that is behaving itself.
+		cfg := Defaults()
+		cfg.Hosts = []Host{{Target: "bot", Label: "build"}, {Target: "ci", Label: "build", Disabled: true}}
+		for _, problem := range cfg.Problems() {
+			if strings.Contains(problem, "both called") {
+				t.Errorf("a disabled machine was reported as a collision: %q", problem)
+			}
+		}
+	})
+
+	t.Run("the same machine listed twice is one mistake, not two", func(t *testing.T) {
+		// It is already reported as a duplicate target; saying it also collides
+		// with itself describes one typo as two problems.
+		cfg := Defaults()
+		cfg.Hosts = []Host{{Target: "bot"}, {Target: "bot"}}
+		for _, problem := range cfg.Problems() {
+			if strings.Contains(problem, "both called") {
+				t.Errorf("a machine was reported as colliding with itself: %q", problem)
+			}
+		}
+	})
+
+	t.Run("ordinary machines are not reported", func(t *testing.T) {
+		cfg := Defaults()
+		cfg.Hosts = []Host{{Target: "bot"}, {Target: "ci"}, {Target: "prod", Label: "production"}}
+		for _, problem := range cfg.Problems() {
+			if strings.Contains(problem, "both called") {
+				t.Errorf("machines with distinct names were reported: %q", problem)
+			}
+		}
+	})
+}
