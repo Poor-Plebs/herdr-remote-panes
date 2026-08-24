@@ -180,10 +180,52 @@ func main() {
 
 	case strings.HasPrefix(join, "plugin pane open"):
 		workspace := flag("--workspace")
+		target := flag("--target-pane")
+		direction := flag("--direction")
+
+		// Herdr falls back to the placement the manifest declares for the
+		// entrypoint, so a request that sends no --placement is not placed
+		// "wherever": the mirror pane becomes a tab and the picker a popup.
+		//
+		// This used to be inferred from --target-pane instead, which meant a
+		// --placement that stopped being sent altogether looked exactly like
+		// one that was. A stand-in simpler than the real thing does not leave
+		// a gap; it manufactures agreement.
+		placement := flag("--placement")
+		if placement == "" {
+			switch flag("--entrypoint") {
+			case "picker":
+				placement = "popup"
+			default:
+				placement = "tab"
+			}
+		}
+
+		// The combinations Herdr refuses outright, with its own messages. A
+		// plugin that sends the wrong pair gets invalid_params and no pane,
+		// which is not something a test should have to discover in production.
+		switch placement {
+		case "overlay", "popup":
+			if workspace != "" || target != "" || direction != "" {
+				fail("invalid_params", "overlay and popup plugin panes target the active pane")
+			}
+		case "split", "zoomed":
+			if workspace != "" {
+				fail("invalid_params",
+					"split and zoomed plugin panes target an existing pane; use target_pane_id")
+			}
+		case "tab":
+			if target != "" || direction != "" {
+				fail("invalid_params",
+					"tab plugin panes support workspace_id but not target_pane_id or direction")
+			}
+		default:
+			fail("invalid_params", "unknown placement "+placement)
+		}
+
 		tab := state.id("t")
-		// A split lands beside its target, in that pane's space and tab, and
-		// carries no --workspace of its own.
-		if target := flag("--target-pane"); target != "" {
+		// A split or a zoom lands on its target, in that pane's space and tab.
+		if target != "" {
 			pane, live := state.Panes[target]
 			if !live {
 				fail("pane_not_found", "pane "+target+" not found")
