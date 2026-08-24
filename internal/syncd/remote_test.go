@@ -143,6 +143,20 @@ func addAgentPaneOn(t *testing.T, statePath, workspace, title, agent, status str
 	return id
 }
 
+// settle runs reconcile passes and lets the mirrors they open report themselves
+// alive, which is what happens a moment later in a real session.
+//
+// Without that a mirror never looks alive, so every pass replaces every one of
+// them: the tests then exercise a machine in permanent churn rather than a
+// settled one. That difference hid a bug for a week and invented another.
+func settle(t *testing.T, d *Daemon, here func() fakeHerdr, passes int, machines ...func() fakeHerdr) {
+	t.Helper()
+	for i := 0; i < passes; i++ {
+		d.reconcileAll()
+		mirrorsAreRunning(t, here, machines...)
+	}
+}
+
 func TestMirroringGivesOneTerminalForOneOnTheMachine(t *testing.T) {
 	// The only mode where this plugin talks to the far end at all, and the one
 	// with no end-to-end test until the stand-in learned to be a second
@@ -158,9 +172,7 @@ func TestMirroringGivesOneTerminalForOneOnTheMachine(t *testing.T) {
 	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
 		t.Fatalf("connect: %s", reply.Message)
 	}
-	for i := 0; i < 3; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 3, there)
 
 	// One terminal on the machine, and one here showing it. The extra one is
 	// what this is really about: a space Herdr creates comes with a shell in
@@ -214,9 +226,7 @@ func TestATerminalOpenedOnTheMachineShowsUpHere(t *testing.T) {
 	if reply := d.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
 		t.Fatalf("open on the machine: %s", reply.Message)
 	}
-	for i := 0; i < 3; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 3, there)
 
 	if got := len(there().Panes); got != 2 {
 		t.Errorf("the machine has %d terminals, want 2", got)
@@ -252,9 +262,7 @@ func TestAPaneOpenedByHandInAMirroredMachinesSpaceMovesOntoIt(t *testing.T) {
 	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
 		t.Fatalf("connect: %s", reply.Message)
 	}
-	for i := 0; i < 2; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 2, there)
 
 	remoteBefore := len(there().Panes)
 	var workspace string
@@ -266,9 +274,7 @@ func TestAPaneOpenedByHandInAMirroredMachinesSpaceMovesOntoIt(t *testing.T) {
 	}
 	stray := addLocalPane(t, workspace)
 
-	for i := 0; i < 4; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 4, there)
 
 	if _, still := here().Panes[stray]; still {
 		t.Error("the pane opened by hand is still here, on the wrong machine")
@@ -345,9 +351,7 @@ func TestMaxMirrorsCapsWhatOneMachineCanFillTheScreenWith(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		addPaneOn(t, machineState, "w-theirs", fmt.Sprintf("runaway-%d", i))
 	}
-	for i := 0; i < 4; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 4, there)
 
 	if got := len(there().Panes); got < 10 {
 		t.Fatalf("the machine has %d terminals, want the ten that were started", got)
@@ -462,9 +466,7 @@ func TestTheSharedSpaceGoingOnTheMachineIsNotABreakage(t *testing.T) {
 	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
 		t.Fatalf("connect: %s", reply.Message)
 	}
-	for i := 0; i < 2; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 2, there)
 
 	var shared string
 	for id := range there().Workspaces {
@@ -475,9 +477,7 @@ func TestTheSharedSpaceGoingOnTheMachineIsNotABreakage(t *testing.T) {
 	}
 	deleteSpaceOn(t, machineState, shared)
 
-	for i := 0; i < 4; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 4, there)
 
 	// Nothing is made behind the user's back, and nothing is left over here.
 	if got := len(there().Panes); got != 0 {
@@ -498,9 +498,7 @@ func TestTheSharedSpaceGoingOnTheMachineIsNotABreakage(t *testing.T) {
 	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
 		t.Fatalf("reconnect: %s", reply.Message)
 	}
-	for i := 0; i < 3; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 3, there)
 	if got := len(there().Panes); got != 1 {
 		t.Errorf("after connecting again the machine has %d terminals, want 1", got)
 	}
@@ -526,9 +524,7 @@ func TestAMachineWhoseHerdrIsNotUpIsStartedRatherThanRefused(t *testing.T) {
 	if !reply.OK {
 		t.Fatalf("connect: %s", reply.Message)
 	}
-	for i := 0; i < 3; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 3, there)
 
 	if got := len(there().Panes); got != 1 {
 		t.Errorf("the machine has %d terminals, want the one that comes with its space", got)
@@ -558,9 +554,7 @@ func TestWithoutAutoStartAMachineWithNoSessionIsNotStarted(t *testing.T) {
 	d := New(cfg)
 
 	d.dispatch(Command{Cmd: "connect", Host: "bot"})
-	for i := 0; i < 3; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 3, there)
 
 	if got := len(there().Panes); got != 0 {
 		t.Errorf("the machine has %d terminals; nothing should have started a session", got)
@@ -609,9 +603,7 @@ func TestClosingATerminalOnTheMachineSticks(t *testing.T) {
 	if reply := d.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
 		t.Fatalf("open: %s", reply.Message)
 	}
-	for i := 0; i < 3; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 3, there)
 	if got := len(there().Panes); got != 2 {
 		t.Fatalf("the machine has %d terminals, want 2 to start from", got)
 	}
@@ -622,9 +614,7 @@ func TestClosingATerminalOnTheMachineSticks(t *testing.T) {
 	}
 	closePaneOn(t, machineState, closed)
 
-	for i := 0; i < 4; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 4, there)
 
 	remote := there()
 	if _, back := remote.Panes[closed]; back {
@@ -666,9 +656,7 @@ func TestTogglingMirroringOnAndOffFromTheMenu(t *testing.T) {
 	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
 		t.Fatalf("connect: %s", reply.Message)
 	}
-	for i := 0; i < 2; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 2, there)
 
 	// Plain SSH: a terminal here, and nothing asked of the machine's Herdr.
 	if got := panesFor(here(), "bot"); got != 1 {
@@ -686,9 +674,7 @@ func TestTogglingMirroringOnAndOffFromTheMenu(t *testing.T) {
 		if !strings.Contains(reply.Message, "mirroring on") {
 			t.Errorf("toggling on said %q", reply.Message)
 		}
-		for i := 0; i < 3; i++ {
-			d.reconcileAll()
-		}
+		settle(t, d, here, 3, there)
 
 		if got := len(there().Panes); got != 1 {
 			t.Errorf("the machine has %d terminals, want the shared one", got)
@@ -718,9 +704,7 @@ func TestTogglingMirroringOnAndOffFromTheMenu(t *testing.T) {
 		if !strings.Contains(reply.Message, "mirroring off") {
 			t.Errorf("toggling off said %q", reply.Message)
 		}
-		for i := 0; i < 3; i++ {
-			d.reconcileAll()
-		}
+		settle(t, d, here, 3, there)
 
 		hosts := d.dispatch(Command{Cmd: "status"}).Hosts
 		if len(hosts) != 1 || !hosts[0].SSHOnly {
@@ -762,9 +746,7 @@ func TestAnAgentOnTheMachineAppearsHereAsItself(t *testing.T) {
 
 	// A terminal on the machine with an agent working in it.
 	addAgentPaneOn(t, machineState, "w-theirs", "claude", "claude", "working")
-	for i := 0; i < 3; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 3, there)
 
 	mirror := agentPaneHere(t, here(), "claude")
 	if mirror == nil {
@@ -781,9 +763,7 @@ func TestAnAgentOnTheMachineAppearsHereAsItself(t *testing.T) {
 			clearAgentOn(t, machineState, id)
 		}
 	}
-	for i := 0; i < 3; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 3, there)
 	if mirror := agentPaneHere(t, here(), "claude"); mirror != nil {
 		t.Errorf("a pane here is still showing an agent that has finished: %+v", mirror)
 	}
@@ -825,7 +805,7 @@ func TestAnAgentNameFromAnotherMachineIsMadeSafe(t *testing.T) {
 	// second route for the same text, and it was left unguarded when the first
 	// one was fixed.
 	here := withFakeHerdr(t)
-	_, machineState := withRemoteHerdr(t)
+	there, machineState := withRemoteHerdr(t)
 
 	cfg := machineConfig("bot")
 	cfg.Hosts[0].Mode = "attach"
@@ -838,9 +818,7 @@ func TestAnAgentNameFromAnotherMachineIsMadeSafe(t *testing.T) {
 
 	addAgentPaneOn(t, machineState, "w-theirs", "shell",
 		"\x1b[31mclaude\x1b[0m\nrest", "working")
-	for i := 0; i < 3; i++ {
-		d.reconcileAll()
-	}
+	settle(t, d, here, 3, there)
 
 	for _, pane := range here().Panes {
 		agent, _ := pane["agent"].(string)
@@ -863,6 +841,8 @@ func TestTwoMachinesInOneSpaceLeaveEachOtherAlone(t *testing.T) {
 	// Two machines, one space, which is the configuration that does it.
 	here := withFakeHerdr(t)
 	heldOn, _ := withRemoteHerdrRunning(t, true)
+	botThere := func() fakeHerdr { return heldOn("bot") }
+	prodThere := func() fakeHerdr { return heldOn("prod") }
 
 	cfg := config.Defaults()
 	cfg.Workspace = "remote"
@@ -880,9 +860,7 @@ func TestTwoMachinesInOneSpaceLeaveEachOtherAlone(t *testing.T) {
 		if reply := d.dispatch(Command{Cmd: "connect", Host: target}); !reply.OK {
 			t.Fatalf("connect %s: %s", target, reply.Message)
 		}
-		for i := 0; i < 3; i++ {
-			d.reconcileAll()
-		}
+		settle(t, d, here, 3, botThere, prodThere)
 	}
 
 	// One terminal on each machine, and a mirror of each here, in the one space.
@@ -974,19 +952,49 @@ func sanitizeForPath(s string) string {
 
 // mirrorsAreRunning marks every mirror here as having a live bridge, which is
 // what happens a moment after one is opened.
-func mirrorsAreRunning(t *testing.T, here, there func() fakeHerdr) {
+func mirrorsAreRunning(t *testing.T, here func() fakeHerdr, machines ...func() fakeHerdr) {
 	t.Helper()
-	remote := there()
+
+	// A bridge removes its own mark on the way out, so a pane that has gone
+	// leaves nothing behind claiming to be alive. Leaving those lying about is
+	// its own kind of wrong: a closed pane that still reads as running is not
+	// a thing that happens.
+	panes := here().Panes
+	dir := filepath.Join(os.Getenv("HERDR_PLUGIN_STATE_DIR"), "panes",
+		sanitizeForPath(os.Getenv("HERDR_SESSION")))
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, entry := range entries {
+			name := strings.TrimSuffix(entry.Name(), ".pid")
+			if entry.Name() == name {
+				continue
+			}
+			stillThere := false
+			for id := range panes {
+				if sanitizeForPath(id) == name {
+					stillThere = true
+					break
+				}
+			}
+			if !stillThere {
+				if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+
 	for id, pane := range here().Panes {
 		label, _ := pane["label"].(string)
 		if !strings.Contains(label, "@") {
 			continue
 		}
-		for _, rp := range remote.Panes {
-			rid, _ := rp["pane_id"].(string)
-			if strings.Contains(label, shortPaneID(rid)) {
-				tid, _ := rp["terminal_id"].(string)
-				mirrorIsRunning(t, id, tid)
+		for _, machine := range machines {
+			for _, rp := range machine().Panes {
+				rid, _ := rp["pane_id"].(string)
+				if strings.Contains(label, shortPaneID(rid)) {
+					tid, _ := rp["terminal_id"].(string)
+					mirrorIsRunning(t, id, tid)
+				}
 			}
 		}
 	}
