@@ -121,6 +121,10 @@ func describeCommand(argv []string) string {
 	return strings.Join(argv, " ")
 }
 
+// holdOpen is how long a pane that failed stays on screen before it goes, so
+// the message on it can be read. A variable so a test need not wait it out.
+var holdOpen = 5 * time.Second
+
 // reportFailure leaves a trace a user can actually find.
 func reportFailure(err error) {
 	MarkFailed(os.Getenv("HERDR_PANE_ID"), err.Error())
@@ -141,7 +145,7 @@ func reportFailure(err error) {
 
 	// Hold the pane open long enough for the message to be read.
 	fmt.Fprintf(os.Stdout, "\r\n%s\r\n", message)
-	time.Sleep(5 * time.Second)
+	time.Sleep(holdOpen)
 }
 
 func bridge() error {

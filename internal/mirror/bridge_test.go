@@ -1,10 +1,13 @@
 package mirror
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // bridge is the pane's entrypoint: it reads what the daemon told it through the
@@ -270,4 +273,93 @@ func TestOnlyTheModesThatNeedATerminalAskForOne(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAPaneThatFailedLeavesATraceInThreePlaces(t *testing.T) {
+	// A pane about to close is the worst place to put the only copy of
+	// something, so this leaves it in three: on the pane, where somebody is
+	// looking; in the log, where they can find it afterwards; and in the record
+	// the daemon reads, which decides whether the terminal is opened again.
+	restore := holdOpen
+	holdOpen = time.Millisecond
+	defer func() { holdOpen = restore }()
+
+	state := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", state)
+	t.Setenv("HERDR_SESSION", "hub")
+	t.Setenv("HERDR_PANE_ID", "w1:p2")
+	t.Setenv(EnvTarget, "bot")
+	t.Setenv(EnvName, "shell@bot")
+	t.Setenv(EnvTerminal, "")
+
+	drawn := captureStdout(t, func() {
+		reportFailure(errors.New("exit status 255 running: ssh bot"))
+	})
+
+	if !strings.Contains(drawn, "shell@bot") || !strings.Contains(drawn, "exit status 255") {
+		t.Errorf("the pane shows %q, want it to name the terminal and say what happened", drawn)
+	}
+
+	log, err := os.ReadFile(filepath.Join(state, "mirror.log"))
+	if err != nil {
+		t.Fatalf("nothing was written where somebody could find it later: %v", err)
+	}
+	if !strings.Contains(string(log), "shell@bot") {
+		t.Errorf("the log says %q, without naming the terminal", log)
+	}
+
+	if !Failed("w1:p2") {
+		t.Error("nothing recorded that the pane failed, so the daemon reads it as a tab somebody shut")
+	}
+	if got := FailureReason("w1:p2"); !strings.Contains(got, "exit status 255") {
+		t.Errorf("the record says %q, without why", got)
+	}
+}
+
+func TestAPlainSSHPaneIsNamedByItsMachine(t *testing.T) {
+	// A plain SSH pane has neither a name nor a remote terminal, and this read
+	// as "[herdr-remote-panes] : exit status 255" -- a colon introducing
+	// nothing. The machine is what identifies it in that case.
+	restore := holdOpen
+	holdOpen = time.Millisecond
+	defer func() { holdOpen = restore }()
+
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+	t.Setenv("HERDR_PANE_ID", "w1:p2")
+	t.Setenv(EnvTarget, "bot")
+	t.Setenv(EnvName, "")
+	t.Setenv(EnvTerminal, "")
+
+	drawn := captureStdout(t, func() {
+		reportFailure(errors.New("exit status 255"))
+	})
+
+	if !strings.Contains(drawn, "bot") {
+		t.Errorf("the pane shows %q, which does not say which machine went", drawn)
+	}
+	if strings.Contains(drawn, "] :") {
+		t.Errorf("the pane shows %q, with a colon introducing nothing", drawn)
+	}
+}
+
+// captureStdout returns what something wrote to the pane.
+func captureStdout(t *testing.T, run func()) string {
+	t.Helper()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdout
+	os.Stdout = write
+	defer func() { os.Stdout = saved }()
+
+	done := make(chan string, 1)
+	go func() {
+		out, _ := io.ReadAll(read)
+		done <- string(out)
+	}()
+	run()
+	write.Close()
+	return <-done
 }
