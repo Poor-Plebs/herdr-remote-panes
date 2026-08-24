@@ -6,6 +6,7 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -1247,5 +1248,91 @@ func TestAMirrorThatKeepsFailingStopsTryingSoOften(t *testing.T) {
 	// fails is not somebody closing a tab.
 	if got := len(there().Panes); got != 1 {
 		t.Errorf("the machine has %d terminals, want the one it had", got)
+	}
+}
+
+// mirrorsHere returns the mirror panes for a machine, newest first, so a test
+// can look at the one that was just opened.
+func mirrorsHere(held fakeHerdr, target string) []map[string]any {
+	var out []map[string]any
+	for _, pane := range held.Panes {
+		if label, _ := pane["label"].(string); strings.HasSuffix(label, "@"+target) {
+			out = append(out, pane)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		id := func(p map[string]any) string { s, _ := p["pane_id"].(string); return s }
+		return paneNumber(id(out[i])) > paneNumber(id(out[j]))
+	})
+	return out
+}
+
+func TestOpeningATerminalOnAMirroredMachineGoesToItToo(t *testing.T) {
+	// The same promise the manifest makes for every machine -- "new terminal on
+	// the machine whose space you are in, and go to it" -- but by a completely
+	// different route. A mirrored machine's terminal is made on the machine and
+	// the mirror of it arrives a pass later, so the focus has to be remembered
+	// across the gap rather than asked for on the spot.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+	if got := len(mirrorsHere(here(), "bot")); got != 1 {
+		t.Fatalf("started with %d mirrors, want 1", got)
+	}
+
+	if reply := d.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
+		t.Fatalf("open: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+
+	mirrors := mirrorsHere(here(), "bot")
+	if len(mirrors) != 2 {
+		t.Fatalf("%d mirrors here, want one for each terminal on the machine", len(mirrors))
+	}
+	if focused, _ := mirrors[0]["focused"].(bool); !focused {
+		t.Errorf("the terminal that was opened was not focused: %+v", mirrors[0])
+	}
+}
+
+func TestNewTabOnAMirroredMachineIsATabHereAsWell(t *testing.T) {
+	// Mirroring makes this two decisions rather than one: a tab is asked for on
+	// the machine, and the mirror that comes back a pass later has to be placed
+	// as a tab here too. Nothing carries that across by itself -- the mirror is
+	// opened by a later pass that only sees a terminal it has not mirrored yet
+	// -- so how it was asked for has to be remembered.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot") // placement defaults to split
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+	first := mirrorsHere(here(), "bot")
+	if len(first) != 1 {
+		t.Fatalf("started with %d mirrors, want 1", len(first))
+	}
+	firstTab, _ := first[0]["tab_id"].(string)
+
+	if reply := d.dispatch(Command{Cmd: "open", Host: "bot", Placement: "tab"}); !reply.OK {
+		t.Fatalf("open-tab: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+
+	mirrors := mirrorsHere(here(), "bot")
+	if len(mirrors) != 2 {
+		t.Fatalf("%d mirrors here, want 2", len(mirrors))
+	}
+	if tab, _ := mirrors[0]["tab_id"].(string); tab == firstTab {
+		t.Errorf("the new mirror shares tab %q with the first: it split rather than making a tab", tab)
 	}
 }
