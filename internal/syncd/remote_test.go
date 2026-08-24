@@ -1418,3 +1418,100 @@ func TestASettledMachineStopsAskingForThings(t *testing.T) {
 		t.Errorf("a settled machine is still being changed: %v", gotThere)
 	}
 }
+
+// withUnreachableMachine replaces ssh with one that fails the way ssh does when
+// it cannot reach the host, and returns how many times it has been called.
+//
+// 255 is ssh's own failure; anything else is the remote command's status coming
+// back through it, which is a different thing entirely.
+func withUnreachableMachine(t *testing.T) func() int {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "dialled.log")
+	script := "#!/bin/sh\n" +
+		"echo dialled >> " + log + "\n" +
+		"echo 'ssh: connect to host bot port 22: Connection refused' >&2\n" +
+		"exit 255\n"
+	bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return func() int {
+		raw, err := os.ReadFile(log)
+		if err != nil {
+			return 0
+		}
+		return strings.Count(string(raw), "dialled")
+	}
+}
+
+func TestAMachineThatCannotBeReachedIsEventuallyLeftAlone(t *testing.T) {
+	// A poll every two seconds against a machine that is not answering is an
+	// ssh a machine cannot refuse quickly: a blackholed address takes the
+	// operating system's own timeout to fail. Left to retry for ever it would
+	// be a dial every couple of seconds for as long as Herdr is open, each one
+	// holding the reconcile loop's lock while it waited.
+	//
+	// So the retries fall off and then stop, and the machine is marked as given
+	// up on rather than being tried again.
+	withFakeHerdr(t)
+	dialled := withUnreachableMachine(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); reply.OK {
+		t.Fatalf("connecting to an unreachable machine reported success: %s", reply.Message)
+	}
+
+	// Long enough for any retrying to have run its course.
+	for i := 0; i < 10; i++ {
+		d.reconcileAll()
+	}
+	settled := dialled()
+
+	for i := 0; i < 10; i++ {
+		d.reconcileAll()
+	}
+	if after := dialled(); after != settled {
+		t.Errorf("a machine that cannot be reached was dialled %d more times over ten passes; "+
+			"it should have been left alone", after-settled)
+	}
+
+	status := d.status()
+	if len(status) != 1 {
+		t.Fatalf("want one machine in the status, got %d", len(status))
+	}
+	if !status[0].GaveUp {
+		t.Error("the machine is not marked as given up on, so nothing in the menu says why it is quiet")
+	}
+	if status[0].LastError == "" {
+		t.Error("nothing was recorded about why it could not be reached")
+	}
+}
+
+func TestGivingUpIsNotForeverIfYouAskAgain(t *testing.T) {
+	// "On a machine that has been given up on, enter is also how you say try
+	// again now" -- the README, and the reason the menu offers "enter to retry"
+	// on that line. Giving up has to stop the polling without also making the
+	// machine unreachable until Herdr restarts.
+	withFakeHerdr(t)
+	dialled := withUnreachableMachine(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	d.dispatch(Command{Cmd: "connect", Host: "bot"})
+	for i := 0; i < 10; i++ {
+		d.reconcileAll()
+	}
+
+	quiet := dialled()
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); reply.OK {
+		t.Fatalf("the machine is still unreachable but connect reported success: %s", reply.Message)
+	}
+	if dialled() == quiet {
+		t.Error("asking again did not try the machine, so there is no way back short of a restart")
+	}
+}
