@@ -31,6 +31,7 @@ type fakeHerdr struct {
 	Panes      map[string]map[string]any `json:"panes"`
 	Workspaces map[string]map[string]any `json:"workspaces"`
 	Next       int                       `json:"next"`
+	Focused    []string                  `json:"focused_spaces"`
 }
 
 // withFakeHerdr points the plugin at the stand-in and at an ssh that answers,
@@ -757,5 +758,114 @@ func TestAMachinesLabelIsWhatItIsCalledHere(t *testing.T) {
 	// the menu shows.
 	if reply := d.dispatch(Command{Cmd: "disconnect", Host: "build box"}); !reply.OK {
 		t.Errorf("disconnecting by label: %s", reply.Message)
+	}
+}
+
+func TestPickingAMachineGoesToItEvenWhenItIsAlreadyThere(t *testing.T) {
+	// "Picking a machine takes you to its space, whether it had just been
+	// connected or was already there." The second half is the one that broke:
+	// a machine already connected needed nothing done to it, so the pass that
+	// would have learned where its space is never ran, and picking it from the
+	// menu looked like the menu doing nothing.
+	held := withFakeHerdr(t)
+	cfg := machineConfig("bot")
+
+	before := New(cfg)
+	if reply := before.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	before.reconcileAll()
+	before.persist()
+	if len(held().Focused) == 0 {
+		t.Fatal("connecting to a machine did not go to its space")
+	}
+
+	// A new daemon over the same state, which is what a restart is. The
+	// machine's space is there and this knows nothing about it -- which is the
+	// case that broke, and the usual one: most times somebody picks a machine
+	// it is one that is already connected.
+	after := New(cfg)
+	if reply := after.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect again: %s", reply.Message)
+	}
+
+	focused := held().Focused
+	if len(focused) == 0 {
+		t.Fatal("nothing was ever focused")
+	}
+	// The space that is there, not a new one made to have somewhere to go.
+	last := focused[len(focused)-1]
+	spaces := held().Workspaces
+	if len(spaces) != 1 {
+		t.Fatalf("there are %d spaces, want the one that was already there", len(spaces))
+	}
+	if _, ok := spaces[last]; !ok {
+		t.Errorf("went to space %q, which is not the machine's: %v", last, spaces)
+	}
+	if len(focused) < 2 {
+		t.Error("picking a machine that was already connected went nowhere")
+	}
+}
+
+func TestAPaneThatOpensOnItsOwnDoesNotTakeTheScreen(t *testing.T) {
+	// "A pane that opens on its own -- a dropped link coming back, or a
+	// terminal appearing on a mirrored machine -- never takes the screen from
+	// you." Somebody is working somewhere else when a link comes back, and
+	// being moved is worse than the terminal being a moment late.
+	held := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	before := len(held().Focused)
+	terminalDied(t, onlyPane(t, held()),
+		"bot is not reachable over ssh: exit status 255: Connection reset by peer")
+	for i := 0; i < 3; i++ {
+		d.reconcileAll()
+	}
+
+	herdr := held()
+	if got := panesFor(herdr, "bot"); got != 1 {
+		t.Fatalf("the dropped terminal was not reopened: %d panes", got)
+	}
+	if len(herdr.Focused) != before {
+		t.Errorf("a terminal coming back on its own took the screen: focused %v", herdr.Focused)
+	}
+	for id, pane := range herdr.Panes {
+		if focused, _ := pane["focused"].(bool); focused {
+			t.Errorf("pane %s was opened with the focus, and nobody asked for it", id)
+		}
+	}
+}
+
+func TestOutsideAMachinesSpaceNewTerminalIsAnOrdinaryOne(t *testing.T) {
+	// "Outside a machine's space both actions open an ordinary local pane or
+	// tab, so they are safe to bind over your usual keys." Somebody who binds
+	// their new-tab key to this has to get a tab wherever they are, or the
+	// binding is worse than the one it replaced.
+	held := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+
+	// A space that belongs to nothing, which is where most panes are.
+	reply := d.dispatch(Command{Cmd: "open", Workspace: "w-elsewhere"})
+	if !reply.OK {
+		t.Fatalf("open outside a machine's space: %s", reply.Message)
+	}
+	if !strings.Contains(reply.Message, "local") {
+		t.Errorf("open said %q, which does not read as an ordinary pane", reply.Message)
+	}
+	// Nothing was opened on a machine.
+	if got := panesFor(held(), "bot"); got != 0 {
+		t.Errorf("%d terminals were opened on a machine nobody was looking at", got)
+	}
+
+	tab := d.dispatch(Command{Cmd: "open", Workspace: "w-elsewhere", Placement: "tab"})
+	if !tab.OK {
+		t.Fatalf("open-tab outside a machine's space: %s", tab.Message)
+	}
+	if !strings.Contains(tab.Message, "tab") {
+		t.Errorf("open-tab said %q, which does not read as an ordinary tab", tab.Message)
 	}
 }

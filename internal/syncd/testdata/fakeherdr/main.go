@@ -23,6 +23,8 @@ type fakeHerdr struct {
 	Panes      map[string]map[string]any `json:"panes"`
 	Workspaces map[string]map[string]any `json:"workspaces"`
 	Next       int                       `json:"next"`
+	// Focused is every space that was brought to the front, in order.
+	Focused []string `json:"focused_spaces"`
 }
 
 func (f *fakeHerdr) id(prefix string) string {
@@ -98,8 +100,15 @@ func main() {
 		if _, live := state.Workspaces[id]; !live {
 			fail("workspace_not_found", "workspace "+id+" not found")
 		}
-		if args[1] == "rename" {
+		switch args[1] {
+		case "rename":
 			state.Workspaces[id]["label"] = args[3]
+			save()
+		case "focus":
+			// Recorded because taking the screen, and not taking it, are both
+			// promises: picking a machine goes to it, and a pane opening on its
+			// own does not.
+			state.Focused = append(state.Focused, id)
 			save()
 		}
 		ok(map[string]any{"workspace_id": id})
