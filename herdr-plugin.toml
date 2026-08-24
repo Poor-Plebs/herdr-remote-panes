@@ -50,7 +50,7 @@ command = ["./bin/herdr-remote-panes", "open-tab"]
 [[actions]]
 id = "refresh"
 title = "Remote panes: refresh"
-description = "Reconcile every connected host right now."
+description = "Reconcile every connected machine right now."
 contexts = ["global"]
 command = ["./bin/herdr-remote-panes", "refresh"]
 
@@ -68,8 +68,6 @@ command = ["./bin/herdr-remote-panes", "status"]
 on = "pane.created"
 command = ["./bin/herdr-remote-panes", "refresh"]
 
-# One mirror pane per remote terminal. The daemon supplies the target through
-# HRP_* environment variables and overrides the placement per host.
 # The machine menu. A popup is session-modal and gets every key, including
 # Escape, which is what a menu needs.
 [[panes]]
@@ -81,6 +79,8 @@ width = "60%"
 height = "60%"
 command = ["./bin/herdr-remote-panes", "picker"]
 
+# One mirror pane per remote terminal. The daemon supplies the machine through
+# HRP_* environment variables and overrides the placement per machine.
 [[panes]]
 id = "mirror"
 title = "Remote pane"

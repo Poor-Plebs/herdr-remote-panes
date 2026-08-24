@@ -577,7 +577,7 @@ func (d *Daemon) openRemotePane(host config.Host, placement string, focus bool) 
 		// terminal. The focus asked for used to stop at this line, which meant
 		// "open a terminal on this machine" left you looking at somewhere else
 		// -- for the default mode, which is most people.
-		return d.openShellPane(state, focus)
+		return d.openShellPane(state, placement, focus)
 	}
 
 	workspaceID, created, err := d.ensureRemoteWorkspace(state)
@@ -767,7 +767,7 @@ func (d *Daemon) hostForWorkspaceLabel(label string) (config.Host, bool) {
 
 // openShellPane opens a plain SSH pane for a host that is not running Herdr.
 // There is no remote pane to mirror, so the pane is the session itself.
-func (d *Daemon) openShellPane(state *hostSync, focus bool) error {
+func (d *Daemon) openShellPane(state *hostSync, placement string, focus bool) error {
 	index := newPaneIndex(nil)
 	if local, err := herdrcli.PaneList(); err == nil {
 		index = newPaneIndex(local)
@@ -798,7 +798,17 @@ func (d *Daemon) openShellPane(state *hostSync, focus bool) error {
 	// machine had gone -- ninety-five such lines in the log on this machine.
 	label := d.label(state.host, herdrcli.Pane{}, name)
 
-	shellTarget := planPaneTarget(d.config().PlacementFor(state.host), workspaceID, index.anyInWorkspace[workspaceID])
+	// The placement asked for, when there was one, and otherwise the machine's
+	// own. "New tab" is a separate action precisely because the answer is not
+	// always the machine's setting, and for a plain SSH machine -- the default
+	// mode, and most people -- it was: this line read the config and the
+	// argument went nowhere, so "new tab" opened whatever "new terminal" would
+	// have. Focus reached here by the same route and was fixed; placement was
+	// left behind.
+	if placement == "" {
+		placement = d.config().PlacementFor(state.host)
+	}
+	shellTarget := planPaneTarget(placement, workspaceID, index.anyInWorkspace[workspaceID])
 	opts := herdrcli.OpenOptions{
 		PluginID:   PluginID,
 		Entrypoint: paneEntrypoint,
@@ -1131,7 +1141,9 @@ func (d *Daemon) ensureRemotePresence(host config.Host) (bool, error) {
 		if !planNeedsTerminal(d.liveTerminalCount(host.Target)) {
 			return false, nil
 		}
-		return true, d.openShellPane(state, false)
+		// Nothing asked for a placement here: this is a machine being
+		// connected to, so the machine's own setting is the answer.
+		return true, d.openShellPane(state, "", false)
 	}
 
 	_, created, err := d.ensureRemoteWorkspace(state)
@@ -1471,7 +1483,7 @@ func (d *Daemon) reconcileOnce() {
 		if reopen {
 			// Never focused: a link coming back is not a request to go
 			// there, and somebody may be working elsewhere.
-			if err := d.openShellPane(state, false); err != nil {
+			if err := d.openShellPane(state, "", false); err != nil {
 				log.Printf("reopen terminal on %s: %v", state.host.Target, err)
 			}
 		}

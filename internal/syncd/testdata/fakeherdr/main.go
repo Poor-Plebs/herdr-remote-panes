@@ -122,10 +122,19 @@ func main() {
 				fail("workspace_not_found", "workspace "+workspace+" not found")
 			}
 		}
+		// Whether the pane was asked for with the focus is recorded, because
+		// "open a terminal on this machine and go to it" is a promise the
+		// manifest makes and one that has been broken before.
+		focused := false
+		for _, a := range args {
+			if a == "--focus" {
+				focused = true
+			}
+		}
 		id := state.id("p")
 		state.Panes[id] = map[string]any{
 			"pane_id": id, "tab_id": tab, "workspace_id": workspace,
-			"terminal_id": state.id("term_"), "label": "",
+			"terminal_id": state.id("term_"), "label": "", "focused": focused,
 		}
 		save()
 		ok(map[string]any{"plugin_pane": map[string]any{"pane": state.Panes[id]}})

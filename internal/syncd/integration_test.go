@@ -541,3 +541,102 @@ func TestATerminalThatCannotComeBackIsNotReopened(t *testing.T) {
 		}
 	}
 }
+
+func TestOpeningATerminalGoesToIt(t *testing.T) {
+	// "New terminal on the machine whose space you are in, and go to it" is
+	// what the manifest promises for this action. The focus asked for used to
+	// stop short of the plain SSH path, so for the default mode -- which is
+	// most people -- opening a terminal left you looking at somewhere else.
+	held := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+
+	before := len(held().Panes)
+	if reply := d.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
+		t.Fatalf("open: %s", reply.Message)
+	}
+
+	herdr := held()
+	if len(herdr.Panes) != before+1 {
+		t.Fatalf("open produced %d panes, want one more than %d", len(herdr.Panes), before)
+	}
+	// The newest pane is the one just opened.
+	newest, highest := "", -1
+	for id := range herdr.Panes {
+		if n := paneNumber(id); n > highest {
+			newest, highest = id, n
+		}
+	}
+	if focused, _ := herdr.Panes[newest]["focused"].(bool); !focused {
+		t.Errorf("the terminal that was opened was not focused: %+v", herdr.Panes[newest])
+	}
+}
+
+// paneNumber is the counter in a pane id the stand-in hands out, so the newest
+// can be told from the rest.
+func paneNumber(id string) int {
+	n := 0
+	for _, r := range id {
+		if r < '0' || r > '9' {
+			continue
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
+}
+
+func TestNewTabIsATabEvenWhereTerminalsNormallySplit(t *testing.T) {
+	// The manifest offers two actions because the answer is not always the
+	// same: terminals land wherever the machine's placement says, and "new tab"
+	// is how you get one somewhere else without changing that setting.
+	held := withFakeHerdr(t)
+	d := New(machineConfig("bot")) // placement defaults to split
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	first := held()
+	if len(first.Panes) != 1 {
+		t.Fatalf("connecting opened %d panes, want 1", len(first.Panes))
+	}
+	var firstTab string
+	for _, pane := range first.Panes {
+		firstTab, _ = pane["tab_id"].(string)
+	}
+
+	tabOf := func(before fakeHerdr) string {
+		t.Helper()
+		after := held()
+		for id, pane := range after.Panes {
+			if _, existed := before.Panes[id]; !existed {
+				tab, _ := pane["tab_id"].(string)
+				return tab
+			}
+		}
+		t.Fatal("nothing was opened")
+		return ""
+	}
+
+	t.Run("an ordinary new terminal splits", func(t *testing.T) {
+		before := held()
+		if reply := d.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
+			t.Fatalf("open: %s", reply.Message)
+		}
+		if got := tabOf(before); got != firstTab {
+			t.Errorf("the new terminal is in tab %q, not %q: it did not split", got, firstTab)
+		}
+	})
+
+	t.Run("but new tab is a tab", func(t *testing.T) {
+		before := held()
+		reply := d.dispatch(Command{Cmd: "open", Host: "bot", Placement: "tab"})
+		if !reply.OK {
+			t.Fatalf("open-tab: %s", reply.Message)
+		}
+		if got := tabOf(before); got == firstTab {
+			t.Errorf("the new terminal shares tab %q: it split rather than making a tab", got)
+		}
+	})
+}
