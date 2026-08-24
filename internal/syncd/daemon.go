@@ -30,6 +30,7 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/sshconfig"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/version"
+	"io"
 )
 
 // PluginID must match the id in herdr-plugin.toml.
@@ -373,16 +374,57 @@ func (d *Daemon) serveControl(listener net.Listener) {
 	}
 }
 
+// exchangeTimeout bounds each half of a control exchange: reading the request,
+// and writing the answer. It does not bound the work in between.
+//
+// A variable so a test can shorten it, the way the ssh timeout next door is.
+var exchangeTimeout = 30 * time.Second
+
+// maxRequestBytes is far more than a command can be -- five short strings --
+// and stops a client that never finishes its JSON from growing the daemon a
+// buffer at a time.
+const maxRequestBytes = 1 << 16
+
 func (d *Daemon) handleControl(conn net.Conn) {
+	serveExchange(conn, d.dispatch)
+}
+
+// serveExchange reads one command off a connection, answers it, and closes.
+//
+// Separate from the daemon because the mechanics of the exchange and what the
+// daemon does about a command are separate concerns -- and because holding the
+// deadlines to their contract means running a command that takes its time,
+// which is not something to make a real ssh connection for.
+func serveExchange(conn net.Conn, dispatch func(Command) Reply) {
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+
+	// The two halves are bounded separately, and the work between them is not
+	// bounded here at all.
+	//
+	// One deadline for the whole exchange had to cover that work, and the work
+	// is a connect: several ssh calls, each with its own timeout, and for a
+	// connect that names no machine, that again for every machine in the config
+	// one after another. Three unreachable ones is enough to pass thirty
+	// seconds -- at which point the daemon cut off the answer it had just
+	// finished working out, and the client, still waiting, reported a broken
+	// connection rather than the result. The work is bounded where it belongs:
+	// by the ssh timeouts.
+	_ = conn.SetReadDeadline(time.Now().Add(exchangeTimeout))
 
 	var cmd Command
-	if err := json.NewDecoder(conn).Decode(&cmd); err != nil {
-		_ = json.NewEncoder(conn).Encode(Reply{Message: "bad request"})
+	if err := json.NewDecoder(io.LimitReader(conn, maxRequestBytes)).Decode(&cmd); err != nil {
+		// The reason, rather than "bad request". It is the plugin talking to
+		// itself, so a malformed command means a bug, and the shape of it is
+		// the only clue there will be.
+		_ = conn.SetWriteDeadline(time.Now().Add(exchangeTimeout))
+		_ = json.NewEncoder(conn).Encode(Reply{Message: "could not read the request: " + err.Error()})
 		return
 	}
-	_ = json.NewEncoder(conn).Encode(d.dispatch(cmd))
+
+	reply := dispatch(cmd)
+
+	_ = conn.SetWriteDeadline(time.Now().Add(exchangeTimeout))
+	_ = json.NewEncoder(conn).Encode(reply)
 }
 
 func (d *Daemon) dispatch(cmd Command) Reply {

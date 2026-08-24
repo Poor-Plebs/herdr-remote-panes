@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"encoding/json"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
@@ -2765,5 +2766,110 @@ func TestRefusingAMachineSaysWhyRatherThanBlamingTheConfig(t *testing.T) {
 				t.Errorf("refusing %q blamed the plugin config: %q", tt.name, err)
 			}
 		})
+	}
+}
+
+func TestASlowCommandStillGetsItsAnswer(t *testing.T) {
+	// The connection used to carry one deadline for the whole exchange, which
+	// therefore had to cover the work in between. The work is a connect:
+	// several ssh calls, each with its own timeout, and for a connect that
+	// names no machine, that again for every machine in the config one after
+	// another. Enough unreachable ones and the daemon cut off the answer it
+	// had just finished working out, and the client -- still waiting on a
+	// longer deadline of its own -- reported a broken connection rather than
+	// the result.
+	//
+	// So the halves are bounded separately, and this holds the property that
+	// falls out of it: however long the work takes, the answer arrives.
+	// Shortened so the work can outlast it without the test being slow. What
+	// matters is the order of events, not the size of the numbers.
+	restore := exchangeTimeout
+	exchangeTimeout = 50 * time.Millisecond
+	defer func() { exchangeTimeout = restore }()
+
+	server, client := net.Pipe()
+	defer client.Close()
+
+	go serveExchange(server, func(Command) Reply {
+		time.Sleep(10 * exchangeTimeout)
+		return Reply{OK: true, Message: "worked it out eventually"}
+	})
+
+	if err := json.NewEncoder(client).Encode(Command{Cmd: "status"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var reply Reply
+	_ = client.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if err := json.NewDecoder(client).Decode(&reply); err != nil {
+		t.Fatalf("the answer never arrived: %v", err)
+	}
+	if !reply.OK || reply.Message != "worked it out eventually" {
+		t.Errorf("reply = %+v", reply)
+	}
+}
+
+func TestARequestThatCannotBeReadSaysWhy(t *testing.T) {
+	// It is the plugin talking to itself, so a malformed command means a bug,
+	// and the shape of it is the only clue there will be. "bad request" was
+	// not one.
+	server, client := net.Pipe()
+	defer client.Close()
+
+	go serveExchange(server, func(Command) Reply { return Reply{OK: true} })
+
+	if _, err := client.Write([]byte("this is not json\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	var reply Reply
+	_ = client.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if err := json.NewDecoder(client).Decode(&reply); err != nil {
+		t.Fatalf("no answer to a malformed request: %v", err)
+	}
+	if reply.OK {
+		t.Error("a malformed request was accepted")
+	}
+	if !strings.Contains(reply.Message, "could not read the request") {
+		t.Errorf("reply = %q, want it to say what went wrong", reply.Message)
+	}
+	if reply.Message == "bad request" {
+		t.Error("the reason was thrown away")
+	}
+}
+
+func TestAnEndlessRequestIsCutOff(t *testing.T) {
+	// A client that opens a JSON object and never closes it should not grow
+	// the daemon a buffer at a time. The read is bounded well above anything a
+	// real command can be -- five short strings -- so hitting the bound means
+	// the request was never going to end.
+	server, client := net.Pipe()
+	defer client.Close()
+
+	go serveExchange(server, func(Command) Reply {
+		t.Error("a request that never ended was dispatched")
+		return Reply{}
+	})
+
+	go func() {
+		_, _ = client.Write([]byte(`{"cmd":"status","host":"`))
+		chunk := []byte(strings.Repeat("x", 4096))
+		for {
+			// Stops when the daemon closes its end.
+			if _, err := client.Write(chunk); err != nil {
+				return
+			}
+		}
+	}()
+
+	// The answer arriving is the proof: it can only come after the read gave
+	// up, and the read can only give up at the bound.
+	_ = client.SetReadDeadline(time.Now().Add(20 * time.Second))
+	var reply Reply
+	if err := json.NewDecoder(client).Decode(&reply); err != nil {
+		t.Fatalf("the daemon kept reading a request that never ends: %v", err)
+	}
+	if reply.OK {
+		t.Error("a request that never ended was accepted")
 	}
 }
