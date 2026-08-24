@@ -1985,6 +1985,17 @@ func (d *Daemon) planStrayCapture(state *hostSync, index *paneIndex) []strayPane
 
 	var strays []strayPane
 	for _, paneID := range index.panesIn[state.workspaceID] {
+		// A pane that has gone is not a stray: there is nothing left to move.
+		//
+		// This pass closes one itself. A space Herdr creates comes with a shell
+		// in it, which is retired as soon as there is a mirror to keep the
+		// space alive -- and the listing this walks was taken before that
+		// happened, so the retired shell was still in it, unclaimed, and read
+		// as somebody's stray pane. Connecting to a mirrored machine therefore
+		// opened a terminal on it that nobody asked for, every time.
+		if !index.alive[paneID] {
+			continue
+		}
 		if planStrayPane(d.config().ShouldCaptureNewPanes(), claimed[paneID], d.seenStray[paneID]) {
 			strays = append(strays, strayPane{
 				PaneID:    paneID,

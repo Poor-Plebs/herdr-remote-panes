@@ -90,10 +90,20 @@ func main() {
 		ok(map[string]any{"workspaces": values(state.Workspaces)})
 
 	case strings.HasPrefix(join, "workspace create"):
+		// A new space comes with a tab and a shell in it, as Herdr's does. The
+		// plugin retires that shell once it has put something of its own there,
+		// so a stand-in that made an empty space left that path unexercised and
+		// the mirroring path with nowhere for its first pane to come from.
 		id := state.id("w")
 		state.Workspaces[id] = map[string]any{"workspace_id": id, "label": flag("--label")}
+		tab := state.id("t")
+		root := state.id("p")
+		state.Panes[root] = map[string]any{
+			"pane_id": root, "tab_id": tab, "workspace_id": id,
+			"terminal_id": state.id("term_"), "label": "",
+		}
 		save()
-		ok(map[string]any{"workspace": state.Workspaces[id]})
+		ok(map[string]any{"workspace": state.Workspaces[id], "root_pane": state.Panes[root]})
 
 	case strings.HasPrefix(join, "workspace "):
 		id := args[2]
@@ -112,6 +122,45 @@ func main() {
 			save()
 		}
 		ok(map[string]any{"workspace_id": id})
+
+	case join == "tab list":
+		// Derived from the panes rather than kept separately, so a tab cannot
+		// outlive what is in it or go missing while something still is.
+		seen := map[string]bool{}
+		var ids []string
+		for _, pane := range values(state.Panes) {
+			id, _ := pane["tab_id"].(string)
+			if id != "" && !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+		sort.Strings(ids)
+		tabs := make([]map[string]any, 0, len(ids))
+		for i, id := range ids {
+			tabs = append(tabs, map[string]any{"tab_id": id, "number": i + 1})
+		}
+		ok(map[string]any{"tabs": tabs})
+
+	case strings.HasPrefix(join, "tab create"):
+		// As with a space: a new tab comes with a shell in it.
+		workspace := flag("--workspace")
+		if workspace != "" {
+			if _, live := state.Workspaces[workspace]; !live {
+				fail("workspace_not_found", "workspace "+workspace+" not found")
+			}
+		}
+		tab := state.id("t")
+		root := state.id("p")
+		state.Panes[root] = map[string]any{
+			"pane_id": root, "tab_id": tab, "workspace_id": workspace,
+			"terminal_id": state.id("term_"), "label": "",
+		}
+		save()
+		ok(map[string]any{
+			"tab":       map[string]any{"tab_id": tab, "workspace_id": workspace},
+			"root_pane": state.Panes[root],
+		})
 
 	case strings.HasPrefix(join, "plugin pane open"):
 		workspace := flag("--workspace")
