@@ -1044,6 +1044,15 @@ func TestProblemsCatchesALabelThatCannotBeDrawn(t *testing.T) {
 		if !strings.Contains(problems, "named after nothing") {
 			t.Errorf("label %q should be reported as unusable, got %q", label, problems)
 		}
+		// And it says which half is at fault. Told to look at the target when
+		// the label is the problem, somebody goes and checks a target that is
+		// perfectly fine.
+		if !strings.Contains(problems, "label") {
+			t.Errorf("the report for label %q does not say the label is the problem: %q", label, problems)
+		}
+		if strings.Contains(problems, "nothing but spaces") {
+			t.Errorf("the report for label %q blames the target instead: %q", label, problems)
+		}
 		// The report must not carry the label's own control characters into
 		// the log or the menu; %q escapes them.
 		for _, r := range problems {
@@ -1082,8 +1091,14 @@ func TestProblemsCatchesALabelThatCannotBeDrawn(t *testing.T) {
 	// gets that far -- and then has nothing left to name anything with.
 	cfg = Defaults()
 	cfg.Hosts = []Host{{Target: "   "}}
-	if problems := strings.Join(cfg.Problems(), "\n"); !strings.Contains(problems, "named after nothing") {
+	problems := strings.Join(cfg.Problems(), "\n")
+	if !strings.Contains(problems, "named after nothing") {
 		t.Errorf("a target of nothing but spaces should be reported, got %q", problems)
+	}
+	// The other way round: this one has no label, so blaming one sends
+	// somebody looking for a setting they never wrote.
+	if !strings.Contains(problems, "nothing but spaces") {
+		t.Errorf("the report does not say the target is the problem: %q", problems)
 	}
 }
 
