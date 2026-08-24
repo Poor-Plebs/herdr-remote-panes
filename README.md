@@ -310,6 +310,17 @@ warning: the running daemon is 427e2ad but 9fcc667 is installed;
 restart Herdr to pick up the update
 ```
 
+To see both halves at once, ask which build is which:
+
+```console
+$ herdr-remote-panes version
+herdr-remote-panes 9fcc667
+daemon             427e2ad
+```
+
+The second line is the one that matters: that is the build reconciling your
+panes. It reads `not running` when nothing answers, which is itself an answer.
+
 **A keybinding does nothing.** First check the config itself is being read:
 
 ```bash

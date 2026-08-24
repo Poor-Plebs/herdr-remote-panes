@@ -138,6 +138,9 @@ func run(command string, args []string) error {
 	case "status":
 		return status()
 
+	case "version", "--version":
+		return printVersion()
+
 	case "help", "-h", "--help":
 		usage()
 		return nil
@@ -211,11 +214,64 @@ func usage() {
   open-tab [ssh-target]      the same, placed as a tab
   refresh                    reconcile every connected machine now
   status                     list the machines connected and what each has open
+  version                    which build this is, and which one the daemon runs
 
 Machines get a plain SSH terminal by default, which needs nothing installed on
 them. Mirroring, which keeps both ends showing the same terminals, is
 experimental and turned on per machine.
 `)
+}
+
+// printVersion reports this build and, when one is answering, the daemon's.
+//
+// Both, because they disagree: installing an update replaces the files on disk
+// and leaves the running daemon alone, so its fixes do nothing until Herdr is
+// restarted. The daemon is the half that matters -- it is the one reconciling
+// panes -- and until now the only way to see which build it was came from
+// reading its log.
+func printVersion() error {
+	running := ""
+	reply, err := syncd.Ask(syncd.Command{Cmd: "status"})
+	switch {
+	case err != nil:
+		// Not an error. Asking which build you have installed is a reasonable
+		// thing to do when the daemon is not running -- it is a reasonable
+		// thing to do *because* the daemon is not running.
+		running = "not running"
+	case reply.Revision == "":
+		// Built outside a checkout, which is what `go run` and a test binary
+		// look like. Saying so beats a blank column.
+		running = "unknown"
+	default:
+		running = reply.Revision
+	}
+
+	for _, line := range versionLines(version.Short(), running) {
+		fmt.Println(line)
+	}
+	if err == nil {
+		if stale := version.StaleMessage(reply.Revision); stale != "" {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", stale)
+		}
+	}
+	return nil
+}
+
+// The two things a version answer names. Their widths set the column, rather
+// than a number written down beside them that goes stale the moment either is
+// renamed.
+const (
+	binaryLabel = "herdr-remote-panes"
+	daemonLabel = "daemon"
+)
+
+// versionLines is the answer as columns: this build, and the daemon's.
+func versionLines(binary, daemon string) []string {
+	width := max(len(binaryLabel), len(daemonLabel))
+	return []string{
+		fmt.Sprintf("%-*s %s", width, binaryLabel, binary),
+		fmt.Sprintf("%-*s %s", width, daemonLabel, daemon),
+	}
 }
 
 // maxDaemonLog bounds the daemon's log. It is quiet in ordinary use -- a line
