@@ -603,3 +603,107 @@ func TestClosingATerminalOnTheMachineSticks(t *testing.T) {
 		t.Errorf("%d mirrors here, want one for the terminal that is left", got)
 	}
 }
+
+// withConfigFile puts a config on disk, which the mode toggle needs: it changes
+// the setting by writing the file, so that the choice outlives the session.
+func withConfigFile(t *testing.T, contents string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	return path
+}
+
+func TestTogglingMirroringOnAndOffFromTheMenu(t *testing.T) {
+	// The m key. The mechanism changes, so the machine's panes here no longer
+	// match how it is reached: they are dropped and the machine connected again
+	// under the new one. Both directions, because the interesting half is going
+	// back -- a mirror and a plain SSH terminal look alike in a sidebar and are
+	// nothing alike underneath.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+	configPath := withConfigFile(t, `{"hosts":[{"target":"bot"}]}`)
+
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	for i := 0; i < 2; i++ {
+		d.reconcileAll()
+	}
+
+	// Plain SSH: a terminal here, and nothing asked of the machine's Herdr.
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Fatalf("started with %d terminals, want 1", got)
+	}
+	if got := len(there().Panes); got != 0 {
+		t.Fatalf("the machine has %d terminals; plain SSH should not have made any", got)
+	}
+
+	t.Run("on", func(t *testing.T) {
+		reply := d.dispatch(Command{Cmd: "set-mode", Host: "bot", Mode: "attach"})
+		if !reply.OK {
+			t.Fatalf("toggle on: %s", reply.Message)
+		}
+		if !strings.Contains(reply.Message, "mirroring on") {
+			t.Errorf("toggling on said %q", reply.Message)
+		}
+		for i := 0; i < 3; i++ {
+			d.reconcileAll()
+		}
+
+		if got := len(there().Panes); got != 1 {
+			t.Errorf("the machine has %d terminals, want the shared one", got)
+		}
+		if got := panesFor(here(), "bot"); got != 1 {
+			t.Errorf("%d panes here, want one mirror", got)
+		}
+		hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+		if len(hosts) != 1 || hosts[0].SSHOnly {
+			t.Errorf("status = %+v, want the machine mirrored", hosts)
+		}
+		// Written down, or the choice would not survive a restart.
+		if raw, err := os.ReadFile(configPath); err != nil {
+			t.Fatal(err)
+		} else if !strings.Contains(string(raw), "attach") {
+			t.Errorf("the config file does not record the change: %s", raw)
+		}
+	})
+
+	t.Run("and off again", func(t *testing.T) {
+		remoteBefore := len(there().Panes)
+
+		reply := d.dispatch(Command{Cmd: "set-mode", Host: "bot", Mode: "ssh"})
+		if !reply.OK {
+			t.Fatalf("toggle off: %s", reply.Message)
+		}
+		if !strings.Contains(reply.Message, "mirroring off") {
+			t.Errorf("toggling off said %q", reply.Message)
+		}
+		for i := 0; i < 3; i++ {
+			d.reconcileAll()
+		}
+
+		hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+		if len(hosts) != 1 || !hosts[0].SSHOnly {
+			t.Errorf("status = %+v, want the machine on plain SSH", hosts)
+		}
+		// A plain SSH terminal, not a mirror wearing its name.
+		if got := panesFor(here(), "bot"); got != 1 {
+			t.Errorf("%d panes here, want one terminal", got)
+		}
+		for _, pane := range here().Panes {
+			if label, _ := pane["label"].(string); !strings.HasPrefix(label, "shell") {
+				t.Errorf("the terminal here is named %q, which is a mirror's name", label)
+			}
+		}
+		// And the work on the machine is left alone, as it is when
+		// disconnecting: turning a setting off is not a reason to close it.
+		if got := len(there().Panes); got != remoteBefore {
+			t.Errorf("the machine has %d terminals, want the %d it had", got, remoteBefore)
+		}
+	})
+}
