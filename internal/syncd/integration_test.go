@@ -1075,3 +1075,78 @@ func TestEveryLeftoverInASpaceGoesInTheSamePass(t *testing.T) {
 			len(survived), len(husks), survived)
 	}
 }
+
+// withSSHConfig writes a ~/.ssh/config for the test and points HOME at it.
+func withSSHConfig(t *testing.T, contents string) {
+	t.Helper()
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+}
+
+func TestALineOfSomebodyElsesOutputIsNotAMachine(t *testing.T) {
+	// connect with no machine named falls back to whatever text was selected in
+	// the terminal, which is how a line of someone else's output becomes an
+	// argument to ssh. A name nobody wrote down therefore has to look like a
+	// name, and a line with a space in it is a sentence.
+	withFakeHerdr(t)
+	withSSHConfig(t, "Host bot\n")
+	d := New(config.Defaults())
+
+	for _, selected := range []string{
+		"error: could not reach the build server",
+		"see https://example.com/docs for help",
+		"bot and prod",
+	} {
+		reply := d.dispatch(Command{Cmd: "connect", Host: selected})
+		if reply.OK {
+			t.Errorf("connected to %q, which is a line of output rather than a machine", selected)
+		}
+	}
+}
+
+func TestAMachineYouWroteDownIsTakenAtYourWord(t *testing.T) {
+	// The other half, and the reason the two checks are held apart: ssh allows
+	// `Host "my server"` and connects to it as `ssh "my server"`. Refusing a
+	// space outright meant such a machine was read correctly out of the file
+	// and then dropped without a word.
+	//
+	// The space is safe on its own account: the target is one element of an
+	// argument list and never goes near a shell. What it means is that a name
+	// nobody declared is probably not a name -- and this one was declared.
+	withFakeHerdr(t)
+	withSSHConfig(t, "Host \"my server\"\nHost bot\n")
+	d := New(config.Defaults())
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "my server"}); !reply.OK {
+		t.Errorf("refused a machine written down in ~/.ssh/config: %s", reply.Message)
+	}
+}
+
+func TestATargetThatIsAnInstructionIsRefusedHoweverItArrived(t *testing.T) {
+	// ssh takes options on the command line and -oProxyCommand=... runs one, so
+	// this is not a machine whoever wrote it down. Writing it in ~/.ssh/config
+	// buys no leniency here: the lesser check still refuses it.
+	withFakeHerdr(t)
+	withSSHConfig(t, "Host -oProxyCommand=touch /tmp/hrp-should-not-exist\n")
+	d := New(config.Defaults())
+
+	for _, target := range []string{
+		"-oProxyCommand=touch /tmp/hrp-should-not-exist",
+		"-F/dev/null",
+		"bot\x1b[31m",
+	} {
+		reply := d.dispatch(Command{Cmd: "connect", Host: target})
+		if reply.OK {
+			t.Errorf("connected to %q, which ssh would read as an instruction", target)
+		}
+	}
+	if _, err := os.Stat("/tmp/hrp-should-not-exist"); err == nil {
+		t.Fatal("a ProxyCommand ran")
+	}
+}

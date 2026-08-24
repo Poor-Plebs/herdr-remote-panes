@@ -487,3 +487,62 @@ func TestRunBoundsACommandThatNeverReturns(t *testing.T) {
 		t.Errorf("took %s, want it bounded near %s", elapsed, commandTimeout)
 	}
 }
+
+func TestEveryOpenOptionIsRenderedAsItsFlag(t *testing.T) {
+	// Herdr ignores a flag name it does not know and takes its own default when
+	// one is missing, so a flag that stops being sent fails silently: every
+	// pane simply opens in the default placement, or in the wrong directory,
+	// and nothing says why. That is the reason this is a separate function.
+	//
+	// Checked one option at a time, because the mistake is per-option: three of
+	// these could be dropped without a single test noticing.
+	value := func(args []string, flag string) (string, bool) {
+		for i, a := range args {
+			if a == flag && i+1 < len(args) {
+				return args[i+1], true
+			}
+		}
+		return "", false
+	}
+	present := func(args []string, flag string) bool {
+		for _, a := range args {
+			if a == flag {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, tt := range []struct {
+		flag string
+		set  func(*OpenOptions)
+		want string
+	}{
+		{"--placement", func(o *OpenOptions) { o.Placement = "zoomed" }, "zoomed"},
+		{"--workspace", func(o *OpenOptions) { o.Workspace = "w4A" }, "w4A"},
+		{"--target-pane", func(o *OpenOptions) { o.TargetPane = "w4A:p2" }, "w4A:p2"},
+		{"--direction", func(o *OpenOptions) { o.Direction = "right" }, "right"},
+		{"--cwd", func(o *OpenOptions) { o.Cwd = "/srv/app" }, "/srv/app"},
+	} {
+		t.Run(tt.flag, func(t *testing.T) {
+			opts := OpenOptions{PluginID: "p", Entrypoint: "mirror"}
+			tt.set(&opts)
+			args := openPaneArgs(opts)
+			got, ok := value(args, tt.flag)
+			if !ok {
+				t.Fatalf("%s was set but %v does not carry it", tt.flag, args)
+			}
+			if got != tt.want {
+				t.Errorf("%s = %q, want %q", tt.flag, got, tt.want)
+			}
+
+			// And left out entirely when unset. Sending the flag with an empty
+			// value is not the same as not sending it: Herdr takes it as an
+			// instruction to use "", which is not what a default is.
+			bare := openPaneArgs(OpenOptions{PluginID: "p", Entrypoint: "mirror"})
+			if present(bare, tt.flag) {
+				t.Errorf("%s is sent even when unset: %v", tt.flag, bare)
+			}
+		})
+	}
+}
