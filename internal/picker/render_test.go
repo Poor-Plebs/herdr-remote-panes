@@ -760,3 +760,173 @@ func TestOnlyTheMachinesADigitCanReachAreNumbered(t *testing.T) {
 		t.Error("the tenth machine is not drawn at all")
 	}
 }
+
+func TestEveryStateAMachineCanBeInReadsAsItself(t *testing.T) {
+	// This line is the whole of what the menu tells you about a machine, and
+	// every one of these says something different about what pressing enter or
+	// m will do. Reading the wrong one is not a crash: it is a machine that
+	// looks connected and is not, or looks like plain SSH and is mirrored, and
+	// you find out by pressing something.
+	for _, tt := range []struct {
+		what  string
+		entry Entry
+		want  []string
+		avoid []string
+	}{
+		{
+			what:  "a machine with terminals open on it",
+			entry: Entry{Configured: true, Connected: true, Terminals: 3},
+			want:  []string{"connected", "3 open"},
+		},
+		{
+			what:  "a machine connected with nothing open",
+			entry: Entry{Configured: true, Connected: true},
+			want:  []string{"connected", "ssh"},
+			avoid: []string{"0 open"},
+		},
+		{
+			what:  "a mirrored machine, which counts mirrors and not terminals",
+			entry: Entry{Configured: true, Connected: true, Mirroring: true, Mirrors: 2},
+			want:  []string{"connected", "2 mirrored"},
+			avoid: []string{"open"},
+		},
+		{
+			what:  "a configured machine nobody has connected to",
+			entry: Entry{Configured: true},
+			want:  []string{"not connected", "ssh"},
+		},
+		{
+			what:  "a configured machine set to mirror, before connecting",
+			entry: Entry{Configured: true, Mirroring: true},
+			want:  []string{"not connected", "mirrored"},
+		},
+		{
+			what:  "a machine only ~/.ssh/config knows about",
+			entry: Entry{},
+			want:  []string{"~/.ssh/config", "ssh"},
+			avoid: []string{"not connected"},
+		},
+		{
+			what:  "one that could not be reached",
+			entry: Entry{Configured: true, GaveUp: true, Reason: "host key changed"},
+			want:  []string{"unreachable", "host key changed", "enter to retry"},
+		},
+		{
+			what:  "one that could not be reached, and is set to mirror",
+			entry: Entry{Configured: true, GaveUp: true, Mirroring: true},
+			want:  []string{"unreachable", "mirrored", "enter to retry"},
+		},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			got := plainOf(statusSpans(tt.entry))
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("the line reads %q, without %q", got, want)
+				}
+			}
+			for _, avoid := range tt.avoid {
+				if strings.Contains(got, avoid) {
+					t.Errorf("the line reads %q, which should not mention %q", got, avoid)
+				}
+			}
+		})
+	}
+}
+
+func TestNothingInTheMenuRunsOffTheSide(t *testing.T) {
+	// A popup is whatever size the window is, and every part of the menu has
+	// its own idea of how much room it has. When one of them is wrong the line
+	// wraps, the menu is a column taller than it thought, and the bottom of it
+	// scrolls away.
+	//
+	// Checked through render rather than against each part's own arithmetic:
+	// the hints fit themselves to cols-4 but are drawn at an indent, and a test
+	// that repeated that sum would agree with the code instead of the popup.
+	entries := []Entry{
+		{Target: "bot", Configured: true, Connected: true, Terminals: 3},
+		{Target: "a-machine-with-a-very-long-name-indeed", Configured: true},
+		{Target: "gone", Configured: true, GaveUp: true, Reason: "connection refused"},
+		{Target: "mirrored-one", Configured: true, Connected: true, Mirroring: true, Mirrors: 4},
+	}
+	// From the narrowest popup the layout claims to serve: see nameWidth.
+	for cols := chromeWidth + 8; cols <= 200; cols++ {
+		for _, warning := range []string{"", "could not read ~/.ssh/config"} {
+			for _, selected := range []int{0, len(entries) - 1} {
+				for _, line := range strings.Split(render(entries, selected, cols, 24, warning), "\r\n") {
+					if got := text.Width(visible(line)); got > cols {
+						t.Fatalf("at %d columns a line is %d wide: %q", cols, got, visible(line))
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestTheKeysStaySpelledOutHoweverNarrowItGets(t *testing.T) {
+	// Narrower means shorter hints, never no hints: the menu is the only place
+	// these keys are written down, and one that says nothing is one you have to
+	// already know.
+	for cols := chromeWidth + 8; cols <= 200; cols++ {
+		hints := hintLines(cols)
+		if len(hints) != 2 {
+			t.Fatalf("at %d columns there are %d hint lines, want 2", cols, len(hints))
+		}
+		for i, hint := range hints {
+			if strings.TrimSpace(hint) == "" {
+				t.Errorf("at %d columns hint %d is empty", cols, i)
+			}
+		}
+		// Whatever else goes, the way out stays.
+		if !strings.Contains(hints[1], "q") {
+			t.Errorf("at %d columns nothing says how to leave: %q", cols, hints[1])
+		}
+	}
+}
+
+func TestWhatGoesFirstWhenTheStateWillNotFit(t *testing.T) {
+	// A machine that could not be reached has three things to say and rarely
+	// room for all of them. Which one goes when is a decision, not an accident:
+	// what happened is worth more than why, and why is worth more than a
+	// reminder that enter retries — enter is guessable and a bare "unreachable"
+	// leaves somebody with nothing to do next.
+	//
+	// So these may drop off the end, but never out of order.
+	entry := Entry{Target: "gone", Configured: true, GaveUp: true, Reason: "connection refused"}
+	for cols := chromeWidth + 8; cols <= 200; cols++ {
+		out := visible(render([]Entry{entry}, 0, cols, 24, ""))
+		var (
+			what   = strings.Contains(out, "unreachable")
+			why    = strings.Contains(out, "connection refused")
+			remind = strings.Contains(out, "enter to retry")
+		)
+		if why && !what {
+			t.Fatalf("at %d columns the reason is shown without what happened: %q", cols, out)
+		}
+		if remind && !why {
+			t.Fatalf("at %d columns the reminder is shown without the reason: %q", cols, out)
+		}
+	}
+}
+
+func TestOneEnormousNameDoesNotShoveTheStateColumnAway(t *testing.T) {
+	// Names come from ~/.ssh/config and some of them are a fully qualified
+	// domain and a jump host. Left alone, one of those sets the width of the
+	// name column for every machine in the list, and the states end up so far
+	// to the right that they no longer read as belonging to anything.
+	long := Entry{Target: strings.Repeat("x", 60), Configured: true}
+	longer := Entry{Target: strings.Repeat("x", 160), Configured: true}
+	short := Entry{Target: "bot", Configured: true, Connected: true, Terminals: 1}
+
+	where := func(entries []Entry) int {
+		for _, line := range strings.Split(visible(render(entries, 0, 200, 24, "")), "\r\n") {
+			if i := strings.Index(line, "connected · 1 open"); i >= 0 {
+				return i
+			}
+		}
+		t.Fatalf("no line for %q", short.Target)
+		return 0
+	}
+	if a, b := where([]Entry{long, short}), where([]Entry{longer, short}); a != b {
+		t.Errorf("the state column moves from %d to %d when a name gets longer", a, b)
+	}
+}

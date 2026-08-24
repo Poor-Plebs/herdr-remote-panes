@@ -532,6 +532,12 @@ func widestStatus() int {
 // marker, the number and the state that follows it.
 func nameWidth(cols int) int {
 	width := cols - chromeWidth - widestStatus()
+	// A name shorter than this is not a name, it is a first letter and an
+	// ellipsis, so the column stops shrinking here and the state column gives
+	// up its room instead. Below chromeWidth+8 columns there is no room left to
+	// give and the line wraps: a popup that narrow is narrower than any
+	// terminal anyone runs, and buying it back would cost every ordinary width
+	// a worse layout. TestNothingInTheMenuRunsOffTheSide holds from there up.
 	if width < 8 {
 		width = 8
 	}
