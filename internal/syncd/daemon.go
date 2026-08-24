@@ -236,7 +236,14 @@ func (p *paneIndex) remove(paneID string) {
 	if workspaceID, ok := p.workspaceOf[paneID]; ok {
 		delete(p.workspaceOf, paneID)
 
-		kept := p.panesIn[workspaceID][:0]
+		// A new slice, not a filter in place. Both callers walk a space's
+		// panes and remove the ones they close as they go, and filtering into
+		// the array their range is reading shifted the pane after the removed
+		// one down into a position already passed: the walk skipped it and
+		// looked at a later one twice. A pane skipped by the loop that clears
+		// husks is never revisited -- that clearing happens once, when the
+		// machine is adopted.
+		kept := make([]string, 0, len(p.panesIn[workspaceID]))
 		for _, id := range p.panesIn[workspaceID] {
 			if id != paneID {
 				kept = append(kept, id)

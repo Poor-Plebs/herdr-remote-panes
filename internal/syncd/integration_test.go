@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -972,5 +973,105 @@ func terminalsAreRunning(t *testing.T, held fakeHerdr) {
 		}
 		terminal, _ := pane["terminal_id"].(string)
 		mirrorIsRunning(t, id, terminal)
+	}
+}
+
+// addLeftoverPane puts a pane into the local Herdr wearing a machine's name but
+// with nothing behind it -- what a pane left by a previous session looks like.
+func addLeftoverPane(t *testing.T, workspace, label string) string {
+	t.Helper()
+	statePath := os.Getenv(fakeHerdrState)
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held fakeHerdr
+	if err := json.Unmarshal(raw, &held); err != nil {
+		t.Fatal(err)
+	}
+	held.Next++
+	id := fmt.Sprintf("%s:p%d", workspace, held.Next)
+	held.Panes[id] = map[string]any{
+		"pane_id": id, "tab_id": workspace + "-tab", "workspace_id": workspace,
+		"terminal_id": fmt.Sprintf("term_%d", held.Next), "label": label,
+		"plugin": true,
+	}
+	out, _ := json.Marshal(held)
+	if err := os.WriteFile(statePath, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestEveryLeftoverInASpaceGoesInTheSamePass(t *testing.T) {
+	// Panes wearing a machine's name with nothing behind them are cleared when
+	// the machine is adopted, and only then -- nothing revisits them.
+	//
+	// The loop that clears them walks the space's panes and takes each one it
+	// closes out of the same slice it is walking, and that slice was filtered
+	// in place: closing one shifted the next pane down into a position the
+	// loop had already passed. So it cleared one, skipped the next, and looked
+	// at the one after that twice. What was skipped stayed in the space for
+	// good, wearing a live terminal's name with nothing behind it.
+	held := withFakeHerdr(t)
+	cfg := machineConfig("bot")
+
+	// A space with the machine's name on it, and some panes in it.
+	first := New(cfg)
+	if reply := first.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	first.mu.Lock()
+	workspace := first.hosts["bot"].workspaceID
+	first.mu.Unlock()
+	if workspace == "" {
+		t.Fatal("the machine has no space")
+	}
+
+	// Three, because two is not enough to show it: with two, the one skipped is
+	// the last, and a loop that stops early looks like a loop that works.
+	leftovers := []string{
+		addLeftoverPane(t, workspace, "alpha@bot"),
+		addLeftoverPane(t, workspace, "beta@bot"),
+		addLeftoverPane(t, workspace, "gamma@bot"),
+	}
+
+	// Every pane in the space is a husk once Herdr has restarted, the one the
+	// connection opened included, so every one of them has to go. Naming only
+	// the ones this test added would let the loop skip the other and pass:
+	// which pane gets skipped depends on the order Herdr lists them in, and
+	// that is not fixed.
+	husks := map[string]bool{}
+	for id, pane := range held().Panes {
+		if ws, _ := pane["workspace_id"].(string); ws == workspace {
+			husks[id] = true
+		}
+	}
+	for _, id := range leftovers {
+		if !husks[id] {
+			t.Fatalf("leftover %s is not in the machine's space", id)
+		}
+	}
+
+	// A daemon that has never seen this machine, meeting a space full of names
+	// it does not recognise. Nothing is behind any of them.
+	herdrRestarted(t)
+	adopting := New(cfg)
+	if reply := adopting.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("reconnect: %s", reply.Message)
+	}
+	adopting.reconcileAll()
+
+	after := held()
+	var survived []string
+	for id := range husks {
+		if _, still := after.Panes[id]; still {
+			survived = append(survived, id)
+		}
+	}
+	sort.Strings(survived)
+	if len(survived) > 0 {
+		t.Errorf("%d of %d husks are still there: %v -- nothing will revisit them",
+			len(survived), len(husks), survived)
 	}
 }
