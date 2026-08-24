@@ -13,8 +13,8 @@ import (
 // session where a mirror was meant, or a mirror of nothing.
 
 // recordingSSH puts an ssh on PATH that writes down how it was called and
-// exits, so a test can see which of the three was run.
-func recordingSSH(t *testing.T) (func() string, func() bool) {
+// exits, so a test can see which of the three was run and with what.
+func recordingSSH(t *testing.T) fakeSSH {
 	t.Helper()
 	dir := t.TempDir()
 	log := filepath.Join(dir, "argv")
@@ -29,7 +29,8 @@ func recordingSSH(t *testing.T) (func() string, func() bool) {
 		"  *command\\ -v\\ herdr*) echo /usr/bin/herdr; exit 0;;\n" +
 		"esac\n" +
 		"[ -f " + filepath.Join(state, "panes", "hub", "w1-p2.pid") + " ] && echo yes > " + liveDuring + "\n" +
-		"echo \"$last\" >> " + log + "\n"
+		"echo \"$last\" >> " + log + "\n" +
+		"echo \" $* \" >> " + log + ".argv\n"
 	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -37,17 +38,37 @@ func recordingSSH(t *testing.T) (func() string, func() bool) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", state)
 	t.Setenv("HERDR_SESSION", "hub")
 	t.Setenv("HERDR_PANE_ID", "w1:p2")
-
-	return func() string {
-			raw, err := os.ReadFile(log)
-			if err != nil {
-				return ""
-			}
-			return string(raw)
-		}, func() bool {
+	read := func(path string) string {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return ""
+		}
+		return string(raw)
+	}
+	return fakeSSH{
+		ranOnMachine: func() string { return read(log) },
+		wasLiveDuring: func() bool {
 			_, err := os.Stat(liveDuring)
 			return err == nil
-		}
+		},
+		argv: func() string {
+			t.Helper()
+			lines := strings.Split(strings.TrimSpace(read(log+".argv")), "\n")
+			if lines[0] == "" {
+				t.Fatal("ssh was never called")
+			}
+			return lines[len(lines)-1]
+		},
+	}
+}
+
+// fakeSSH is the three ways a test can ask what the pane did: what it ran on
+// the machine, whether the pane read as live while it ran, and the whole argv
+// for the parts that are ssh's own flags.
+type fakeSSH struct {
+	ranOnMachine  func() string
+	wasLiveDuring func() bool
+	argv          func() string
 }
 
 func TestThePaneBecomesWhatTheDaemonToldItToBe(t *testing.T) {
@@ -62,7 +83,7 @@ func TestThePaneBecomesWhatTheDaemonToldItToBe(t *testing.T) {
 		{"observe", "term_7", "terminal session observe term_7", "a read-only stream of it"},
 	} {
 		t.Run(tt.mode+": "+tt.what, func(t *testing.T) {
-			called, _ := recordingSSH(t)
+			ssh := recordingSSH(t)
 			t.Setenv(EnvTarget, "bot")
 			t.Setenv(EnvMode, tt.mode)
 			t.Setenv(EnvTerminal, tt.terminal)
@@ -71,7 +92,7 @@ func TestThePaneBecomesWhatTheDaemonToldItToBe(t *testing.T) {
 				t.Fatalf("bridge: %v", err)
 			}
 
-			got := called()
+			got := ssh.ranOnMachine()
 			if tt.wants == "" {
 				// A plain SSH pane runs no command on the machine at all,
 				// which is what lets it work against a machine with no Herdr.
@@ -92,7 +113,7 @@ func TestAPaneToldNothingUsefulSaysSo(t *testing.T) {
 	// here rather than anything a user did -- and a pane that exits without
 	// saying why is a pane nobody can debug.
 	t.Run("no machine", func(t *testing.T) {
-		_, _ = recordingSSH(t)
+		recordingSSH(t)
 		t.Setenv(EnvTarget, "")
 		t.Setenv(EnvMode, "ssh")
 
@@ -107,7 +128,7 @@ func TestAPaneToldNothingUsefulSaysSo(t *testing.T) {
 
 	t.Run("no terminal to mirror", func(t *testing.T) {
 		// Only mirroring needs one: a plain SSH pane has no remote terminal.
-		_, _ = recordingSSH(t)
+		recordingSSH(t)
 		t.Setenv(EnvTarget, "bot")
 		t.Setenv(EnvMode, "attach")
 		t.Setenv(EnvTerminal, "")
@@ -126,7 +147,7 @@ func TestABridgeSaysItIsRunningWhileItRuns(t *testing.T) {
 	// The daemon tells a live mirror from a pane Herdr restored with nothing
 	// behind it by this mark, and that decides whether the pane is left alone
 	// or replaced.
-	_, wasLiveDuring := recordingSSH(t)
+	ssh := recordingSSH(t)
 	t.Setenv(EnvTarget, "bot")
 	t.Setenv(EnvMode, "ssh")
 
@@ -136,7 +157,7 @@ func TestABridgeSaysItIsRunningWhileItRuns(t *testing.T) {
 	if err := bridge(); err != nil {
 		t.Fatalf("bridge: %v", err)
 	}
-	if !wasLiveDuring() {
+	if !ssh.wasLiveDuring() {
 		t.Error("the pane did not read as live while its bridge was running, " +
 			"so the daemon would take it for a pane with nothing behind it and replace it")
 	}
@@ -201,4 +222,52 @@ func exitingSSH(t *testing.T, code string) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	t.Setenv("HERDR_SESSION", "hub")
 	t.Setenv("HERDR_PANE_ID", "w1:p2")
+}
+
+func TestOnlyTheModesThatNeedATerminalAskForOne(t *testing.T) {
+	// A pane that lets you type needs a pty on the far side, and one that only
+	// watches must not take one -- an observe holding a pty would be claiming
+	// a terminal it never uses. Losing either is invisible from here and
+	// obvious to whoever is sitting in the pane: keystrokes that go nowhere.
+	//
+	// It is also what decides whether ssh may ask for anything. A pane can
+	// answer a passphrase prompt; a poll cannot, and one that waits for an
+	// answer nobody can give hangs the machine's turn.
+	for _, tt := range []struct {
+		mode    string
+		wantTTY bool
+		what    string
+	}{
+		{"ssh", true, "a login shell is typed into"},
+		{"attach", true, "an attached terminal is typed into"},
+		{"observe", false, "a read-only stream is not"},
+	} {
+		t.Run(tt.mode+": "+tt.what, func(t *testing.T) {
+			ssh := recordingSSH(t)
+			t.Setenv(EnvTarget, "bot")
+			t.Setenv(EnvMode, tt.mode)
+			t.Setenv(EnvTerminal, "term_1")
+
+			if err := bridge(); err != nil {
+				t.Fatalf("bridge: %v", err)
+			}
+			// The whole argv, since the flag is on ssh rather than in the
+			// command it runs.
+			argv := ssh.argv()
+			gotTTY := strings.Contains(argv, " -tt ")
+			if gotTTY != tt.wantTTY {
+				t.Errorf("%s mode ran ssh %s a terminal:\n  %s",
+					tt.mode, map[bool]string{true: "with", false: "without"}[gotTTY], argv)
+			}
+			// And the two go together: asking for a terminal means being able
+			// to answer a prompt on it.
+			wantBatch := "BatchMode=yes"
+			if tt.wantTTY {
+				wantBatch = "BatchMode=no"
+			}
+			if !strings.Contains(argv, wantBatch) {
+				t.Errorf("%s mode ran ssh without %s:\n  %s", tt.mode, wantBatch, argv)
+			}
+		})
+	}
 }
