@@ -32,6 +32,10 @@ import (
 // errResized ends a stream so the next one can negotiate the new pane size.
 var errResized = errors.New("pane resized")
 
+// errStreamAbandoned ends a stream this side stopped reading, so it is retried
+// rather than read as the remote terminal having gone.
+var errStreamAbandoned = errors.New("stopped reading the stream")
+
 // Env var names the daemon sets on each mirror pane.
 const (
 	EnvTarget   = "HRP_TARGET"
@@ -304,6 +308,7 @@ func streamOnce(client *remote.Client, terminal string, cols, rows int, winch <-
 	frames := bufio.NewScanner(stdout)
 	frames.Buffer(make([]byte, 0, 64*1024), maxFrameBytes)
 	sawFrame := false
+	abandoned := false
 	for frames.Scan() {
 		raw, ok := decodeFrame(frames.Bytes())
 		if !ok {
@@ -311,6 +316,8 @@ func streamOnce(client *remote.Client, terminal string, cols, rows int, winch <-
 		}
 		sawFrame = true
 		if _, err := os.Stdout.Write(raw); err != nil {
+			// Nowhere left to put it: the pane has gone.
+			abandoned = true
 			break
 		}
 	}
@@ -319,9 +326,25 @@ func streamOnce(client *remote.Client, terminal string, cols, rows int, winch <-
 		// a closed terminal would quietly shut the pane. Reconnecting is the
 		// right response: the stream resumes from the terminal's current state.
 		log.Printf("stream from %s: %v", client.Target, err)
+		abandoned = true
+	}
+
+	// Waiting on a stream this has stopped reading never returns. The far side
+	// is still sending -- that is what an oversized frame means -- and once the
+	// pipe fills it blocks, so the process never exits and this never gets
+	// past the wait. The pane then sits there for ever: no output, no
+	// reconnect, and alive as far as anything watching can tell. Giving up on a
+	// stream means ending it, not waiting politely for it to finish.
+	if abandoned {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
 		close(done)
 		_ = cmd.Wait()
-		return err
+		if err := frames.Err(); err != nil {
+			return err
+		}
+		return errStreamAbandoned
 	}
 	close(done)
 
