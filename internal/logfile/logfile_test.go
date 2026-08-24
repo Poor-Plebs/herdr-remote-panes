@@ -133,3 +133,159 @@ func TestWritingAfterCloseIsHarmless(t *testing.T) {
 		t.Errorf("writing after close: %v", err)
 	}
 }
+
+func TestTheNewestMessageIsAlwaysInTheLogItself(t *testing.T) {
+	// The reason to open daemon.log is almost always to see what just
+	// happened. Rolling over must therefore leave the newest message in the
+	// log rather than in the generation beside it -- a rotation that got that
+	// backwards would keep the size right, keep the file count right, and be
+	// useless.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "daemon.log")
+	f, err := Open(path, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	for _, line := range []string{"first\n", "second\n", "third\n", "fourth\n"} {
+		if _, err := f.Write([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	current, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(current), "fourth") {
+		t.Errorf("the newest message is not in the log: %q", current)
+	}
+
+	// And what was rolled out of it is the older half, not the newer.
+	previous, err := os.ReadFile(path + ".1")
+	if err != nil {
+		t.Fatalf("no previous generation was kept: %v", err)
+	}
+	if strings.Contains(string(previous), "fourth") {
+		t.Errorf("the newest message was rolled away into %q", previous)
+	}
+	if !strings.Contains(string(previous), "second") && !strings.Contains(string(previous), "third") {
+		t.Errorf("the generation kept holds neither of the messages before it: %q", previous)
+	}
+}
+
+func TestALogExactlyAtItsBoundIsNotRolledOver(t *testing.T) {
+	// Rolling over one byte early costs a generation for nothing: the message
+	// that fits exactly is thrown into the previous file and the log starts
+	// again empty. The bound is what the log may reach, not what it must stay
+	// under.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "daemon.log")
+	f, err := Open(path, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write([]byte("0123456789")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + ".1"); err == nil {
+		t.Error("a log filled exactly to its bound was rolled over")
+	}
+
+	// One more byte is over it, and that does roll.
+	if _, err := f.Write([]byte("A")); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := os.ReadFile(path + ".1")
+	if err != nil {
+		t.Fatalf("going over the bound did not roll the log over: %v", err)
+	}
+	if !strings.Contains(string(previous), "0123456789") {
+		t.Errorf("the generation kept holds %q, not what was in the log", previous)
+	}
+	current, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(current) != "A" {
+		t.Errorf("the log holds %q after rolling, want just the message that went over", current)
+	}
+}
+
+func TestAMessageBiggerThanTheWholeLogIsStillWrittenWhole(t *testing.T) {
+	// Nothing this writes is anywhere near the bound, but the answer matters if
+	// one ever is: a message that will not fit is written anyway rather than
+	// cut in half or dropped. Half a failure in a log reads as a different
+	// failure, and the size is only ever a guard against growing without end.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "daemon.log")
+	f, err := Open(path, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	long := strings.Repeat("x", 40) + "\n"
+	n, err := f.Write([]byte(long))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != len(long) {
+		t.Errorf("wrote %d bytes of %d", n, len(long))
+	}
+	current, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(current) != long {
+		t.Errorf("the log holds %d bytes, want the message whole (%d)", len(current), len(long))
+	}
+}
+
+func TestReopeningRemembersHowBigTheLogAlreadyIs(t *testing.T) {
+	// The daemon reopens this every time Herdr starts, and opens it for append,
+	// so a log that came back thinking it was empty would grow by its whole
+	// bound again before rolling. Restart often enough and "rolls over rather
+	// than growing without end" stops being true, one restart at a time.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "daemon.log")
+	const max = 64
+
+	// Most of the way to the bound, then closed as a restart would.
+	first, err := Open(path, max)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.Write([]byte(strings.Repeat("a", max-8) + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reopened, and given more than the little that is left.
+	second, err := Open(path, max)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	if _, err := second.Write([]byte(strings.Repeat("b", 16) + "\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() > max {
+		t.Errorf("after reopening, the log is %d bytes against a bound of %d: "+
+			"it came back thinking it was empty", info.Size(), max)
+	}
+	// It rolled rather than simply refusing the write.
+	if _, err := os.Stat(path + ".1"); err != nil {
+		t.Errorf("the log went over its bound without rolling over: %v", err)
+	}
+}
