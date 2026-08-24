@@ -576,3 +576,68 @@ func TestAMachineNameOnThatScreenIsMadeSafe(t *testing.T) {
 		t.Errorf("the name broke the line it was drawn on:\n%q", drawn)
 	}
 }
+
+func TestADigitPicksTheMachineItIsBeside(t *testing.T) {
+	// The menu numbers nine machines and offers "1-9 pick". A digit that picks
+	// the wrong one connects you somewhere you did not ask for, and the
+	// machines move about as they connect and disconnect, so the number under a
+	// digit is not the same one it was a moment ago.
+	for _, tt := range []struct {
+		pressed key
+		count   int
+		want    int
+		ok      bool
+		what    string
+	}{
+		{'1', 5, 0, true, "the first"},
+		{'5', 5, 4, true, "the last of five"},
+		{'9', 12, 8, true, "the ninth, which is as far as digits go"},
+		{'6', 5, 0, false, "past the end of a short list"},
+		{'0', 5, 0, false, "zero, which numbers nothing"},
+		{'a', 5, 0, false, "a letter that is not a digit"},
+		// ':' is '1' plus nine, so subtracting lands exactly on the tenth
+		// machine. Nothing in the menu offers it and it must not connect.
+		{':', 12, 0, false, "the key just past nine"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			got, ok := planDigitChoice(tt.pressed, tt.count)
+			if ok != tt.ok {
+				t.Fatalf("pressing %q with %d machines picked=%v, want %v",
+					rune(tt.pressed), tt.count, ok, tt.ok)
+			}
+			if ok && got != tt.want {
+				t.Errorf("pressing %q picked machine %d, want %d", rune(tt.pressed), got, tt.want)
+			}
+		})
+	}
+
+	// Every digit the menu offers reaches a machine when there are enough.
+	for digit := '1'; digit <= '9'; digit++ {
+		if _, ok := planDigitChoice(key(digit), 9); !ok {
+			t.Errorf("%q is offered by the menu and picks nothing", digit)
+		}
+	}
+}
+
+func TestTheCursorStaysOnTheListWhenItShrinks(t *testing.T) {
+	// Disconnecting a machine can take it out of the list. A cursor left past
+	// the end draws nothing and moves nowhere: the menu looks frozen.
+	if got := planSelectionAfterChange(4, 2); got != 0 {
+		t.Errorf("with the cursor at 4 and two machines left it is at %d, want the top", got)
+	}
+	if got := planSelectionAfterChange(1, 5); got != 1 {
+		t.Errorf("a cursor still on the list moved to %d", got)
+	}
+	// The last machine is on the list; the one after it is not.
+	if got := planSelectionAfterChange(4, 5); got != 4 {
+		t.Errorf("the last machine is a fine place to be, got %d", got)
+	}
+	// Exactly one past the end, which is where a cursor lands when the machine
+	// it was on is the one that went.
+	if got := planSelectionAfterChange(5, 5); got != 0 {
+		t.Errorf("a cursor one past the end stayed at %d, which draws nothing", got)
+	}
+	if got := planSelectionAfterChange(0, 0); got != 0 {
+		t.Errorf("with nothing left the cursor is at %d", got)
+	}
+}

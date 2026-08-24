@@ -108,9 +108,7 @@ func Run(connect Connect, setMode SetMode, disconnect Disconnect) error {
 				readKey()
 			}
 			entries, warning = collect()
-			if selected >= len(entries) {
-				selected = 0
-			}
+			selected = planSelectionAfterChange(selected, len(entries))
 
 		case keyToggle:
 			// Toggling in place, rather than closing the menu, so the change
@@ -126,16 +124,41 @@ func Run(connect Connect, setMode SetMode, disconnect Disconnect) error {
 				readKey()
 			}
 			entries, warning = collect()
-			if selected >= len(entries) {
-				selected = 0
-			}
+			selected = planSelectionAfterChange(selected, len(entries))
 		default:
 			// Digits jump straight to an entry.
-			if index := int(key - '1'); index >= 0 && index < len(entries) && index < 9 {
+			if index, ok := planDigitChoice(key, len(entries)); ok {
 				return choose(entries[index], connect)
 			}
 		}
 	}
+}
+
+// planDigitChoice says which machine a digit picks, if any.
+//
+// The menu offers "1-9 pick", and those are the only nine it can offer: there
+// is no key for the tenth. A digit past the end of the list picks nothing
+// rather than the wrong machine, which for a key that connects somewhere
+// matters more than it looks -- the machines move about as they connect and
+// disconnect, so the number under a digit is not the same one it was.
+func planDigitChoice(pressed key, count int) (int, bool) {
+	index := int(pressed - '1')
+	if index < 0 || index >= count || index >= 9 {
+		return 0, false
+	}
+	return index, true
+}
+
+// planSelectionAfterChange keeps the cursor on the list after it changes.
+//
+// Disconnecting a machine can take it out of the list, and a cursor left past
+// the end draws nothing and moves nowhere. Back to the top is the one position
+// that is always there.
+func planSelectionAfterChange(selected, count int) int {
+	if selected >= count {
+		return 0
+	}
+	return selected
 }
 
 func choose(entry Entry, connect Connect) error {
