@@ -1222,8 +1222,6 @@ func TestPollingAndCommandsAtTheSameTimeIsSafe(t *testing.T) {
 	// this.
 	//
 	// Remove the skip to reproduce.
-	t.Skip("known data race between the poll and the command path; see the comment above")
-
 	held := withFakeHerdr(t)
 	cfg := config.Defaults()
 	cfg.Hosts = []config.Host{{Target: "bot"}, {Target: "prod"}, {Target: "ci"}}
@@ -1291,25 +1289,39 @@ func TestPollingAndCommandsAtTheSameTimeIsSafe(t *testing.T) {
 	close(stop)
 	wg.Wait()
 
-	// Still coherent afterwards: every machine either answers or does not, and
-	// the panes that are left belong to machines that are still connected.
+	// Still working afterwards, and still coherent.
+	//
+	// Not "every pane belongs to a machine that is still connected": the last
+	// commands above disconnect two of them, and a pane outliving its machine's
+	// entry by a moment is the ordinary way that happens rather than damage.
+	// What must hold is that nothing is left wearing a name that was never a
+	// machine here, which is what torn state would look like.
 	status := d.status()
 	if len(status) == 0 {
 		t.Fatal("no machines left at all")
 	}
-	connected := map[string]bool{}
-	for _, h := range status {
-		connected[h.Label] = h.Connected
-	}
+	configured := map[string]bool{"bot": true, "prod": true, "ci": true}
 	for id, pane := range held().Panes {
 		label, _ := pane["label"].(string)
 		at := strings.LastIndex(label, "@")
 		if at < 0 {
 			continue
 		}
-		machine := label[at+1:]
-		if _, known := connected[machine]; !known {
-			t.Errorf("pane %s is named for %q, which is not a machine this knows about", id, machine)
+		if machine := label[at+1:]; !configured[machine] {
+			t.Errorf("pane %s is named for %q, which was never one of these machines", id, machine)
 		}
+	}
+
+	// And it still answers, which is the other half of what a lock can get
+	// wrong: a deadlock does not race, it simply stops.
+	done := make(chan Reply, 1)
+	go func() { done <- d.dispatch(Command{Cmd: "status"}) }()
+	select {
+	case reply := <-done:
+		if !reply.OK {
+			t.Errorf("status after all that: %s", reply.Message)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the daemon stopped answering: something is holding the lock")
 	}
 }

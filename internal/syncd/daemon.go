@@ -630,9 +630,15 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 // openRemotePane creates a new pane on the remote host. The reconcile that
 // follows mirrors it back, so opening a pane "on a machine" is one action.
 func (d *Daemon) openRemotePane(host config.Host, placement string, focus bool) error {
+	// Held for the whole of the work, not just the lookup. Everything below
+	// reads and writes this machine's own bookkeeping, and the reconcile loop
+	// does the same to the same fields under this same lock -- so taking it
+	// only long enough to find the machine and then working on it unlocked was
+	// two goroutines in one hostSync. Which is what it was.
 	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	state, ok := d.hosts[host.Target]
-	d.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("%s is not connected", host.Target)
 	}
@@ -665,6 +671,7 @@ func (d *Daemon) openRemotePane(host config.Host, placement string, focus bool) 
 // rememberPlacement records how the mirror of a just-created remote terminal
 // should be placed here. The remote reply carries the terminal id, so the
 // mirror opened by the next pass can be matched back to this request.
+// Callers hold d.mu.
 func (d *Daemon) rememberPlacement(state *hostSync, result json.RawMessage, placement string, focus bool) {
 	if placement == "" && !focus {
 		return
@@ -673,8 +680,6 @@ func (d *Daemon) rememberPlacement(state *hostSync, result json.RawMessage, plac
 	if err != nil || made.RootPane.TerminalID == "" {
 		return
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
 	if placement != "" {
 		state.pendingPlacement[made.RootPane.TerminalID] = placement
 	}
@@ -840,6 +845,7 @@ func (d *Daemon) hostForWorkspaceLabel(label string) (config.Host, bool) {
 
 // openShellPane opens a plain SSH pane for a host that is not running Herdr.
 // There is no remote pane to mirror, so the pane is the session itself.
+// Callers hold d.mu: everything here is this machine's own bookkeeping.
 func (d *Daemon) openShellPane(state *hostSync, placement string, focus bool) error {
 	index := newPaneIndex(nil)
 	if local, err := herdrcli.PaneList(); err == nil {
@@ -853,14 +859,12 @@ func (d *Daemon) openShellPane(state *hostSync, placement string, focus bool) er
 
 	// The names already on this machine's terminals, so the new one does not
 	// repeat any of them.
-	d.mu.Lock()
 	taken := make(map[string]bool, len(state.shellPanes))
 	for paneID := range state.shellPanes {
 		if existing := state.labels[paneID]; existing != "" {
 			taken[existing] = true
 		}
 	}
-	d.mu.Unlock()
 
 	name := planShellName(taken, func(candidate string) string {
 		return d.label(state.host, herdrcli.Pane{}, candidate)
@@ -900,9 +904,7 @@ func (d *Daemon) openShellPane(state *hostSync, placement string, focus bool) er
 		return err
 	}
 	index.add(pane)
-	d.mu.Lock()
 	state.shellPanes[pane.PaneID] = true
-	d.mu.Unlock()
 	d.retitle(state, pane.PaneID, label)
 	d.retireRootPane(workspaceID, index)
 	return nil
@@ -1206,16 +1208,18 @@ func (d *Daemon) disconnect(target string) error {
 // there is how you know the connection is live, and it is where terminals
 // opened from here will land.
 func (d *Daemon) ensureRemotePresence(host config.Host) (bool, error) {
+	// As openRemotePane: held across the work rather than the lookup.
 	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	state, ok := d.hosts[host.Target]
-	d.mu.Unlock()
 	if !ok {
 		return false, fmt.Errorf("%s is not connected", host.Target)
 	}
 
 	if state.sshOnly {
 		// Nothing to create over there; a plain SSH machine has no Herdr.
-		if !planNeedsTerminal(d.liveTerminalCount(host.Target)) {
+		if !planNeedsTerminal(d.liveTerminalCountLocked(host.Target)) {
 			return false, nil
 		}
 		// Nothing asked for a placement here: this is a machine being
@@ -1231,7 +1235,7 @@ func (d *Daemon) ensureRemotePresence(host config.Host) (bool, error) {
 		// The new space comes with a pane, which mirrors back here.
 		return true, nil
 	}
-	if !planNeedsTerminal(d.liveTerminalCount(host.Target)) {
+	if !planNeedsTerminal(d.liveTerminalCountLocked(host.Target)) {
 		return false, nil
 	}
 	// The space is there but empty of anything to mirror.
@@ -1239,8 +1243,11 @@ func (d *Daemon) ensureRemotePresence(host config.Host) (bool, error) {
 	return true, err
 }
 
-// liveTerminalCount reports how many of a machine's terminals are still open.
-func (d *Daemon) liveTerminalCount(target string) int {
+// liveTerminalCountLocked reports how many of a machine's terminals are still
+// open. Callers hold d.mu: it took the lock itself until both of its callers
+// began holding it, at which point taking it again would have been a deadlock
+// rather than a guard.
+func (d *Daemon) liveTerminalCountLocked(target string) int {
 	// Counted from the panes Herdr actually has, rather than from bookkeeping:
 	// a terminal closed a moment ago may not have been reconciled away yet,
 	// and a stale count is what makes a machine impossible to reopen.
@@ -1254,8 +1261,6 @@ func (d *Daemon) liveTerminalCount(target string) int {
 		alive[pane.PaneID] = true
 	}
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
 	state, ok := d.hosts[target]
 	if !ok {
 		return 0
@@ -1557,11 +1562,17 @@ func (d *Daemon) reconcileOnce() {
 		state.reopenShell = false
 		d.mu.Unlock()
 
+		// Capturing a stray opens a terminal on the machine, which takes the
+		// lock itself; reopening one wants it held, as every other caller of
+		// openShellPane now does.
 		d.captureStrayPanes(state, strays)
 		if reopen {
 			// Never focused: a link coming back is not a request to go
 			// there, and somebody may be working elsewhere.
-			if err := d.openShellPane(state, "", false); err != nil {
+			d.mu.Lock()
+			err := d.openShellPane(state, "", false)
+			d.mu.Unlock()
+			if err != nil {
 				log.Printf("reopen terminal on %s: %v", state.host.Target, err)
 			}
 		}
