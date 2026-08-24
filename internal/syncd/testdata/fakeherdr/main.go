@@ -233,6 +233,25 @@ func main() {
 		save()
 		ok(map[string]any{"pane_id": id})
 
+	case strings.HasPrefix(join, "pane report-agent"), strings.HasPrefix(join, "pane release-agent"):
+		// What the sidebar would show for this pane. Recorded rather than
+		// discarded, because an agent running on another machine appearing here
+		// under its own name and state is the whole of what this reports.
+		id := args[2]
+		pane, live := state.Panes[id]
+		if !live {
+			fail("pane_not_found", "pane "+id+" not found")
+		}
+		if args[1] == "release-agent" {
+			delete(pane, "agent")
+			delete(pane, "agent_status")
+		} else {
+			pane["agent"] = flag("--agent")
+			pane["agent_status"] = flag("--state")
+		}
+		save()
+		ok(map[string]any{"pane_id": id})
+
 	case strings.HasPrefix(join, "pane rename"):
 		id := args[2]
 		if _, live := state.Panes[id]; !live {

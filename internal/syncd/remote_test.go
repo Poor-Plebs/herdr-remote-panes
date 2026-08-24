@@ -81,6 +81,11 @@ func withRemoteHerdrRunning(t *testing.T, up bool) (func() fakeHerdr, string) {
 // addPaneOn puts a pane into a machine's own state, as work started there does:
 // a space of its own, nothing to do with the one shared with this machine.
 func addPaneOn(t *testing.T, statePath, workspace, title string) string {
+	return addAgentPaneOn(t, statePath, workspace, title, "", "")
+}
+
+// addAgentPaneOn is addPaneOn for a terminal with an agent running in it.
+func addAgentPaneOn(t *testing.T, statePath, workspace, title, agent, status string) string {
 	t.Helper()
 	raw, err := os.ReadFile(statePath)
 	if err != nil {
@@ -102,6 +107,8 @@ func addPaneOn(t *testing.T, statePath, workspace, title string) string {
 		"pane_id": id, "tab_id": workspace + "-tab", "workspace_id": workspace,
 		"terminal_id": fmt.Sprintf("term_%d", held.Next), "label": "",
 		"terminal_title_stripped": title,
+		"agent":                   agent,
+		"agent_status":            status,
 	}
 	out, _ := json.Marshal(held)
 	if err := os.WriteFile(statePath, out, 0o600); err != nil {
@@ -706,4 +713,114 @@ func TestTogglingMirroringOnAndOffFromTheMenu(t *testing.T) {
 			t.Errorf("the machine has %d terminals, want the %d it had", got, remoteBefore)
 		}
 	})
+}
+
+func TestAnAgentOnTheMachineAppearsHereAsItself(t *testing.T) {
+	// The point of mirroring an agent rather than merely its output: something
+	// running on another machine turns up in the sidebar under its own name and
+	// state, rather than as a bare SSH pane you have to remember the contents
+	// of. When it finishes, the pane stops claiming it.
+	here := withFakeHerdr(t)
+	there, machineState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.Scope = "all"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	// A terminal on the machine with an agent working in it.
+	addAgentPaneOn(t, machineState, "w-theirs", "claude", "claude", "working")
+	for i := 0; i < 3; i++ {
+		d.reconcileAll()
+	}
+
+	mirror := agentPaneHere(t, here(), "claude")
+	if mirror == nil {
+		t.Fatalf("no pane here is showing the agent: %+v", here().Panes)
+	}
+	if got, _ := mirror["agent_status"].(string); got != "working" {
+		t.Errorf("the agent shows as %q here, want it working", got)
+	}
+
+	// It finishes: the pane stops claiming an agent rather than showing a
+	// stale one for the rest of the session.
+	for id, pane := range there().Panes {
+		if agent, _ := pane["agent"].(string); agent == "claude" {
+			clearAgentOn(t, machineState, id)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		d.reconcileAll()
+	}
+	if mirror := agentPaneHere(t, here(), "claude"); mirror != nil {
+		t.Errorf("a pane here is still showing an agent that has finished: %+v", mirror)
+	}
+}
+
+// agentPaneHere finds the local pane reporting a given agent.
+func agentPaneHere(t *testing.T, held fakeHerdr, agent string) map[string]any {
+	t.Helper()
+	for _, pane := range held.Panes {
+		if got, _ := pane["agent"].(string); got == agent {
+			return pane
+		}
+	}
+	return nil
+}
+
+// clearAgentOn ends the agent running in a terminal on the machine.
+func clearAgentOn(t *testing.T, statePath, paneID string) {
+	t.Helper()
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held fakeHerdr
+	if err := json.Unmarshal(raw, &held); err != nil {
+		t.Fatal(err)
+	}
+	delete(held.Panes[paneID], "agent")
+	delete(held.Panes[paneID], "agent_status")
+	out, _ := json.Marshal(held)
+	if err := os.WriteFile(statePath, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAnAgentNameFromAnotherMachineIsMadeSafe(t *testing.T) {
+	// The agent's name comes from the far machine and reaches the sidebar
+	// through report-agent rather than through the pane's label. That is a
+	// second route for the same text, and it was left unguarded when the first
+	// one was fixed.
+	here := withFakeHerdr(t)
+	_, machineState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.Scope = "all"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	addAgentPaneOn(t, machineState, "w-theirs", "shell",
+		"\x1b[31mclaude\x1b[0m\nrest", "working")
+	for i := 0; i < 3; i++ {
+		d.reconcileAll()
+	}
+
+	for _, pane := range here().Panes {
+		agent, _ := pane["agent"].(string)
+		if agent == "" {
+			continue
+		}
+		if strings.ContainsAny(agent, "\n\r") || strings.ContainsRune(agent, 0x1b) {
+			t.Errorf("the agent reads as %q here, which steers the terminal", agent)
+		}
+	}
 }
