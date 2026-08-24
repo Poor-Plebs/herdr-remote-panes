@@ -87,7 +87,12 @@ func main() {
 	muts, skipped, err := mutationsIn(work, pkg, only, covered)
 	check(err)
 	if len(muts) == 0 {
-		fmt.Println("nothing to mutate: no covered lines in that package")
+		if len(only) > 0 {
+			fmt.Printf("nothing to mutate: %s has no covered lines, or no file of that name\n",
+				strings.Join(os.Args[2:], ", "))
+		} else {
+			fmt.Println("nothing to mutate: no covered lines in that package")
+		}
 		return
 	}
 	fmt.Printf("%d mutations on covered lines (%d skipped as unreached)\n\n", len(muts), skipped)
@@ -251,8 +256,13 @@ func mutationsInFile(path, rel string) ([]mutation, error) {
 // they reached, by file.
 func coveredLines(work, pkg string) (map[string]map[int]bool, error) {
 	profile := filepath.Join(work, "mutants.cover")
-	if _, err := run(work, "go", "test", pkg, "-count=1", "-coverprofile", profile); err != nil {
-		return nil, fmt.Errorf("the package's own tests do not pass, so nothing can be learned from breaking it: %w", err)
+	out, err := run(work, "go", "test", pkg, "-count=1", "-coverprofile", profile)
+	if err != nil {
+		// What go test said, not just that it failed. A package that does not
+		// exist and a package whose tests are red are the same exit status and
+		// very different problems, and being told the wrong one sends somebody
+		// looking at tests that are fine.
+		return nil, fmt.Errorf("cannot start from a package whose tests do not pass:\n%s", firstLines(out, 5))
 	}
 	raw, err := os.ReadFile(profile)
 	if err != nil {
@@ -345,6 +355,15 @@ func run(dir, name string, args ...string) ([]byte, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	return cmd.CombinedOutput()
+}
+
+// firstLines keeps a command's output to something readable.
+func firstLines(out []byte, n int) string {
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) > n {
+		lines = append(lines[:n], "...")
+	}
+	return "  " + strings.Join(lines, "\n  ")
 }
 
 func check(err error) {
