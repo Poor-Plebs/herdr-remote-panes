@@ -640,3 +640,122 @@ func TestNewTabIsATabEvenWhereTerminalsNormallySplit(t *testing.T) {
 		}
 	})
 }
+
+func TestADisabledMachineIsLeftAlone(t *testing.T) {
+	// "Skip it without removing it" is what the settings table promises, and
+	// the point of the setting is to stop connecting to a machine you are not
+	// using without losing the rest of what you wrote about it. A version of
+	// this once did not disable anything.
+	held := withFakeHerdr(t)
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{
+		{Target: "bot"},
+		{Target: "ci", Disabled: true},
+	}
+	d := New(cfg)
+
+	// Reconnecting everything is the path that decides this. It brings back
+	// what a machine had rather than opening anything new, so the check is
+	// which machines it touched.
+	reply := d.dispatch(Command{Cmd: "connect"})
+	if !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	if strings.Contains(reply.Message, "ci") {
+		t.Errorf("reconnecting reported %q, which includes the disabled machine", reply.Message)
+	}
+	d.reconcileAll()
+
+	if got := panesFor(held(), "ci"); got != 0 {
+		t.Errorf("the disabled machine got %d terminals", got)
+	}
+	// The one that is not disabled is reachable as usual.
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect bot: %s", reply.Message)
+	}
+	if got := panesFor(held(), "bot"); got != 1 {
+		t.Errorf("the machine that is not disabled got %d terminals, want 1", got)
+	}
+	for _, workspace := range held().Workspaces {
+		if label, _ := workspace["label"].(string); strings.Contains(label, "ci") {
+			t.Errorf("the disabled machine was given a space named %q", label)
+		}
+	}
+	for _, host := range d.dispatch(Command{Cmd: "status"}).Hosts {
+		if host.Target == "ci" {
+			t.Errorf("the disabled machine is being tracked: %+v", host)
+		}
+	}
+}
+
+func TestOneSpaceForEveryMachineWhenThatIsAsked(t *testing.T) {
+	// "Put every machine in one space instead" -- for somebody who would rather
+	// have one place with everything in it than a space per machine.
+	held := withFakeHerdr(t)
+	cfg := config.Defaults()
+	cfg.Workspace = "remote"
+	cfg.Hosts = []config.Host{{Target: "bot"}, {Target: "prod"}}
+	d := New(cfg)
+
+	for _, target := range []string{"bot", "prod"} {
+		if reply := d.dispatch(Command{Cmd: "connect", Host: target}); !reply.OK {
+			t.Fatalf("connect %s: %s", target, reply.Message)
+		}
+	}
+	d.reconcileAll()
+
+	herdr := held()
+	if len(herdr.Workspaces) != 1 {
+		labels := []string{}
+		for _, workspace := range herdr.Workspaces {
+			label, _ := workspace["label"].(string)
+			labels = append(labels, label)
+		}
+		t.Fatalf("two machines produced %d spaces (%q), want one", len(herdr.Workspaces), labels)
+	}
+	// Named as given, rather than after a machine: it holds several.
+	for _, workspace := range herdr.Workspaces {
+		if label, _ := workspace["label"].(string); label != "remote" {
+			t.Errorf("the shared space is named %q, want %q", label, "remote")
+		}
+	}
+	// And both machines' terminals are in it.
+	for _, target := range []string{"bot", "prod"} {
+		if got := panesFor(herdr, target); got != 1 {
+			t.Errorf("%s has %d terminals in the shared space, want 1", target, got)
+		}
+	}
+}
+
+func TestAMachinesLabelIsWhatItIsCalledHere(t *testing.T) {
+	// "How it is named here" -- for a machine whose ssh target is an address or
+	// a long name nobody wants to read in a sidebar.
+	held := withFakeHerdr(t)
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{{Target: "10.0.0.7", Label: "build box"}}
+	d := New(cfg)
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "10.0.0.7"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	herdr := held()
+	for _, workspace := range herdr.Workspaces {
+		label, _ := workspace["label"].(string)
+		if !strings.Contains(label, "build box") {
+			t.Errorf("the space is named %q, not after the label", label)
+		}
+	}
+	for _, pane := range herdr.Panes {
+		label, _ := pane["label"].(string)
+		if !strings.HasSuffix(label, "@build box") {
+			t.Errorf("the terminal is named %q, not after the label", label)
+		}
+	}
+	// And it can be connected to by the name it is called, since that is what
+	// the menu shows.
+	if reply := d.dispatch(Command{Cmd: "disconnect", Host: "build box"}); !reply.OK {
+		t.Errorf("disconnecting by label: %s", reply.Message)
+	}
+}

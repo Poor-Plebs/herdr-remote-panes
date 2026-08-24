@@ -482,10 +482,19 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		return Reply{OK: true, Message: "connected to " + host.Target}
 
 	case "disconnect":
-		if err := d.disconnect(cmd.Host); err != nil {
+		// Resolved the way connecting is, so a machine can be disconnected by
+		// whichever of its names you have in front of you. The listing shows
+		// labels, so "build box  1 ssh  ok" followed by "build box is not
+		// connected" was a straight contradiction -- and connect had taken
+		// either name all along.
+		host, err := d.hostConfig(cmd.Host)
+		if err != nil {
 			return Reply{Message: err.Error()}
 		}
-		return Reply{OK: true, Message: "disconnected from " + cmd.Host}
+		if err := d.disconnect(host.Target); err != nil {
+			return Reply{Message: err.Error()}
+		}
+		return Reply{OK: true, Message: "disconnected from " + host.Target}
 
 	case "open":
 		host, ok := d.resolveOpenTarget(cmd)
