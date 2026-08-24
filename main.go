@@ -12,8 +12,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
@@ -23,8 +25,6 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/picker"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/version"
-	"io"
-	"path/filepath"
 )
 
 func main() {

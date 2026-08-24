@@ -2938,3 +2938,42 @@ func TestConnectAllReachesTheMachinesTogether(t *testing.T) {
 			started, machines, lines)
 	}
 }
+
+func TestConnectEachReportsFailuresAgainstTheRightMachine(t *testing.T) {
+	// The machines are reached at the same time, so they finish in whatever
+	// order they finish in. The answers have to come back against the machine
+	// they belong to regardless, or a reconnect reports the wrong ones as
+	// having worked.
+	dir := t.TempDir()
+	// Fails for anything named "broken", and the slow one finishes last, so
+	// the order the connections complete is not the order they were asked for.
+	script := "#!/bin/sh\nfor a in \"$@\"; do case \"$a\" in broken*) exit 255;; slow*) sleep 0.3;; esac; done\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	hosts := []config.Host{
+		{Target: "slow-and-fine"},
+		{Target: "broken-one"},
+		{Target: "fine"},
+		{Target: "broken-two"},
+	}
+	d := withConfig(&Daemon{hosts: map[string]*hostSync{}}, config.Defaults())
+
+	errs := d.connectEach(hosts)
+	if len(errs) != len(hosts) {
+		t.Fatalf("got %d answers for %d machines", len(errs), len(hosts))
+	}
+	for i, host := range hosts {
+		broken := strings.HasPrefix(host.Target, "broken")
+		if broken && errs[i] == nil {
+			t.Errorf("%s failed but was reported as connected", host.Target)
+		}
+		if !broken && errs[i] != nil {
+			t.Errorf("%s connected but was reported as failed: %v", host.Target, errs[i])
+		}
+	}
+}

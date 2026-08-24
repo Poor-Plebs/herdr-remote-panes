@@ -284,27 +284,30 @@ func (d *Daemon) Run() error {
 
 	go d.serveControl(listener)
 
+	// Every configured machine at once. One at a time, each unreachable one
+	// costs its whole connect timeout before the next is even tried, so a
+	// couple of them and the machines that are fine are still not back.
+	var configured []config.Host
 	for _, h := range d.config().Hosts {
-		if h.Disabled {
-			continue
-		}
-		if err := d.connect(h); err != nil {
-			log.Printf("connect %s: %s", h.Target, summarizeError(err))
+		if !h.Disabled {
+			configured = append(configured, h)
 		}
 	}
+	d.connectEach(configured)
 
 	// Then the machines that were connected but are not written down: one
 	// picked from ~/.ssh/config never reaches the config file, so the snapshot
 	// is the only record that it was there at all.
+	//
+	// After the configured ones rather than alongside them, because which
+	// machines are remembered is worked out from which are already connected.
+	var remembered []config.Host
 	for _, target := range d.rememberedHosts() {
-		host, err := d.hostConfig(target)
-		if err != nil {
-			continue
-		}
-		if err := d.connect(host); err != nil {
-			log.Printf("connect %s: %s", target, summarizeError(err))
+		if host, err := d.hostConfig(target); err == nil {
+			remembered = append(remembered, host)
 		}
 	}
+	d.connectEach(remembered)
 
 	// Herdr stops a plugin's startup process with a signal, and the default
 	// action is to die on the spot: the deferred cleanup above never ran, so
@@ -1202,24 +1205,12 @@ func (d *Daemon) connectAll() ([]string, error) {
 		return nil, fmt.Errorf("no hosts configured")
 	}
 
-	// Indexed rather than appended, so the machines are reported in the order
-	// they appear in the config however the connections finish.
-	errs := make([]error, len(hosts))
-	var wg sync.WaitGroup
-	for i, host := range hosts {
-		wg.Add(1)
-		go func(i int, host config.Host) {
-			defer wg.Done()
-			errs[i] = d.connect(host)
-		}(i, host)
-	}
-	wg.Wait()
+	errs := d.connectEach(hosts)
 
 	var connected []string
 	var lastErr error
 	for i, host := range hosts {
 		if errs[i] != nil {
-			log.Printf("connect %s: %s", host.Target, summarizeError(errs[i]))
 			lastErr = errs[i]
 			continue
 		}
@@ -1229,6 +1220,32 @@ func (d *Daemon) connectAll() ([]string, error) {
 		return nil, lastErr
 	}
 	return connected, nil
+}
+
+// connectEach connects a set of machines at the same time, returning one error
+// per machine in the order given.
+//
+// Together rather than one after another. They are independent, and connect
+// does its ssh work before it takes the lock, so a queue bought nothing --
+// while an unreachable machine costs its whole connect timeout, and one at a
+// time those add up: two of them and the machines that are fine are still not
+// back. Every failure is logged here, so the callers need only decide what to
+// do about them.
+func (d *Daemon) connectEach(hosts []config.Host) []error {
+	errs := make([]error, len(hosts))
+	var wg sync.WaitGroup
+	for i, host := range hosts {
+		wg.Add(1)
+		go func(i int, host config.Host) {
+			defer wg.Done()
+			if err := d.connect(host); err != nil {
+				errs[i] = err
+				log.Printf("connect %s: %s", host.Target, summarizeError(err))
+			}
+		}(i, host)
+	}
+	wg.Wait()
+	return errs
 }
 
 // orderedHosts lists the tracked machines in a stable order: those named in
