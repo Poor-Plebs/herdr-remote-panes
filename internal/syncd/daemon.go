@@ -1180,22 +1180,27 @@ func panesToClose(state *hostSync) []string {
 func (d *Daemon) disconnect(target string) error {
 	d.mu.Lock()
 	state, ok := d.hosts[target]
-	if ok {
-		delete(d.hosts, target)
-	}
-	d.mu.Unlock()
-
 	if !ok {
+		d.mu.Unlock()
 		return fmt.Errorf("%s is not connected", target)
 	}
+	delete(d.hosts, target)
+
+	// Held across the closing rather than released after the lookup. Taking the
+	// machine out of the map does not stop a pass that began before it: that
+	// pass took its own list of machines first and is still holding this very
+	// hostSync, writing the maps that panesToClose reads.
 	for _, paneID := range panesToClose(state) {
 		if err := herdrcli.ClosePane(paneID); err != nil {
 			log.Printf("close %s: %v", paneID, err)
 		}
 	}
 	state.client.Close()
-	// Persist immediately so a reconnect before the next reconcile does not
-	// pick this host's stale bookkeeping back up.
+	d.mu.Unlock()
+
+	// Outside the lock, which persist takes for itself. Immediately, though, so
+	// a reconnect before the next reconcile does not pick this machine's stale
+	// bookkeeping back up.
 	d.persist()
 	return nil
 }
@@ -1560,12 +1565,15 @@ func (d *Daemon) reconcileOnce() {
 		state.strays = nil
 		reopen := state.reopenShell
 		state.reopenShell = false
+		// Copied out with them, since what follows runs unlocked and connect
+		// writes this.
+		host := state.host
 		d.mu.Unlock()
 
 		// Capturing a stray opens a terminal on the machine, which takes the
 		// lock itself; reopening one wants it held, as every other caller of
 		// openShellPane now does.
-		d.captureStrayPanes(state, strays)
+		d.captureStrayPanes(host, strays)
 		if reopen {
 			// Never focused: a link coming back is not a request to go
 			// there, and somebody may be working elsewhere.
@@ -1573,7 +1581,7 @@ func (d *Daemon) reconcileOnce() {
 			err := d.openShellPane(state, "", false)
 			d.mu.Unlock()
 			if err != nil {
-				log.Printf("reopen terminal on %s: %v", state.host.Target, err)
+				log.Printf("reopen terminal on %s: %v", host.Target, err)
 			}
 		}
 	}
@@ -2154,12 +2162,16 @@ func (d *Daemon) planStrayCapture(state *hostSync, index *paneIndex) []strayPane
 
 // captureStrayPanes carries out what planStrayCapture decided. It must run with
 // the host lock released.
-func (d *Daemon) captureStrayPanes(state *hostSync, strays []strayPane) {
+// The machine is taken by value rather than reached for through the hostSync:
+// this runs outside the lock, on purpose, and connect writes state.host under
+// it. Reading it here was a race nothing had exercised, since it needs a stray
+// pane and a machine being reconnected at the same moment.
+func (d *Daemon) captureStrayPanes(host config.Host, strays []strayPane) {
 	for _, stray := range strays {
 		log.Printf("%s: moving pane %s onto the machine as a %s",
-			state.host.Target, stray.PaneID, stray.Placement)
-		if err := d.openRemotePane(state.host, stray.Placement, true); err != nil {
-			log.Printf("open terminal on %s: %v", state.host.Target, err)
+			host.Target, stray.PaneID, stray.Placement)
+		if err := d.openRemotePane(host, stray.Placement, true); err != nil {
+			log.Printf("open terminal on %s: %v", host.Target, err)
 			continue
 		}
 		if err := herdrcli.ClosePaneByID(stray.PaneID); err != nil {

@@ -1325,3 +1325,149 @@ func TestPollingAndCommandsAtTheSameTimeIsSafe(t *testing.T) {
 		t.Fatal("the daemon stopped answering: something is holding the lock")
 	}
 }
+
+// TestPollingAndCommandsUnderRealContention is the test above turned up until
+// it hurts, and left out of an ordinary run because of how long it takes.
+//
+//	HRP_STRESS=1 go test ./internal/syncd/ -race -run UnderRealContention -count=20
+//
+// The difference that matters is not the number of iterations: it is that the
+// commands run concurrently with each other rather than one after another.
+// Two goroutines connecting and disconnecting the same machine at the same
+// moment is the interleaving that a sequential loop can never produce, and it
+// is the one where a lock taken for the lookup and released for the work goes
+// wrong.
+func TestPollingAndCommandsUnderRealContention(t *testing.T) {
+	if os.Getenv("HRP_STRESS") == "" {
+		t.Skip("set HRP_STRESS=1 to run; it takes minutes rather than a moment")
+	}
+	held := withFakeHerdr(t)
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{
+		{Target: "bot"}, {Target: "prod"}, {Target: "ci"}, {Target: "staging"},
+	}
+	d := New(cfg)
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	deadline := time.After(8 * time.Second)
+
+	// Pollers. reconcileAll is meant to run one at a time whatever calls it,
+	// so several of them is also a test of the guard that ensures that.
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					d.reconcileAll()
+				}
+			}
+		}()
+	}
+
+	// Readers: the menu, redrawing while somebody looks at it.
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					d.dispatch(Command{Cmd: "status"})
+					d.status()
+				}
+			}
+		}()
+	}
+
+	// Writers, all at once and all over each other. Each takes a machine of
+	// its own to start with and then reaches for the others, so the same
+	// machine is being connected by one goroutine while another disconnects it.
+	machines := []string{"bot", "prod", "ci", "staging"}
+	for i, machine := range machines {
+		wg.Add(1)
+		go func(i int, mine string) {
+			defer wg.Done()
+			others := machines
+			for n := 0; ; n++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				theirs := others[(i+n)%len(others)]
+				switch n % 6 {
+				case 0:
+					d.dispatch(Command{Cmd: "connect", Host: mine})
+				case 1:
+					d.dispatch(Command{Cmd: "open", Host: mine})
+				case 2:
+					d.dispatch(Command{Cmd: "open", Host: theirs, Placement: "tab"})
+				case 3:
+					d.dispatch(Command{Cmd: "set-mode", Host: mine, Mode: "ssh"})
+				case 4:
+					d.dispatch(Command{Cmd: "refresh"})
+				default:
+					d.dispatch(Command{Cmd: "disconnect", Host: theirs})
+				}
+			}
+		}(i, machine)
+	}
+
+	<-deadline
+	close(stop)
+
+	// Everything has to come back. A deadlock does not race, it stops, and a
+	// stopped goroutine here looks exactly like a slow one until it never ends.
+	finished := make(chan struct{})
+	go func() { wg.Wait(); close(finished) }()
+	select {
+	case <-finished:
+	case <-time.After(60 * time.Second):
+		t.Fatal("goroutines did not finish: something is holding the lock")
+	}
+
+	// And it still answers.
+	answered := make(chan Reply, 1)
+	go func() { answered <- d.dispatch(Command{Cmd: "status"}) }()
+	select {
+	case reply := <-answered:
+		if !reply.OK {
+			t.Errorf("status after all that: %s", reply.Message)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the daemon stopped answering")
+	}
+
+	// How much actually happened, so "it passed" can be read against a size
+	// rather than taken on trust. A run that deadlocked early would pass every
+	// assertion below on almost no work at all.
+	total := 0
+	for _, n := range held().Calls {
+		total += n
+	}
+	t.Logf("%d calls to Herdr across %d goroutines", total, 10)
+	if total < 500 {
+		t.Errorf("only %d calls: this did not stress anything", total)
+	}
+
+	// Nothing wearing a name that was never a machine here, which is what torn
+	// bookkeeping would leave behind.
+	configured := map[string]bool{"bot": true, "prod": true, "ci": true, "staging": true}
+	for id, pane := range held().Panes {
+		label, _ := pane["label"].(string)
+		at := strings.LastIndex(label, "@")
+		if at < 0 {
+			continue
+		}
+		if machine := label[at+1:]; !configured[machine] {
+			t.Errorf("pane %s is named for %q, which was never one of these machines", id, machine)
+		}
+	}
+}

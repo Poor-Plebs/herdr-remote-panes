@@ -391,6 +391,20 @@ It works on a copy under the temp directory, so an interrupted run cannot leave
 a mutation in your tree, and it is not part of `make check`: it runs the tests
 once per mutation, so it is minutes rather than seconds.
 
+The daemon polls every machine while commands arrive from the menu, so its
+locking is worth leaning on rather than reasoning about:
+
+```bash
+HRP_STRESS=1 go test ./internal/syncd/ -race -run UnderRealContention -count=25
+```
+
+Ten goroutines — pollers, the menu redrawing, and commands connecting and
+disconnecting the same machines over each other — for eight seconds a run,
+several thousand calls to Herdr each time. It is skipped without that variable
+because it is minutes rather than seconds. Worth running under `GOMAXPROCS=1`
+and `2` as well: a lock bug that hides at one scheduling shows up at another,
+and the last one found here did.
+
 ## Trust
 
 This runs with your privileges and connects by SSH to machines you name. Read
