@@ -213,25 +213,36 @@ func TestTheSocketPathStaysShortEnoughToBind(t *testing.T) {
 	// short deterministic path instead. The boundary is the whole of it: one
 	// byte either side decides between a path that binds and an error nobody
 	// can read.
-	temp := t.TempDir()
-
-	// A state directory chosen so the path lands exactly on the limit.
+	//
+	// A literal directory rather than t.TempDir(): this only joins strings, and
+	// a test directory on macOS is itself long enough to push the fallback over
+	// the limit -- which is a fact about t.TempDir() and not about the code.
+	// os.TempDir() there is some fifty bytes, leaving room to spare.
+	const temp = "/tmp"
 	const name = "control-hub.sock"
+
 	for _, over := range []int{-1, 0, 1} {
 		dir := "/" + strings.Repeat("d", maxUnixSocketPath-len(name)-1+over)
-		path := socketPathFor(dir, "hub", temp)
-		fits := len(filepath.Join(dir, name)) <= maxUnixSocketPath
-		inState := strings.HasPrefix(path, dir)
-		switch {
-		case fits && !inState:
-			t.Errorf("a path of %d bytes fits but was moved to %q",
-				len(filepath.Join(dir, name)), path)
-		case !fits && inState:
-			t.Errorf("a path of %d bytes is over the limit but was kept: %q",
-				len(filepath.Join(dir, name)), path)
+		want := filepath.Join(dir, name)
+		got := socketPathFor(dir, "hub", temp)
+
+		if fits, kept := len(want) <= maxUnixSocketPath, got == want; fits != kept {
+			if fits {
+				t.Errorf("a path of %d bytes fits but was moved to %q", len(want), got)
+			} else {
+				t.Errorf("a path of %d bytes is over the limit but was kept: %q", len(want), got)
+			}
 		}
-		if len(path) > maxUnixSocketPath {
-			t.Errorf("the path handed back is %d bytes, over the limit: %q", len(path), path)
-		}
+	}
+
+	// And the fallback is short: whatever it is handed, it adds a fixed name to
+	// it rather than carrying any of the length that caused the problem.
+	long := "/" + strings.Repeat("d", 300)
+	fallback := socketPathFor(long, strings.Repeat("session", 20), temp)
+	if extra := len(fallback) - len(temp); extra > 32 {
+		t.Errorf("the fallback adds %d bytes to the temp directory: %q", extra, fallback)
+	}
+	if !strings.HasPrefix(fallback, temp) {
+		t.Errorf("the fallback is not in the temp directory: %q", fallback)
 	}
 }
