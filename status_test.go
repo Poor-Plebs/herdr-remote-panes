@@ -165,3 +165,27 @@ func TestAMachinesFailureCannotRepaintTheStatusLine(t *testing.T) {
 		t.Errorf("the reason is gone: %q", lines[0])
 	}
 }
+
+func TestAMachineStillBeingRetriedHasNothingToCountEither(t *testing.T) {
+	// Between "connected" and "given up" there is a machine whose last attempt
+	// failed and which is still being retried. It has no terminals here, and
+	// writing "0" beside it reads as a tally of what is open rather than as the
+	// mode -- the same reason a machine that has been given up on shows none.
+	//
+	// The machine that has been given up on cannot tell the two apart: it has
+	// neither flag set the way this one does.
+	line := statusLines([]syncd.HostInfo{
+		{Label: "staging", SSHOnly: true, LastError: "connection refused"},
+	})[0]
+
+	if strings.Contains(line, "0") {
+		t.Errorf("%q counts terminals on a machine that is not connected", line)
+	}
+	// The kind still, because that is how you know which way m would toggle.
+	if !strings.Contains(line, "ssh") {
+		t.Errorf("%q does not say how the machine is reached", line)
+	}
+	if !strings.Contains(line, "connection refused") {
+		t.Errorf("%q does not say what is wrong", line)
+	}
+}

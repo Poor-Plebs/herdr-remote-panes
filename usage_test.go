@@ -5,6 +5,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -214,5 +215,83 @@ func TestTheREADMEShowsWhatVersionActuallyPrints(t *testing.T) {
 		if shown[i] != want[i] {
 			t.Errorf("the README shows\n\t%q\nbut the command prints\n\t%q", shown[i], want[i])
 		}
+	}
+}
+
+func TestWhichMachineAnActionMeans(t *testing.T) {
+	// Herdr runs an action with no argv, so which machine it means comes from
+	// the environment: what was typed, else HRP_HOST, else whatever text was
+	// selected when the action was triggered. disconnect closes a machine's
+	// terminals, so reading this wrong closes the wrong machine's.
+	context := func(selected string) string {
+		return `{"selected_text":` + strconv.Quote(selected) + `}`
+	}
+	for _, tt := range []struct {
+		what     string
+		args     []string
+		hrpHost  string
+		ctxJSON  string
+		want     string
+		wantsErr bool
+	}{
+		{what: "what was typed wins", args: []string{"bot"}, hrpHost: "ci", want: "bot"},
+		{what: "then the variable Herdr sets", hrpHost: "ci", ctxJSON: context("prod"), want: "ci"},
+		{what: "then the selection", ctxJSON: context("prod"), want: "prod"},
+		{what: "an empty argument is not an answer", args: []string{""}, hrpHost: "ci", want: "ci"},
+		{what: "nor is a blank variable", hrpHost: "   ", ctxJSON: context("prod"), want: "prod"},
+		{what: "the selection is trimmed", ctxJSON: context("  bot\n"), want: "bot"},
+		{what: "nothing anywhere is an error", wantsErr: true},
+		{what: "a blank selection is nothing", ctxJSON: context("   "), wantsErr: true},
+		// Herdr's context is JSON this did not write. Unreadable is the same as
+		// absent: the action says what to do about it rather than failing on a
+		// parse error nobody can act on.
+		{what: "and so is a context that will not parse", ctxJSON: "{not json", wantsErr: true},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			t.Setenv("HRP_HOST", tt.hrpHost)
+			t.Setenv("HERDR_PLUGIN_CONTEXT_JSON", tt.ctxJSON)
+
+			got, err := hostArg("disconnect", tt.args)
+			if tt.wantsErr {
+				if err == nil {
+					t.Fatalf("want an error, got %q", got)
+				}
+				// The message has to say how to answer, since the usual way of
+				// running this passes no argument at all.
+				if !strings.Contains(err.Error(), "disconnect") || !strings.Contains(err.Error(), "select") {
+					t.Errorf("the error does not say what to do: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWhichSpaceAnActionWasTriggeredIn(t *testing.T) {
+	// This decides whether "new terminal" opens on a machine or locally, so a
+	// wrong answer opens a local shell in a machine's space -- which the daemon
+	// then moves onto the machine and closes here.
+	for _, tt := range []struct {
+		what, env, ctxJSON, want string
+	}{
+		{what: "the variable when it is set", env: "w4A", ctxJSON: `{"workspace_id":"w9"}`, want: "w4A"},
+		{what: "the context when it is not", ctxJSON: `{"workspace_id":"w9"}`, want: "w9"},
+		{what: "nothing when there is neither", want: ""},
+		{what: "nothing when the context will not parse", ctxJSON: "{not json", want: ""},
+		{what: "nothing when the context has no space in it", ctxJSON: `{"selected_text":"bot"}`, want: ""},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			t.Setenv("HERDR_WORKSPACE_ID", tt.env)
+			t.Setenv("HERDR_PLUGIN_CONTEXT_JSON", tt.ctxJSON)
+			if got := contextWorkspace(); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
