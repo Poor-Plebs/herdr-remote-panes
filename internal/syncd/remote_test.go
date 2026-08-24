@@ -1178,10 +1178,11 @@ func TestAMirrorThatFailsDoesNotCloseTheWorkOnTheMachine(t *testing.T) {
 	if got := len(there().Panes); got != 1 {
 		t.Errorf("the machine has %d terminals, want the one it had: %+v", got, there().Panes)
 	}
-	// And it is mirrored again, rather than left showing nothing.
-	if got := panesFor(here(), "bot"); got != 1 {
-		t.Errorf("%d mirrors here, want the terminal mirrored again", got)
-	}
+	// Not asserted here: whether it is mirrored again straight away. It is
+	// mirrored again, but a bridge that failed backs off first, so how soon
+	// depends on how many times it has failed. What matters on this side is
+	// that the terminal was not treated as closed; that it comes back is the
+	// churn test's business, which counts the attempts.
 }
 
 func TestAMirroredTabYouCloseStillClosesTheTerminal(t *testing.T) {
