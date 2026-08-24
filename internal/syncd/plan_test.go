@@ -1124,9 +1124,9 @@ func TestHostConfigFindsAMachineByEitherName(t *testing.T) {
 	// Both the thing typed after ssh and the name shown here should work: the
 	// menu offers the label, the config and the command line use the target.
 	for _, name := range []string{"bot.example.com", "bot"} {
-		got, ok := d.hostConfig(name)
-		if !ok || got.Target != "bot.example.com" {
-			t.Errorf("hostConfig(%q) = %+v, %v; want the configured machine", name, got, ok)
+		got, err := d.hostConfig(name)
+		if err != nil || got.Target != "bot.example.com" {
+			t.Errorf("hostConfig(%q) = %+v, %v; want the configured machine", name, got, err)
 		}
 	}
 }
@@ -1136,13 +1136,13 @@ func TestHostConfigAcceptsAnUnconfiguredMachine(t *testing.T) {
 	// work for a machine that was never written into the plugin's own config.
 	d := withConfig(&Daemon{}, config.Defaults())
 
-	got, ok := d.hostConfig("some-laptop")
-	if !ok || got.Target != "some-laptop" {
-		t.Errorf("hostConfig = %+v, %v; want an ad-hoc machine", got, ok)
+	got, err := d.hostConfig("some-laptop")
+	if err != nil || got.Target != "some-laptop" {
+		t.Errorf("hostConfig = %+v, %v; want an ad-hoc machine", got, err)
 	}
 
 	// Nothing at all is still nothing.
-	if _, ok := d.hostConfig(""); ok {
+	if _, err := d.hostConfig(""); err == nil {
 		t.Error("an empty name was accepted as a machine")
 	}
 }
@@ -2727,5 +2727,43 @@ func TestTruncateRunesKeepsAsMuchAsFits(t *testing.T) {
 		if got := truncateRunes(tt.in, tt.max); got != tt.want {
 			t.Errorf("truncateRunes(%q, %d) = %q, want %q", tt.in, tt.max, got, tt.want)
 		}
+	}
+}
+
+func TestRefusingAMachineSaysWhyRatherThanBlamingTheConfig(t *testing.T) {
+	// The answer used to be "%s is not in the plugin config", which was the
+	// wrong thing to be told twice over. A name that is fine needs no entry in
+	// that file -- anything in ~/.ssh/config works, and so does anything that
+	// looks like a machine -- and a name that is not fine would still be
+	// refused after adding one. It sent people to edit a file that had nothing
+	// to do with the problem.
+	//
+	// The names that reach here are not always typed, either: connect falls
+	// back to whatever text is selected in the terminal.
+	d := withConfig(&Daemon{}, config.Defaults())
+
+	cases := []struct {
+		name string
+		want string
+	}{
+		{"-oProxyCommand=touch /tmp/x", "dash"},
+		{"error: could not reach the database", "space"},
+		{"", "no target"},
+		{"bot\x00", "control character"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := d.hostConfig(tt.name)
+			if err == nil {
+				t.Fatalf("%q was accepted as a machine", tt.name)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("refusing %q said %q, which does not mention %q",
+					tt.name, err, tt.want)
+			}
+			if strings.Contains(err.Error(), "plugin config") {
+				t.Errorf("refusing %q blamed the plugin config: %q", tt.name, err)
+			}
+		})
 	}
 }

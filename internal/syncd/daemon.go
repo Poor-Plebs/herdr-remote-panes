@@ -296,8 +296,8 @@ func (d *Daemon) Run() error {
 	// picked from ~/.ssh/config never reaches the config file, so the snapshot
 	// is the only record that it was there at all.
 	for _, target := range d.rememberedHosts() {
-		host, ok := d.hostConfig(target)
-		if !ok {
+		host, err := d.hostConfig(target)
+		if err != nil {
 			continue
 		}
 		if err := d.connect(host); err != nil {
@@ -404,9 +404,9 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 			return Reply{OK: true, Message: fmt.Sprintf("reconnected %d of your machines: %s",
 				len(connected), strings.Join(connected, ", "))}
 		}
-		host, ok := d.hostConfig(cmd.Host)
-		if !ok {
-			return Reply{Message: fmt.Sprintf("%s is not in the plugin config", cmd.Host)}
+		host, err := d.hostConfig(cmd.Host)
+		if err != nil {
+			return Reply{Message: err.Error()}
 		}
 		if err := d.connect(host); err != nil {
 			// Summarised like the status line and the log: ssh prints fifteen
@@ -670,7 +670,11 @@ func (d *Daemon) ensureRemoteWorkspace(state *hostSync) (string, bool, error) {
 // workspace should create it on that machine.
 func (d *Daemon) resolveOpenTarget(cmd Command) (config.Host, bool) {
 	if cmd.Host != "" {
-		return d.hostConfig(cmd.Host)
+		// Only whether, not why: a name that is not a machine falls back to
+		// opening an ordinary pane, which is what "new terminal" means
+		// everywhere else.
+		host, err := d.hostConfig(cmd.Host)
+		return host, err == nil
 	}
 	if cmd.Workspace == "" {
 		return config.Host{}, false
@@ -783,11 +787,19 @@ func (d *Daemon) configWarning() string {
 	return ""
 }
 
-// hostConfig finds a configured host by target or label.
-func (d *Daemon) hostConfig(name string) (config.Host, bool) {
+// hostConfig finds a configured host by target or label, or says why the name
+// cannot be used as one.
+//
+// The reason is returned rather than a bare no. The caller used to answer "%s
+// is not in the plugin config", which was the wrong thing to be told twice
+// over: a name that is fine needs no entry in that file -- anything in
+// ~/.ssh/config works, and so does anything that looks like a machine -- and a
+// name that is not fine would still be refused after adding one. It sent people
+// to edit a file that had nothing to do with it.
+func (d *Daemon) hostConfig(name string) (config.Host, error) {
 	for _, h := range d.config().Hosts {
 		if h.Target == name || h.Label == name {
-			return h, true
+			return h, nil
 		}
 	}
 	// An unconfigured target is still usable: treat it as an ad-hoc host so
@@ -804,10 +816,10 @@ func (d *Daemon) hostConfig(name string) (config.Host, bool) {
 	if declaredInSSHConfig(name) {
 		check = config.ValidTarget
 	}
-	if check(name) == nil {
-		return config.Host{Target: name}, true
+	if err := check(name); err != nil {
+		return config.Host{}, err
 	}
-	return config.Host{}, false
+	return config.Host{Target: name}, nil
 }
 
 // declaredInSSHConfig reports whether the user wrote this machine down.
@@ -2215,7 +2227,7 @@ func (d *Daemon) markWorkspaceState(state *hostSync, connected bool) {
 				d.forgetWorkspace(state, workspaceID)
 				return
 			}
-			log.Printf("rename workspace %s: %v", workspaceID, err)
+			log.Printf("rename space %s: %v", workspaceID, err)
 		}
 	}
 
@@ -2238,7 +2250,7 @@ func (d *Daemon) markWorkspaceState(state *hostSync, connected bool) {
 			return
 		}
 		if d.markedWorkspaces[workspaceID] != "failed" {
-			log.Printf("mark workspace %s: %v", workspaceID, err)
+			log.Printf("mark space %s: %v", workspaceID, err)
 			d.markedWorkspaces[workspaceID] = "failed"
 		}
 		return
