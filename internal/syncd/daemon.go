@@ -1821,6 +1821,16 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 			mirror.Failed(paneID), terminalID, running) {
 		case mirrorKeep:
 		case mirrorForget:
+			// A bridge that failed counts against the same limit as one that
+			// could not be opened at all. Otherwise a terminal something else
+			// is holding gets a new pane every pass for ever: the pane opens,
+			// the attach fails, the pane goes, and nothing counts it -- a
+			// flicker in the sidebar with no end and no explanation. The reason
+			// is read before the mark is cleared, since forgetting the pane
+			// clears it.
+			if reason := mirror.FailureReason(paneID); mirror.Failed(paneID) {
+				d.backOff(state, terminalID, errors.New(firstLineOf(reason)))
+			}
 			delete(state.mirrors, terminalID)
 			d.forgetPane(state, paneID)
 		case mirrorDismiss:
@@ -2137,6 +2147,18 @@ func (d *Daemon) captureStrayPanes(state *hostSync, strays []strayPane) {
 			log.Printf("close local pane %s: %v", stray.PaneID, err)
 		}
 	}
+}
+
+// firstLineOf keeps a failure to one line for the log, since a bridge records
+// everything the far side said and ssh is not brief about a refusal.
+func firstLineOf(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if s == "" {
+		return "the bridge failed"
+	}
+	return s
 }
 
 // maxMirrorAttempts is how often one remote terminal may fail to mirror before

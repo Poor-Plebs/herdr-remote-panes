@@ -1205,3 +1205,46 @@ func TestAMirroredTabYouCloseStillClosesTheTerminal(t *testing.T) {
 		t.Errorf("the machine has %d terminals after the tab was closed, want none", got)
 	}
 }
+
+func TestAMirrorThatKeepsFailingStopsTryingSoOften(t *testing.T) {
+	// A terminal something else is holding cannot be mirrored, and the attach
+	// fails every time. Forgetting the pane and mirroring it again -- which is
+	// right, since the terminal is fine and the bridge is not -- means opening
+	// a new pane on every pass unless something counts the failures.
+	//
+	// The count already existed for a mirror that could not be opened at all.
+	// A bridge that opened and then failed never reached it, so the pane
+	// flickered in the sidebar for as long as the session lasted, with nothing
+	// anywhere saying why.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+
+	const rounds = 12
+	opened := map[string]bool{}
+	for i := 0; i < rounds; i++ {
+		for id := range here().Panes {
+			opened[id] = true
+			terminalDied(t, id, "bot: exit status 1 running: herdr terminal attach term_1")
+		}
+		d.reconcileAll()
+	}
+
+	// A couple of attempts, not one per pass.
+	if len(opened) > maxMirrorAttempts {
+		t.Errorf("%d panes were opened over %d passes; the failures are not being counted",
+			len(opened), rounds)
+	}
+	// And the terminal on the machine is untouched throughout: a bridge that
+	// fails is not somebody closing a tab.
+	if got := len(there().Panes); got != 1 {
+		t.Errorf("the machine has %d terminals, want the one it had", got)
+	}
+}
