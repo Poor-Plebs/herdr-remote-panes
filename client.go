@@ -76,11 +76,18 @@ func statusLines(hosts []syncd.HostInfo) []string {
 	rows := make([]row, 0, len(hosts))
 	for _, h := range hosts {
 		r := row{name: text.Sanitize(h.Label), state: "ok"}
+		// The failure as well as the name. A name holds whatever somebody wrote
+		// in their config, but this holds whatever the far side said: ssh
+		// passes a remote banner through untouched, and a banner can carry an
+		// escape sequence that moves the cursor or repaints the line. The menu
+		// already makes this safe to draw; here it went to the terminal as it
+		// arrived.
+		failure := text.Sanitize(h.LastError)
 		switch {
 		case h.GaveUp:
-			r.state = "unreachable, not retrying: " + h.LastError
+			r.state = "unreachable, not retrying: " + failure
 		case !h.Connected:
-			r.state = "error: " + h.LastError
+			r.state = "error: " + failure
 		}
 		open := h.Mirrors
 		r.kind = "mirrored"
@@ -136,13 +143,16 @@ func statusSummary(hosts []syncd.HostInfo) string {
 	}
 	parts := make([]string, 0, len(hosts))
 	for _, h := range hosts {
+		// As in the lines above: a label is whatever somebody wrote in their
+		// config, and this one goes out as a notification.
+		name := text.Sanitize(h.Label)
 		switch {
 		case h.GaveUp || !h.Connected:
-			parts = append(parts, h.Label+" unreachable")
+			parts = append(parts, name+" unreachable")
 		case h.SSHOnly:
-			parts = append(parts, fmt.Sprintf("%s %d open", h.Label, h.Terminals))
+			parts = append(parts, fmt.Sprintf("%s %d open", name, h.Terminals))
 		default:
-			parts = append(parts, fmt.Sprintf("%s %d mirrored", h.Label, h.Mirrors))
+			parts = append(parts, fmt.Sprintf("%s %d mirrored", name, h.Mirrors))
 		}
 	}
 	return strings.Join(parts, " · ")

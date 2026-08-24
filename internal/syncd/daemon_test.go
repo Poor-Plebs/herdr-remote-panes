@@ -253,3 +253,46 @@ func TestASpaceWhoseLastPaneWentHasNothingToSplitFrom(t *testing.T) {
 		t.Errorf("the tab holds %d panes, want none", got)
 	}
 }
+
+func TestAFailureIsKeptToOneLine(t *testing.T) {
+	// A bridge records everything the far side said, and ssh is not brief about
+	// a refusal -- a rejected host key runs to a dozen lines. What comes out of
+	// this is what the daemon logs and what the machine's line in the menu and
+	// in status then says, so it has to be one line, and it has to say
+	// something.
+	for _, tt := range []struct {
+		what, in, want string
+	}{
+		{"a single line is itself", "connection refused", "connection refused"},
+		{"a banner keeps its first line", "Permission denied\nkeyboard-interactive\nfailed", "Permission denied"},
+		{"nothing at all still says something", "", "the bridge failed"},
+		{"and so does a leading newline", "\nPermission denied", "the bridge failed"},
+		{"a trailing newline is not a second line", "connection refused\n", "connection refused"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			if got := firstLineOf(tt.in); got != tt.want {
+				t.Errorf("firstLineOf(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAPaneIdIsShortenedToThePartThatDistinguishesIt(t *testing.T) {
+	// This is appended to a name when two remote shells would otherwise render
+	// identically, so it goes in front of somebody. A pane id that does not
+	// look the way this expects must come back whole rather than empty: a name
+	// ending in "@bot" with nothing before it is worse than a long one.
+	for _, tt := range []struct{ in, want string }{
+		{"w2:p6", "p6"},
+		{"p6", "p6"},
+		{"w10:p123", "p123"},
+		{"w2:", "w2:"}, // nothing after the colon: keep what there is
+		{":", ":"},
+		{"", ""},
+		{"a:b:c", "c"}, // the last colon, so a scoped id keeps its pane part
+	} {
+		if got := shortPaneID(tt.in); got != tt.want {
+			t.Errorf("shortPaneID(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

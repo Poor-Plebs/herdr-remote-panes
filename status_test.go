@@ -142,3 +142,26 @@ func TestAMachineThatCannotBeReachedSaysThatFirst(t *testing.T) {
 		t.Errorf("%q leads with a detail instead of the machine being unreachable", line)
 	}
 }
+
+func TestAMachinesFailureCannotRepaintTheStatusLine(t *testing.T) {
+	// This text is whatever the far side said. ssh passes a remote banner
+	// through untouched, so a machine can put an escape sequence in it, and
+	// status wrote it to the terminal as it arrived -- the name beside it had
+	// been made safe to draw for years while this had not.
+	lines := statusLines([]syncd.HostInfo{{
+		Label:     "bot",
+		LastError: "banner\x1b[2K\rrefused\nand a second line",
+	}})
+	if len(lines) != 1 {
+		t.Fatalf("want one line, got %d: %v", len(lines), lines)
+	}
+	for _, forbidden := range []string{"\x1b", "\r", "\n"} {
+		if strings.Contains(lines[0], forbidden) {
+			t.Errorf("the line still carries %q: %q", forbidden, lines[0])
+		}
+	}
+	// Still says what happened, so the sanitising has not eaten the answer.
+	if !strings.Contains(lines[0], "refused") {
+		t.Errorf("the reason is gone: %q", lines[0])
+	}
+}
