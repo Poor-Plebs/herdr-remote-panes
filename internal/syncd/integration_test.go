@@ -575,14 +575,22 @@ func TestOpeningATerminalGoesToIt(t *testing.T) {
 	}
 }
 
-// paneNumber is the counter in a pane id the stand-in hands out, so the newest
-// can be told from the rest.
+// paneNumber is the counter at the end of a pane id the stand-in hands out, so
+// the newest can be told from the rest. Herdr's ids are scoped to a space --
+// "w1:p3" -- so only the digits after the last letter are the counter.
 func paneNumber(id string) int {
-	n := 0
-	for _, r := range id {
-		if r < '0' || r > '9' {
-			continue
+	digits := 0
+	for i := len(id) - 1; i >= 0; i-- {
+		if id[i] < '0' || id[i] > '9' {
+			break
 		}
+		digits++
+	}
+	if digits == 0 {
+		return -1
+	}
+	n := 0
+	for _, r := range id[len(id)-digits:] {
 		n = n*10 + int(r-'0')
 	}
 	return n

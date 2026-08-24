@@ -32,6 +32,17 @@ func (f *fakeHerdr) id(prefix string) string {
 	return fmt.Sprintf("%s%d", prefix, f.Next)
 }
 
+// paneID is a pane's id as Herdr writes one: scoped to its space, with a colon
+// in it. A stand-in handing out bare "p3" leaves everything that takes an id
+// apart, or puts one in a filename, working on a shape Herdr never produces.
+func (f *fakeHerdr) paneID(workspace string) string {
+	f.Next++
+	if workspace == "" {
+		return fmt.Sprintf("p%d", f.Next)
+	}
+	return fmt.Sprintf("%s:p%d", workspace, f.Next)
+}
+
 // main answers one CLI call and exits, as the real binary would.
 func main() {
 	args := os.Args[1:]
@@ -97,10 +108,14 @@ func main() {
 		id := state.id("w")
 		state.Workspaces[id] = map[string]any{"workspace_id": id, "label": flag("--label")}
 		tab := state.id("t")
-		root := state.id("p")
+		root := state.paneID(id)
 		state.Panes[root] = map[string]any{
 			"pane_id": root, "tab_id": tab, "workspace_id": id,
 			"terminal_id": state.id("term_"), "label": "",
+			// A shell sets its own title as a matter of course, and that is
+			// what a mirror of it is named after. Leaving it empty left every
+			// name in these tests coming from the last fallback there is.
+			"terminal_title_stripped": "zsh",
 		}
 		save()
 		ok(map[string]any{"workspace": state.Workspaces[id], "root_pane": state.Panes[root]})
@@ -151,10 +166,11 @@ func main() {
 			}
 		}
 		tab := state.id("t")
-		root := state.id("p")
+		root := state.paneID(workspace)
 		state.Panes[root] = map[string]any{
 			"pane_id": root, "tab_id": tab, "workspace_id": workspace,
 			"terminal_id": state.id("term_"), "label": "",
+			"terminal_title_stripped": "zsh",
 		}
 		save()
 		ok(map[string]any{
@@ -189,8 +205,13 @@ func main() {
 				focused = true
 			}
 		}
-		id := state.id("p")
+		id := state.paneID(workspace)
 		state.Panes[id] = map[string]any{
+			// Marked as this plugin's, because Herdr will not let a plugin
+			// close a pane it does not own -- and a stand-in that closes
+			// anything for anybody cannot tell a caller using the wrong one of
+			// the two close commands.
+			"plugin":  true,
 			"pane_id": id, "tab_id": tab, "workspace_id": workspace,
 			"terminal_id": state.id("term_"), "label": "", "focused": focused,
 		}
@@ -199,8 +220,14 @@ func main() {
 
 	case strings.HasPrefix(join, "plugin pane close"), strings.HasPrefix(join, "pane close"):
 		id := args[len(args)-1]
-		if _, live := state.Panes[id]; !live {
+		pane, live := state.Panes[id]
+		if !live {
 			fail("pane_not_found", "pane "+id+" not found")
+		}
+		if strings.HasPrefix(join, "plugin pane close") {
+			if mine, _ := pane["plugin"].(bool); !mine {
+				fail("not_a_plugin_pane", "pane "+id+" was not opened by a plugin")
+			}
 		}
 		delete(state.Panes, id)
 		save()

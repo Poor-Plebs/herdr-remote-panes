@@ -140,3 +140,49 @@ func TestATerminalOpenedOnTheMachineShowsUpHere(t *testing.T) {
 		}
 	}
 }
+
+func TestAPaneOpenedByHandInAMirroredMachinesSpaceMovesOntoIt(t *testing.T) {
+	// Herdr's own new-tab key and the plus icon open a local shell, and no
+	// plugin can intercept them. In a space that exists to hold one machine's
+	// terminals that is nearly always a mistake -- the pane is on the wrong
+	// host -- so it is replaced with a terminal on the machine.
+	//
+	// This is also the one path that closes a pane this plugin did not open,
+	// which Herdr allows only through the ordinary close rather than the
+	// plugin one. The stand-in refuses the wrong command now, so using it
+	// would leave the pane sitting there.
+	here := withFakeHerdr(t)
+	there := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	for i := 0; i < 2; i++ {
+		d.reconcileAll()
+	}
+
+	remoteBefore := len(there().Panes)
+	var workspace string
+	for _, pane := range here().Panes {
+		workspace, _ = pane["workspace_id"].(string)
+	}
+	if workspace == "" {
+		t.Fatal("the machine has no space here")
+	}
+	stray := addLocalPane(t, workspace)
+
+	for i := 0; i < 4; i++ {
+		d.reconcileAll()
+	}
+
+	if _, still := here().Panes[stray]; still {
+		t.Error("the pane opened by hand is still here, on the wrong machine")
+	}
+	if got := len(there().Panes); got != remoteBefore+1 {
+		t.Errorf("the machine has %d terminals, want one more than the %d it had",
+			got, remoteBefore)
+	}
+}
