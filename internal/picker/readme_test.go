@@ -1,6 +1,7 @@
 package picker
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -43,6 +44,63 @@ func TestEveryKeyTheMenuActsOnIsMentioned(t *testing.T) {
 	} {
 		if !strings.Contains(hints, key) {
 			t.Errorf("the menu acts on %q (%s) and does not say so", key, what)
+		}
+	}
+}
+
+// TestEveryKeyTheMenuOffersDoesSomething presses what the hints advertise.
+//
+// The tests above hold the hints and the README to each other, and the hints to
+// a list of keys written out beside them. None of them presses anything, so a
+// key that stopped being read would leave both documents still promising it and
+// both tests still passing -- and a dead key in a menu is silent: you press it,
+// nothing happens, and there is nothing to read about why.
+func TestEveryKeyTheMenuOffersDoesSomething(t *testing.T) {
+	hints := strings.Join(hintLines(200), " ")
+
+	offered := []struct {
+		what  string // as the hints write it
+		press string // what the terminal actually sends
+		want  key
+	}{
+		{"↑", "\x1b[A", keyUp},
+		{"↓", "\x1b[B", keyDown},
+		// A terminal in application cursor mode sends these instead, which is
+		// not a choice the menu gets to make.
+		{"↑", "\x1bOA", keyUp},
+		{"↓", "\x1bOB", keyDown},
+		{"j", "j", keyDown},
+		{"k", "k", keyUp},
+		{"pgup", "\x1b[5~", keyPageUp},
+		{"pgdn", "\x1b[6~", keyPageDown},
+		{"g", "g", keyTop},
+		{"G", "G", keyBottom},
+		{"enter", "\r", keyEnter},
+		{"enter", "\n", keyEnter},
+		{"d", "d", keyDisconnect},
+		{"m", "m", keyToggle},
+		{"q", "q", keyQuit},
+	}
+
+	for _, offer := range offered {
+		if !strings.Contains(hints, offer.what) {
+			t.Errorf("this test presses %q, which the menu no longer offers", offer.what)
+			continue
+		}
+		if got := parseKey(bytes.NewReader([]byte(offer.press))); got != offer.want {
+			t.Errorf("the menu offers %q and pressing it gives %v, want %v",
+				offer.what, got, offer.want)
+		}
+	}
+
+	// "1-9 pick" is a range rather than a key, so it is held separately: every
+	// one of them has to reach the menu as itself.
+	if !strings.Contains(hints, "1-9") {
+		t.Fatal("the menu no longer offers numbers")
+	}
+	for _, digit := range "123456789" {
+		if got := parseKey(bytes.NewReader([]byte{byte(digit)})); got != key(digit) {
+			t.Errorf("pressing %q gives %v, so that machine cannot be picked", digit, got)
 		}
 	}
 }
