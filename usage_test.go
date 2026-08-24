@@ -295,3 +295,28 @@ func TestWhichSpaceAnActionWasTriggeredIn(t *testing.T) {
 		})
 	}
 }
+
+func TestVersionDoesNotWarnAboutADaemonThatIsNotRunning(t *testing.T) {
+	// "not running" and "the running daemon is an older build" are both about
+	// the same daemon, and only one of them can be true. The second is silenced
+	// by asking whether anything answered -- and that guard could be removed
+	// without any test minding, because a test binary has no build of its own
+	// to compare against and the warning stays quiet either way.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "no-daemon-here")
+
+	var out, warn strings.Builder
+	if err := reportVersion(&out, &warn, "9fcc667"); err != nil {
+		t.Fatalf("version failed with no daemon: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "not running") {
+		t.Errorf("the answer does not say the daemon is not running: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "9fcc667") {
+		t.Errorf("the answer does not name the installed build: %q", out.String())
+	}
+	if warn.String() != "" {
+		t.Errorf("warned about a daemon that is not running: %q", warn.String())
+	}
+}

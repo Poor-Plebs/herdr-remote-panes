@@ -230,6 +230,14 @@ experimental and turned on per machine.
 // panes -- and until now the only way to see which build it was came from
 // reading its log.
 func printVersion() error {
+	return reportVersion(os.Stdout, os.Stderr, version.Short())
+}
+
+// reportVersion is printVersion with the installed build handed to it and
+// somewhere to write, since version.Short cannot be anything but "unknown"
+// inside a test binary -- and that one answer is what silences the warning
+// below, so with it the whole of this reads as correct whether it is or not.
+func reportVersion(out, warn io.Writer, installed string) error {
 	running := ""
 	reply, err := syncd.Ask(syncd.Command{Cmd: "status"})
 	switch {
@@ -246,12 +254,15 @@ func printVersion() error {
 		running = reply.Revision
 	}
 
-	for _, line := range versionLines(version.Short(), running) {
-		fmt.Println(line)
+	for _, line := range versionLines(installed, running) {
+		fmt.Fprintln(out, line)
 	}
+	// Only when something answered. A daemon that is not running is not a
+	// daemon running an older build, and saying both at once is a
+	// contradiction in four lines of output.
 	if err == nil {
-		if stale := version.StaleMessage(reply.Revision); stale != "" {
-			fmt.Fprintf(os.Stderr, "warning: %s\n", stale)
+		if stale := version.StaleMessageFor(reply.Revision, installed); stale != "" {
+			fmt.Fprintf(warn, "warning: %s\n", stale)
 		}
 	}
 	return nil

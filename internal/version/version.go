@@ -69,13 +69,15 @@ func shortRevision(recorded string, modified bool) string {
 // checkout has no revision to compare and stays quiet rather than warning every
 // time and teaching people to ignore it.
 func StaleMessage(running string) string {
-	return staleMessage(running, Short())
+	return StaleMessageFor(running, Short())
 }
 
-// staleMessage is StaleMessage with the installed build handed to it, since
+// StaleMessageFor is StaleMessage with the installed build handed to it, since
 // Short cannot be anything but "unknown" in a test binary -- which is the one
-// answer that makes this say nothing at all.
-func staleMessage(running, installed string) string {
+// answer that makes this say nothing at all. Exported because the caller that
+// decides whether to say anything has the same problem: with Short answering
+// "unknown" underneath it, the decision reads as correct whether it is or not.
+func StaleMessageFor(running, installed string) string {
 	if installed == "" || installed == "unknown" || running == installed {
 		return ""
 	}

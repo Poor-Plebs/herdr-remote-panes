@@ -111,7 +111,7 @@ func TestWhenTheRunningDaemonIsWorthMentioning(t *testing.T) {
 		},
 	} {
 		t.Run(tt.what, func(t *testing.T) {
-			got := staleMessage(tt.running, tt.installed)
+			got := StaleMessageFor(tt.running, tt.installed)
 			if tt.wantQuiet {
 				if got != "" {
 					t.Errorf("want nothing said, got %q", got)
@@ -154,7 +154,7 @@ func TestTheREADMEQuotesTheWarningTheCodeActuallyPrints(t *testing.T) {
 	if m == nil {
 		t.Fatalf("cannot read the two builds out of the README's example: %q", shown)
 	}
-	if want := staleMessage(m[1], m[2]); shown != want {
+	if want := StaleMessageFor(m[1], m[2]); shown != want {
 		t.Errorf("the README quotes\n\t%q\nbut the code prints\n\t%q", shown, want)
 	}
 }
