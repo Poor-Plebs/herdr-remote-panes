@@ -1515,3 +1515,111 @@ func TestGivingUpIsNotForeverIfYouAskAgain(t *testing.T) {
 		t.Error("asking again did not try the machine, so there is no way back short of a restart")
 	}
 }
+
+func TestTerminalsComingAndGoingDoNotAccumulate(t *testing.T) {
+	// The daemon runs for as long as Herdr does, and nearly everything it
+	// remembers is keyed by a pane or a terminal that will not be there
+	// tomorrow: which mirrors exist, which were dismissed, which failed and
+	// when to try them again, what each was named, which agent each was last
+	// reported as running. On a machine somebody actually works on, those keys
+	// turn over all day.
+	//
+	// Each of those has code to forget an entry whose terminal has gone. This
+	// is what says the forgetting keeps up with the arriving.
+	here := withFakeHerdr(t)
+	there, remoteState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	var shared string
+	for id := range there().Workspaces {
+		shared = id
+	}
+	if shared == "" {
+		t.Fatal("the machine has no shared space")
+	}
+
+	// Every map that is keyed by something that comes and goes, added up.
+	remembered := func() int {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		s := d.hosts["bot"]
+		if s == nil {
+			t.Fatal("the machine is gone")
+		}
+		return len(s.mirrors) + len(s.dismissed) + len(s.abandoned) + len(s.failures) +
+			len(s.retryAt) + len(s.pendingPlacement) + len(s.pendingFocus) +
+			len(s.labels) + len(s.reportedAgents) + len(s.shellPanes) + len(d.seenStray)
+	}
+
+	settled := remembered()
+	peak := 0
+	const cycles = 30
+	for i := 0; i < cycles; i++ {
+		// Two ways a terminal arrives, because they leave different things
+		// behind: asked for from here, which writes down how its mirror should
+		// be placed and that it should be gone to, or simply appearing on the
+		// machine, which writes down nothing until the mirror opens.
+		if i%3 == 0 {
+			if reply := d.dispatch(Command{Cmd: "open", Host: "bot", Placement: "tab"}); !reply.OK {
+				t.Fatalf("open: %s", reply.Message)
+			}
+			settle(t, d, here, 2, there)
+			// And away again, so the cycle ends where it began. A terminal
+			// left running is a thing legitimately remembered, and counting it
+			// as a leak would make this fail for working correctly.
+			newest, highest := "", -1
+			for id := range there().Panes {
+				if n := paneNumber(id); n > highest {
+					newest, highest = id, n
+				}
+			}
+			if newest != "" {
+				closePaneOn(t, remoteState, newest)
+				settle(t, d, here, 2, there)
+			}
+		}
+
+		paneID := addAgentPaneOn(t, remoteState, shared, "work", "claude", "idle")
+		settle(t, d, here, 2, there)
+		if n := remembered(); n > peak {
+			peak = n
+		}
+
+		// Half the time the terminal simply goes on the machine; the other half
+		// somebody closes the mirror here first, which is a different route
+		// through this and the one that writes a dismissal down. Both keys are
+		// the remote terminal's, which is new every time -- unlike a pane id,
+		// which Herdr hands back out and which therefore cannot accumulate
+		// however badly it is handled.
+		if mirrors := mirrorsHere(here(), "bot"); i%2 == 0 && len(mirrors) > 1 {
+			// The newest, which is the one this cycle added. mirrorsHere
+			// returns them newest first.
+			if id, _ := mirrors[0]["pane_id"].(string); id != "" {
+				closePaneByHand(t, id)
+				settle(t, d, here, 2, there)
+			}
+		}
+
+		closePaneOn(t, remoteState, paneID)
+		settle(t, d, here, 2, there)
+	}
+
+	// The churn has to have been real, or this measures nothing: a test where
+	// no terminal was ever mirrored would show a flat count and prove it.
+	if peak <= settled {
+		t.Fatalf("nothing was ever remembered beyond the resting %d, so no terminal was mirrored", settled)
+	}
+
+	// And back to where it started, not thirty entries higher.
+	if got := remembered(); got > settled {
+		t.Errorf("after %d terminals came and went, %d things are remembered, up from %d at rest",
+			cycles, got, settled)
+	}
+}
