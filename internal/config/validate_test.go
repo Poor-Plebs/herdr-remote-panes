@@ -1086,3 +1086,66 @@ func TestProblemsCatchesALabelThatCannotBeDrawn(t *testing.T) {
 		t.Errorf("a target of nothing but spaces should be reported, got %q", problems)
 	}
 }
+
+func TestAConfigFileWithNothingInItSaysSo(t *testing.T) {
+	// "unexpected end of JSON input" is what the decoder says about an empty
+	// file, and it reads as though something was cut off partway. A config gets
+	// into that state by itself -- a truncated write, a redirect that clobbered
+	// it -- so it is worth saying what it is and what to do, since the plugin
+	// writes a fresh one whenever the file is missing entirely.
+	for _, body := range []string{"", "   ", "\n\n", "\t \n"} {
+		dir := t.TempDir()
+		t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load()
+		if err == nil {
+			t.Fatalf("an empty config was accepted (%q)", body)
+		}
+		if !strings.Contains(err.Error(), "empty") || !strings.Contains(err.Error(), "delete") {
+			t.Errorf("the error for %q does not say what is wrong or what to do: %v", body, err)
+		}
+		if strings.Contains(err.Error(), "unexpected end") {
+			t.Errorf("the decoder's own wording survived for %q: %v", body, err)
+		}
+	}
+}
+
+func TestAByteOrderMarkIsNotAMistakeToReportBackToSomebody(t *testing.T) {
+	// Several editors write one. JSON does not allow it, and the decoder's
+	// complaint names a character that appears nowhere in the file as its
+	// author sees it -- with nothing to fix in a file that is otherwise
+	// correct. So it is skipped.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	body := append([]byte("\xef\xbb\xbf"), []byte(`{"poll_interval":"9s","hosts":[{"target":"bot"}]}`)...)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("a config with a byte-order mark was refused: %v", err)
+	}
+	if cfg.Interval().String() != "9s" {
+		t.Errorf("poll_interval came out %s, want 9s", cfg.Interval())
+	}
+	if len(cfg.Hosts) != 1 || cfg.Hosts[0].Target != "bot" {
+		t.Errorf("the machines came out %+v", cfg.Hosts)
+	}
+
+	// And the line numbers still match the file, since the mark goes before
+	// anything reads an offset out of it.
+	dir = t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	broken := append([]byte("\xef\xbb\xbf"), []byte("{\n  \"poll_interval\": 2\n}")...)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), broken, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil {
+		t.Fatal("a broken config after a mark was accepted")
+	} else if !strings.Contains(err.Error(), "line 2") {
+		t.Errorf("the line number does not match the file: %v", err)
+	}
+}

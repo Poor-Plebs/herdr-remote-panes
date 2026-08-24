@@ -208,6 +208,14 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("read %s: %w", path, err)
 	}
 
+	// A byte-order mark, which several editors write and JSON does not allow.
+	// Dropped rather than reported: the decoder's complaint names a character
+	// that does not appear anywhere in the file as the file's author sees it,
+	// and there is nothing to fix in a file that is otherwise correct. Dropped
+	// here, before anything reads offsets out of raw, so the line numbers in
+	// any later complaint still match the file.
+	raw = bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf"))
+
 	cfg := Defaults()
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return Config{}, &ParseError{Path: path, Detail: describeJSONError(raw, err)}
@@ -242,6 +250,15 @@ func (e *ParseError) Error() string { return e.Path + ": " + e.Detail }
 // structs -- they are looking at a file they just edited and want to know which
 // line to change.
 func describeJSONError(raw []byte, err error) string {
+	// "unexpected end of JSON input" is what the decoder says about a file with
+	// nothing in it, and it reads as though something was cut off partway. An
+	// empty config is a state a file gets into by itself -- a truncated write,
+	// a redirect that clobbered it -- and the way out is worth saying, since
+	// the plugin writes a fresh one whenever the file is missing entirely.
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return "the file is empty; delete it and a fresh one will be written with the defaults in it"
+	}
+
 	var typeErr *json.UnmarshalTypeError
 	if errors.As(err, &typeErr) {
 		return fmt.Sprintf("%s should be %s, not %s%s",
