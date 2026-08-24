@@ -556,3 +556,108 @@ func TestTheNameColumnFitsTheNamesThatAreThere(t *testing.T) {
 		}
 	})
 }
+
+// rowFor is the drawn line for a machine, found by its name rather than by
+// counting: the frame's leading lines come and go with the popup's size.
+func rowFor(t *testing.T, drawn []string, target string) string {
+	t.Helper()
+	for _, line := range drawn {
+		plain := visible(line)
+		if strings.Contains(plain, target) && !strings.Contains(plain, "Connect to a machine") {
+			return plain
+		}
+	}
+	t.Fatalf("no row for %q in:\n%s", target, strings.Join(drawn, "\n"))
+	return ""
+}
+
+func TestAnUnreachableMachineSaysWhyInTheMenu(t *testing.T) {
+	// "unreachable" on its own is a dead end: it is the screen somebody is
+	// looking at when they want to know what to do, and it told them only that
+	// there was nothing to be done from here. The reason has been in the
+	// listing and the log all along.
+	entries := []Entry{{
+		Target: "prod", Configured: true, GaveUp: true,
+		Reason: shortReason("host key changed — verify it, then update ~/.ssh/known_hosts"),
+	}}
+
+	line := rowFor(t, lines(entries, 0, 80, 20), "prod")
+	if !strings.Contains(line, "unreachable") {
+		t.Fatalf("the machine does not read as unreachable: %q", line)
+	}
+	if !strings.Contains(line, "host key changed") {
+		t.Errorf("%q does not say why the machine cannot be reached", line)
+	}
+	// The cause, not the sentence about what to do with it: that belongs where
+	// there is room for a sentence.
+	if strings.Contains(line, "known_hosts") {
+		t.Errorf("%q carries the whole summary into a menu row", line)
+	}
+	// And cut at the join rather than wherever the width ran out. Cutting by
+	// width alone also hides the second half, but leaves half a sentence
+	// trailing off -- "host key changed — verify i…" -- which reads as
+	// something going wrong rather than as an answer.
+	if strings.Contains(line, "—") {
+		t.Errorf("%q keeps the join, so what follows is a sentence cut short", line)
+	}
+	if strings.Contains(line, "…") {
+		t.Errorf("%q trails off; the cause on its own fits", line)
+	}
+	if !strings.Contains(line, "enter to retry") {
+		t.Errorf("%q lost the way back", line)
+	}
+}
+
+func TestWhenRoomIsShortTheReasonOutlastsTheReminder(t *testing.T) {
+	// Enter is guessable. Why a machine cannot be reached is not, so when only
+	// one of them fits it is the reminder that goes.
+	entries := []Entry{{
+		Target: "prod", Configured: true, GaveUp: true,
+		Reason: shortReason("host key changed — verify it"),
+	}}
+
+	tight := ""
+	for cols := 80; cols >= 40; cols -= 2 {
+		line := rowFor(t, lines(entries, 0, cols, 20), "prod")
+		if !strings.Contains(line, "enter to retry") {
+			tight = line
+			break
+		}
+	}
+	if tight == "" {
+		t.Skip("the reminder still fits at every width tried")
+	}
+	if !strings.Contains(tight, "host key changed") {
+		t.Errorf("at the width where the reminder went, the reason went first: %q", tight)
+	}
+}
+
+func TestAReasonFromAMachineIsMadeSafeToDraw(t *testing.T) {
+	// An unrecognised failure keeps the first line of whatever ssh printed,
+	// which is text from somewhere else on its way to a terminal.
+	entry := Entry{
+		Target: "prod", Configured: true, GaveUp: true,
+		Reason: shortReason("\x1b[31mred\x1b[0m\nand a second line"),
+	}
+	if strings.ContainsAny(entry.Reason, "\n\r") || strings.ContainsRune(entry.Reason, 0x1b) {
+		t.Errorf("the reason is %q, which steers the terminal", entry.Reason)
+	}
+
+	line := rowFor(t, lines([]Entry{entry}, 0, 80, 20), "prod")
+	if text.Width(line) > 80 {
+		t.Errorf("the row is %d columns wide: %q", text.Width(line), line)
+	}
+}
+
+func TestAMachineWithNothingToSayStillReadsProperly(t *testing.T) {
+	// Not every failure has a summary -- a machine given up on for dropping
+	// terminals has no ssh error behind it -- and the row must not end up with
+	// a dangling separator.
+	line := rowFor(t, lines([]Entry{{Target: "prod", Configured: true, GaveUp: true}}, 0, 80, 20), "prod")
+	if strings.Contains(line, "·  ·") || strings.Contains(line, "· ·") {
+		t.Errorf("%q has an empty reason between the separators", line)
+	}
+	if !strings.Contains(line, "unreachable") || !strings.Contains(line, "enter to retry") {
+		t.Errorf("%q is missing part of what it should say", line)
+	}
+}

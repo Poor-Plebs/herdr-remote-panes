@@ -38,6 +38,10 @@ type Entry struct {
 	// GaveUp marks a machine that could not be reached and is no longer being
 	// retried until it is connected to again.
 	GaveUp bool
+	// Reason is why, in a few words. A machine that says only "unreachable"
+	// leaves somebody with nothing to do about it, and this is the screen they
+	// are looking at when they want to know.
+	Reason string
 }
 
 // Connect asks the daemon to connect to a machine.
@@ -236,6 +240,7 @@ func collect() ([]Entry, string) {
 			entry.SSHOnly = info.SSHOnly
 			entry.Mirroring = info.Mirroring
 			entry.GaveUp = info.GaveUp
+			entry.Reason = shortReason(info.LastError)
 		}
 	}
 
@@ -392,6 +397,13 @@ func statusSpans(entry Entry) []span {
 		// before pressing m, and without it there is no telling which way the
 		// toggle would go.
 		out := []span{{"unreachable", red}}
+		if entry.Reason != "" {
+			// Before the reminder, not after. When there is not room for
+			// everything the reminder is what goes: enter is guessable and the
+			// reason is not, and "unreachable" on its own leaves somebody with
+			// nothing they can do next.
+			out = append(out, span{" · " + entry.Reason, dim})
+		}
 		if isMirroring(entry) {
 			out = append(out, span{" · mirrored", dim})
 		}
@@ -408,6 +420,23 @@ func statusSpans(entry Entry) []span {
 		return []span{{"from ~/.ssh/config · " + mode, dim}}
 	}
 }
+
+// shortReason is the part of a failure worth putting in a menu.
+//
+// The summaries are written as a cause and then what to do about it, joined by
+// a dash: "host key changed — verify it, then update ~/.ssh/known_hosts". The
+// second half is a sentence and belongs where there is room for one, which is
+// the listing and the log. The first half is a few words and is the part that
+// stops "unreachable" being a dead end.
+func shortReason(summary string) string {
+	if cause, _, found := strings.Cut(summary, " — "); found {
+		summary = cause
+	}
+	return text.Truncate(text.Sanitize(summary), maxReasonWidth)
+}
+
+// maxReasonWidth keeps a long cause from crowding out everything beside it.
+const maxReasonWidth = 28
 
 func plainOf(spans []span) string {
 	var b strings.Builder
