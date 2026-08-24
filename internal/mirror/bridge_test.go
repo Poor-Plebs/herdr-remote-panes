@@ -147,3 +147,58 @@ func TestABridgeSaysItIsRunningWhileItRuns(t *testing.T) {
 		t.Error("the pane still reads as live after the bridge returned")
 	}
 }
+
+func TestLeavingASessionClosesThePaneWhateverTheShellSaid(t *testing.T) {
+	// ssh reports its own failures as 255 and passes through anything else, so
+	// a different status is the session on the machine ending rather than the
+	// connection to it failing.
+	//
+	// It matters because `exit` with no argument returns the last command's
+	// status. Run something that fails, type exit, and the session ends with
+	// that status -- which was read as a dropped connection, so the pane came
+	// back a moment after you had finished with it. Ctrl-C does the same.
+	for _, tt := range []struct {
+		code   string
+		reopen bool
+		what   string
+	}{
+		{"0", false, "a session ended cleanly"},
+		{"1", false, "a session ended after something failed"},
+		{"130", false, "a session ended with ctrl-C"},
+		{"255", true, "ssh could not connect, or the connection broke"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			exitingSSH(t, tt.code)
+			t.Setenv(EnvTarget, "bot")
+			t.Setenv(EnvMode, "ssh")
+			stopped.Store(false)
+
+			err := bridge()
+			if got := shouldReportFailure(err, stopped.Load()); got != tt.reopen {
+				verb := "left alone"
+				if tt.reopen {
+					verb = "opened again"
+				}
+				t.Errorf("ssh exiting %s: the pane is %v, want it %s",
+					tt.code, map[bool]string{true: "opened again", false: "left alone"}[got], verb)
+			}
+		})
+	}
+}
+
+// exitingSSH puts an ssh on PATH that answers the probe and then exits with a
+// given status, as a session ending does.
+func exitingSSH(t *testing.T, code string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\nlast=\"\"; for a in \"$@\"; do last=\"$a\"; done\n" +
+		"case \"$last\" in *command\\ -v\\ herdr*) echo /usr/bin/herdr; exit 0;; esac\n" +
+		"exit " + code + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+	t.Setenv("HERDR_PANE_ID", "w1:p2")
+}

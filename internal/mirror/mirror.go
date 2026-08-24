@@ -188,9 +188,34 @@ func shell(client *remote.Client) error {
 	defer stop()
 
 	if err := cmd.Wait(); err != nil {
+		// ssh reports its own failures as 255 and passes through anything else,
+		// so a different status is the session on the machine ending rather
+		// than the connection to it failing. `exit` with no argument returns
+		// the last command's status, so leaving a session after something went
+		// wrong is an ordinary way to go with a non-zero one -- as is pressing
+		// ctrl-C. Reopening those put the pane back a moment after somebody had
+		// finished with it.
+		if code := exitStatus(err); code > 0 && code != sshOwnFailure {
+			return nil
+		}
 		return fmt.Errorf("%w running: %s", err, describeCommand(argv))
 	}
 	return nil
+}
+
+// sshOwnFailure is the status ssh exits with when the failure is its own -- it
+// could not connect, or the connection broke -- rather than the remote
+// command's own status passed through.
+const sshOwnFailure = 255
+
+// exitStatus is the status a command exited with, or -1 when it was killed by
+// a signal or never ran.
+func exitStatus(err error) int {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode()
+	}
+	return -1
 }
 
 // attach hands the pane straight to `herdr terminal attach` on the far side.

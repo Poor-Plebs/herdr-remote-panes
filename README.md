@@ -156,7 +156,9 @@ other spaces.
 
 **A dropped connection comes back; one you closed does not.** A terminal whose
 SSH link fails is reopened. One you deliberately closed stays closed, and is
-still closed after a restart.
+still closed after a restart — including one you ended by typing `exit` after
+something went wrong, which leaves the session with that command's status
+rather than zero.
 
 A link that keeps dropping is a different thing. If a replacement terminal does
 not last either, the machine is left alone rather than having a pane opened and
