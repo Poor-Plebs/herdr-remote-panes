@@ -120,6 +120,11 @@ type HostInfo struct {
 	// Mirroring reports whether this machine's terminals are kept in step,
 	// rather than being a plain SSH session.
 	Mirroring bool `json:"mirroring,omitempty"`
+	// Unmirrored is how many of the machine's terminals were given up on after
+	// failing to mirror. They are still open on the machine, and without this
+	// the listing simply showed a smaller number than the machine has, with
+	// nothing to say why.
+	Unmirrored int `json:"unmirrored,omitempty"`
 	// GaveUp marks a machine that could not be reached and is no longer being
 	// retried until it is connected to again.
 	GaveUp    bool   `json:"gave_up,omitempty"`

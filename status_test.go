@@ -105,3 +105,40 @@ func TestStatusOfNothingIsNoLines(t *testing.T) {
 		t.Errorf("statusLines(nil) = %q, want nothing", got)
 	}
 }
+
+func TestStatusSaysWhenATerminalCouldNotBeMirrored(t *testing.T) {
+	// A terminal that fails to mirror often enough is given up on. It is still
+	// open on the machine, and without saying so the listing simply reads
+	// lower than what is over there -- somebody counting tabs finds one
+	// missing and nothing anywhere explaining it.
+	line := statusLines([]syncd.HostInfo{
+		{Label: "bot", Connected: true, Mirrors: 2, Unmirrored: 1},
+	})[0]
+
+	if !strings.Contains(line, "could not be mirrored") {
+		t.Errorf("%q does not say a terminal was given up on", line)
+	}
+	if !strings.Contains(line, "connect again") {
+		t.Errorf("%q does not say how to try again", line)
+	}
+	// The count of what is mirrored is still what is mirrored.
+	if !strings.Contains(line, "2 mirrored") {
+		t.Errorf("%q lost the count of what is working", line)
+	}
+}
+
+func TestAMachineThatCannotBeReachedSaysThatFirst(t *testing.T) {
+	// A machine with terminals it could not mirror and no connection at all
+	// has a better answer than the first of those.
+	line := statusLines([]syncd.HostInfo{{
+		Label: "bot", Connected: false, GaveUp: true, Unmirrored: 2,
+		LastError: "host key changed — verify it, then update ~/.ssh/known_hosts",
+	}})[0]
+
+	if !strings.Contains(line, "host key changed") {
+		t.Errorf("%q does not say what is actually wrong", line)
+	}
+	if strings.Contains(line, "could not be mirrored") {
+		t.Errorf("%q leads with a detail instead of the machine being unreachable", line)
+	}
+}

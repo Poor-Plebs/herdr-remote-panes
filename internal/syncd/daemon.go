@@ -1373,14 +1373,15 @@ func (d *Daemon) status() []HostInfo {
 	out := make([]HostInfo, 0, len(d.hosts))
 	for _, state := range d.orderedHosts() {
 		info := HostInfo{
-			Target:    state.host.Target,
-			Label:     state.host.DisplayLabel(),
-			Connected: state.lastErr == nil,
-			Mirrors:   len(state.mirrors),
-			SSHOnly:   state.sshOnly,
-			Terminals: len(state.shellPanes),
-			Mirroring: d.config().Mirrors(state.host),
-			GaveUp:    state.gaveUp,
+			Target:     state.host.Target,
+			Label:      state.host.DisplayLabel(),
+			Connected:  state.lastErr == nil,
+			Mirrors:    len(state.mirrors),
+			SSHOnly:    state.sshOnly,
+			Terminals:  len(state.shellPanes),
+			Mirroring:  d.config().Mirrors(state.host),
+			GaveUp:     state.gaveUp,
+			Unmirrored: len(state.abandoned),
 		}
 		if state.lastErr != nil {
 			info.LastError = summarizeError(state.lastErr)
@@ -2173,6 +2174,13 @@ func (d *Daemon) backOff(state *hostSync, terminalID string, cause error) {
 		state.host.Target, terminalID, attempts, cause)
 
 	if attempts >= maxMirrorAttempts {
+		// Worth saying. The machine-level giving up says so and says what to do
+		// about it; this one stopped silently, leaving a terminal on the
+		// machine that nothing here shows and nothing anywhere accounts for.
+		// The listing now counts it, and this says which one and why.
+		log.Printf("%s: giving up on terminal %s after %d attempts; it is still "+
+			"open on the machine — connect again to try mirroring it",
+			state.host.Target, terminalID, attempts)
 		state.abandoned[terminalID] = true
 		delete(state.retryAt, terminalID)
 		return

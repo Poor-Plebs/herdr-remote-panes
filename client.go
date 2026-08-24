@@ -87,6 +87,13 @@ func statusLines(hosts []syncd.HostInfo) []string {
 		if h.SSHOnly {
 			open, r.kind = h.Terminals, "ssh"
 		}
+		// Terminals the machine has that this could not mirror. Left out, the
+		// count simply reads lower than what is on the machine, with nothing
+		// to say why. Only when there is nothing worse to report: a machine
+		// that cannot be reached at all has a better answer than this one.
+		if h.Unmirrored > 0 && r.state == "ok" {
+			r.state = fmt.Sprintf("%d could not be mirrored — connect again to retry", h.Unmirrored)
+		}
 		// The kind is worth saying even for a machine that is not answering:
 		// it is how you know which way the m key would toggle. The count is
 		// not -- "0 mirrored" reads as a tally rather than as the mode, and a
