@@ -276,21 +276,33 @@ func observe(client *remote.Client, terminal string) error {
 		err := streamOnce(client, terminal, cols, rows, winch)
 		switch {
 		case err == nil:
+			// The terminal on the machine ended, so this pane has nothing left
+			// to show and should close rather than reconnect to nothing.
 			return nil
 		case errors.Is(err, errResized):
 			// Not a failure: reconnect straight away at the new size.
 			attempt = 0
 			continue
-		case attempt >= 4:
+		case attempt >= maxObserveAttempts:
 			return err
 		}
 		select {
-		case <-time.After(time.Duration(attempt+1) * time.Second):
+		case <-time.After(time.Duration(attempt+1) * observeRetryStep):
 		case <-winch:
 		}
 		attempt++
 	}
 }
+
+// maxObserveAttempts is how many times a broken stream is picked up again
+// before the pane gives up and closes. A stream that ends cleanly is not one of
+// these: that is the terminal on the machine going away.
+const maxObserveAttempts = 4
+
+// observeRetryStep is the unit the wait between attempts grows by. A variable
+// so a test can shorten it, since the policy is what matters and not the
+// seconds.
+var observeRetryStep = time.Second
 
 // streamOnce runs one observe stream, returning nil when the remote terminal
 // is gone and an error when the stream should be retried. A resize ends the
@@ -332,14 +344,12 @@ func streamOnce(client *remote.Client, terminal string, cols, rows int, winch <-
 
 	frames := bufio.NewScanner(stdout)
 	frames.Buffer(make([]byte, 0, 64*1024), maxFrameBytes)
-	sawFrame := false
 	abandoned := false
 	for frames.Scan() {
 		raw, ok := decodeFrame(frames.Bytes())
 		if !ok {
 			continue
 		}
-		sawFrame = true
 		if _, err := os.Stdout.Write(raw); err != nil {
 			// Nowhere left to put it: the pane has gone.
 			abandoned = true
@@ -377,11 +387,20 @@ func streamOnce(client *remote.Client, terminal string, cols, rows int, winch <-
 	if wasResized.Load() {
 		return errResized
 	}
-	if waitErr != nil && !sawFrame {
+	// ssh reports its own failures as 255 and passes through anything else, so
+	// that is the connection dying rather than the stream ending.
+	//
+	// It used to depend on whether anything had been shown yet: a stream that
+	// had delivered frames and then died was taken for the terminal going away,
+	// so the pane closed. And a mirror pane that goes leaving no record of a
+	// failure is read as a tab somebody shut, which closes the terminal on the
+	// machine. A connection dropping halfway through therefore destroyed the
+	// work it had been showing.
+	if exitStatus(waitErr) == sshOwnFailure {
 		return waitErr
 	}
-	// A stream that delivered frames and then ended cleanly means the remote
-	// terminal went away; let the pane close.
+	// Anything else is the command on the machine ending, which means the
+	// terminal went away: let the pane close.
 	return nil
 }
 

@@ -149,3 +149,124 @@ func TestAResizeEndsTheStreamSoTheNextOneFitsThePane(t *testing.T) {
 		t.Errorf("a resize ended the stream with %v, want it to be reconnected at the new size", err)
 	}
 }
+
+// countingSSH answers each call with the next script in turn, so a test can say
+// what happens on the first attempt and what happens after.
+func countingSSH(t *testing.T, scripts ...string) func() int {
+	t.Helper()
+	dir := t.TempDir()
+	counter := filepath.Join(dir, "n")
+	body := "#!/bin/sh\n" +
+		"last=\"\"; for a in \"$@\"; do last=\"$a\"; done\n" +
+		"case \"$last\" in *command\\ -v\\ herdr*) echo /usr/bin/herdr; exit 0;; esac\n" +
+		"n=$(cat " + counter + " 2>/dev/null || echo 0); n=$((n+1)); echo $n > " + counter + "\n" +
+		"case $n in\n"
+	for i, script := range scripts {
+		body += fmt.Sprintf("  %d) %s;;\n", i+1, script)
+	}
+	body += "  *) " + scripts[len(scripts)-1] + ";;\nesac\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return func() int {
+		raw, err := os.ReadFile(counter)
+		if err != nil {
+			return 0
+		}
+		n := 0
+		fmt.Sscanf(strings.TrimSpace(string(raw)), "%d", &n)
+		return n
+	}
+}
+
+func TestAStreamThatEndsCleanlyClosesThePane(t *testing.T) {
+	// The terminal on the machine went away, so there is nothing left to show.
+	// Reconnecting would be reconnecting to nothing, over and over.
+	attempts := countingSSH(t, "echo '"+frame("bye")+"'; exit 0")
+
+	if err := observe(remote.New("bot", ""), "term_1"); err != nil {
+		t.Errorf("observe returned %v; a terminal that ended is not a failure", err)
+	}
+	if got := attempts(); got != 1 {
+		t.Errorf("the stream was opened %d times, want once", got)
+	}
+}
+
+func TestABrokenStreamIsPickedUpAgain(t *testing.T) {
+	// A connection that broke can come good, and the pane is showing somebody's
+	// work: it is worth another go before giving up on it.
+	restore := observeRetryStep
+	observeRetryStep = time.Millisecond
+	defer func() { observeRetryStep = restore }()
+
+	attempts := countingSSH(t,
+		"echo 'ssh: connection reset' >&2; exit 255",
+		"echo '"+frame("back")+"'; exit 0")
+
+	if err := observe(remote.New("bot", ""), "term_1"); err != nil {
+		t.Errorf("observe returned %v after the stream came back", err)
+	}
+	if got := attempts(); got != 2 {
+		t.Errorf("the stream was opened %d times, want a failure and then a success", got)
+	}
+}
+
+func TestAStreamThatNeverComesBackGivesUp(t *testing.T) {
+	// Not for ever: a pane retrying a machine that will not answer is a pane
+	// doing nothing visible and costing a connection attempt every few seconds.
+	restore := observeRetryStep
+	observeRetryStep = time.Millisecond
+	defer func() { observeRetryStep = restore }()
+
+	attempts := countingSSH(t, "echo 'ssh: no route to host' >&2; exit 255")
+
+	if err := observe(remote.New("bot", ""), "term_1"); err == nil {
+		t.Error("observe reported success for a stream that never came back")
+	}
+	if got := attempts(); got != maxObserveAttempts+1 {
+		t.Errorf("the stream was opened %d times, want %d", got, maxObserveAttempts+1)
+	}
+}
+
+func TestAStreamThatDropsHalfwayIsAFailureNotAnEnding(t *testing.T) {
+	// It used to depend on whether anything had been shown yet. A stream that
+	// had delivered frames and then died was taken for the terminal going away,
+	// so the pane closed leaving no record of a failure -- and a mirror pane
+	// that goes without one is read as a tab somebody shut, which closes the
+	// terminal on the machine. A connection dropping halfway through therefore
+	// destroyed the work it had been showing.
+	restore := observeRetryStep
+	observeRetryStep = time.Millisecond
+	defer func() { observeRetryStep = restore }()
+
+	attempts := countingSSH(t,
+		"echo '"+frame("some output")+"'; echo 'ssh: connection reset' >&2; exit 255")
+
+	err := observe(remote.New("bot", ""), "term_1")
+	if err == nil {
+		t.Fatal("a connection that dropped halfway was reported as the terminal ending, " +
+			"which closes the terminal on the machine")
+	}
+	if got := attempts(); got != maxObserveAttempts+1 {
+		t.Errorf("the stream was opened %d times, want it retried before giving up", got)
+	}
+}
+
+func TestTheRemoteCommandEndingClosesThePane(t *testing.T) {
+	// The other half. ssh passes through the status of what it ran, so
+	// anything other than its own 255 is herdr on the machine having finished
+	// -- the terminal went away, and there is nothing to reconnect to.
+	restore := observeRetryStep
+	observeRetryStep = time.Millisecond
+	defer func() { observeRetryStep = restore }()
+
+	attempts := countingSSH(t, "echo '"+frame("output")+"'; exit 1")
+
+	if err := observe(remote.New("bot", ""), "term_1"); err != nil {
+		t.Errorf("observe returned %v; the command on the machine ended, it did not fail", err)
+	}
+	if got := attempts(); got != 1 {
+		t.Errorf("the stream was opened %d times, want once", got)
+	}
+}
