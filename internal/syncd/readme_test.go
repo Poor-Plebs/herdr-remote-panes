@@ -151,3 +151,82 @@ func TestTheREADMEsSidebarIsNamedTheWayThisNamesThings(t *testing.T) {
 		})
 	}
 }
+
+// TestTheREADMERequiresWhatTheProjectRequires holds one sentence to three
+// files.
+//
+// "Requires Herdr 0.8.0+ and Go 1.25+, on Linux or macOS" is a claim about the
+// manifest and about go.mod, and it is the sentence somebody reads before
+// deciding whether they can install this at all. Nothing kept it honest, and
+// each of the three moves independently of it: the Go floor was raised once
+// already, which is exactly the change that would have stranded it.
+func TestTheREADMERequiresWhatTheProjectRequires(t *testing.T) {
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(readme)
+
+	t.Run("the Go version go.mod asks for", func(t *testing.T) {
+		mod, err := os.ReadFile("../../go.mod")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := ""
+		for _, line := range strings.Split(string(mod), "\n") {
+			if after, found := strings.CutPrefix(strings.TrimSpace(line), "go "); found {
+				want = strings.TrimSpace(after)
+				break
+			}
+		}
+		if want == "" {
+			t.Fatal("go.mod names no Go version")
+		}
+		// Written as a floor, since that is what it is: anything newer builds.
+		if !strings.Contains(text, "Go "+want+"+") {
+			t.Errorf("go.mod asks for Go %s and the README does not say so", want)
+		}
+	})
+
+	t.Run("the Herdr version the manifest asks for", func(t *testing.T) {
+		manifest, err := os.ReadFile("../../herdr-plugin.toml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := ""
+		for _, line := range strings.Split(string(manifest), "\n") {
+			if after, found := strings.CutPrefix(strings.TrimSpace(line), "min_herdr_version = "); found {
+				want = strings.Trim(strings.TrimSpace(after), `"`)
+				break
+			}
+		}
+		if want == "" {
+			t.Fatal("the manifest names no minimum Herdr version")
+		}
+		if !strings.Contains(text, "Herdr "+want+"+") {
+			t.Errorf("the manifest needs Herdr %s and the README does not say so", want)
+		}
+	})
+
+	t.Run("the platforms the manifest claims", func(t *testing.T) {
+		manifest, err := os.ReadFile("../../herdr-plugin.toml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Herdr refuses to install a plugin on a platform its manifest does not
+		// list, so this decides who can use it at all.
+		for _, platform := range []struct{ manifest, prose string }{
+			{`"linux"`, "Linux"},
+			{`"macos"`, "macOS"},
+		} {
+			listed := strings.Contains(string(manifest), platform.manifest)
+			said := strings.Contains(text, platform.prose)
+			if listed != said {
+				t.Errorf("the manifest %s %s and the README %s",
+					map[bool]string{true: "supports", false: "does not support"}[listed],
+					platform.prose,
+					map[bool]string{true: "says it does", false: "does not"}[said])
+			}
+		}
+	})
+}
