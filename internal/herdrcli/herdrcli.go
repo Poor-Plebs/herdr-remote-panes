@@ -191,6 +191,10 @@ func IsNotFound(err error) bool {
 // the calls to this one were not, and they run far more often.
 var commandTimeout = 30 * time.Second
 
+// waitDelay is how long to keep waiting for output after the command itself has
+// been killed. Short: by then the answer is already not coming.
+var waitDelay = 2 * time.Second
+
 // Run executes a Herdr CLI command and returns its decoded `result` object.
 func Run(args ...string) (json.RawMessage, error) {
 	return RunWith(nil, args...)
@@ -203,6 +207,13 @@ func RunWith(env []string, args ...string) (json.RawMessage, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, Bin(), args...)
+	// Killing the command is not the same as being done waiting for it.
+	// Wait blocks until nothing holds the other end of the pipes it reads,
+	// and a child that outlives its parent inherits those -- so a command
+	// that leaves anything behind defeated the timeout completely: the
+	// deadline passed, the process was killed, and this went on waiting.
+	// WaitDelay closes them and gives up shortly after.
+	cmd.WaitDelay = waitDelay
 	if env != nil {
 		cmd.Env = append(os.Environ(), env...)
 	}

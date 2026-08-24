@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // These drive the ssh layer against a stand-in for ssh itself, so the
@@ -166,5 +167,39 @@ func TestADirectoryNamedHerdrIsNotABinary(t *testing.T) {
 	out, err := cmd.Output()
 	if err == nil {
 		t.Errorf("the probe accepted a directory as the binary: %q", out)
+	}
+}
+
+func TestAnSSHThatLeavesSomethingBehindStillGivesUp(t *testing.T) {
+	// The deadline kills the command; it does not end the wait for its output.
+	// Wait blocks until nothing holds the other end of the pipes, and a child
+	// that outlives its parent inherits those -- so a command that leaves
+	// anything behind used to defeat the timeout completely: the deadline
+	// passed, ssh was killed, and this went on waiting for a grandchild.
+	//
+	// Neither of the two places this could happen for real does. ssh's
+	// multiplexing process sends its output to /dev/null, and the remote server
+	// is started with every stream redirected on purpose. This is about the
+	// bound meaning what it says regardless.
+	restoreTimeout, restoreDelay := commandTimeout, waitDelay
+	commandTimeout, waitDelay = 100*time.Millisecond, 500*time.Millisecond
+	defer func() { commandTimeout, waitDelay = restoreTimeout, restoreDelay }()
+
+	// An ssh that hangs and leaves a child holding the pipes it was given.
+	fakeSSH(t, "sleep 30 &\nsleep 30\n")
+
+	done := make(chan error, 1)
+	go func() { done <- New("bot", "").Reachable() }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("an ssh that never answered was treated as reachable")
+		}
+		if !strings.Contains(err.Error(), "timed out") {
+			t.Errorf("the error is %q, which does not say it gave up waiting", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the call was not given up on, so the timeout bounds nothing")
 	}
 }
