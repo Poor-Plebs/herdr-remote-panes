@@ -1,7 +1,9 @@
 package picker
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -469,5 +471,108 @@ func TestAPageStepIsWhatIsOnScreen(t *testing.T) {
 		if step < 1 {
 			t.Errorf("at %d rows the page step is %d", rows, step)
 		}
+	}
+}
+
+// captureNotices runs something and returns exactly what it drew, escapes and
+// all.
+//
+// Raw on purpose. Stripping them here would make it impossible to ask whether
+// any escaped -- which is most of what these screens have to be right about,
+// since a machine's name comes from ~/.ssh/config and is drawn straight to a
+// terminal. Callers that want to read the words wrap this in visible.
+func captureNotices(t *testing.T, run func()) string {
+	t.Helper()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdout
+	os.Stdout = write
+	defer func() { os.Stdout = saved }()
+
+	done := make(chan string, 1)
+	go func() {
+		out, _ := io.ReadAll(read)
+		done <- string(out)
+	}()
+
+	run()
+	write.Close()
+	return <-done
+}
+
+// aKeyIsWaiting puts a keypress on stdin so a screen that waits for one does
+// not wait for ever.
+func aKeyIsWaiting(t *testing.T) {
+	t.Helper()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := write.WriteString("q"); err != nil {
+		t.Fatal(err)
+	}
+	write.Close()
+	saved := os.Stdin
+	os.Stdin = read
+	t.Cleanup(func() { os.Stdin = saved })
+}
+
+func TestPickingAMachineThatWillNotAnswerSaysWhy(t *testing.T) {
+	// The screen after pressing enter is the one place somebody is certainly
+	// looking, so it has to name the machine and say what went wrong -- and
+	// then wait, because a message that flashes past is no message at all.
+	aKeyIsWaiting(t)
+
+	drawn := captureNotices(t, func() {
+		err := choose(Entry{Target: "prod"}, func(string) (string, error) {
+			return "", errors.New("host key changed — verify it, then update ~/.ssh/known_hosts")
+		})
+		if err != nil {
+			t.Errorf("choose returned %v; a machine that will not answer is not the menu failing", err)
+		}
+	})
+
+	for _, want := range []string{"prod", "host key changed", "known_hosts", "Press any key"} {
+		if !strings.Contains(visible(drawn), want) {
+			t.Errorf("the screen does not mention %q:\n%s", want, drawn)
+		}
+	}
+}
+
+func TestPickingAMachineSaysWhatHappened(t *testing.T) {
+	drawn := captureNotices(t, func() {
+		if err := choose(Entry{Target: "bot"}, func(string) (string, error) {
+			return "connected to bot and opened a terminal", nil
+		}); err != nil {
+			t.Fatalf("choose: %v", err)
+		}
+	})
+
+	if !strings.Contains(visible(drawn), "Connecting to bot") {
+		t.Errorf("the screen never said it was connecting:\n%s", drawn)
+	}
+	if !strings.Contains(visible(drawn), "opened a terminal") {
+		t.Errorf("the screen does not say what happened:\n%s", drawn)
+	}
+}
+
+func TestAMachineNameOnThatScreenIsMadeSafe(t *testing.T) {
+	// The name can come from ~/.ssh/config, and this draws it straight to the
+	// terminal.
+	aKeyIsWaiting(t)
+
+	drawn := captureNotices(t, func() {
+		_ = choose(Entry{Target: "prod\x1b[31m\nrest"}, func(string) (string, error) {
+			return "", errors.New("nope")
+		})
+	})
+	// The colour the name tried to set, which the menu never asks for itself.
+	if strings.Contains(drawn, "\x1b[31m") {
+		t.Errorf("the screen carries an escape from the machine's name:\n%q", drawn)
+	}
+	if strings.Contains(drawn, "\nrest") {
+		t.Errorf("the name broke the line it was drawn on:\n%q", drawn)
 	}
 }
