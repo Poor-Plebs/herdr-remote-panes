@@ -3,6 +3,8 @@ package syncd
 import (
 	"testing"
 
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
+
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 )
 
@@ -294,5 +296,64 @@ func TestAPaneIdIsShortenedToThePartThatDistinguishesIt(t *testing.T) {
 		if got := shortPaneID(tt.in); got != tt.want {
 			t.Errorf("shortPaneID(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestWhichMachinesComeBackAfterARestart(t *testing.T) {
+	// Herdr restarting starts a new daemon over the old one's snapshot, and
+	// this decides which machines it goes back to. Nothing tested the gathering
+	// — only the rule it hands its three lists to — so a machine could be left
+	// out of any of them and the rule would still look right.
+	//
+	// Disabled is the one that matters. "Skip it without removing it" is what
+	// the settings table promises, and a restart is exactly when a machine
+	// switched off last week would quietly come back.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{
+		{Target: "bot"},
+		{Target: "prod"},
+		{Target: "ci", Disabled: true},
+		{Target: "staging"},
+	}
+	d := New(cfg)
+	d.snapshot = snapshot{Hosts: map[string]hostSnapshot{
+		"bot":     {Shells: 1},
+		"prod":    {Shells: 2},
+		"ci":      {Shells: 1},
+		"staging": {Shells: 1},
+	}}
+	// One of them has already been dealt with by starting up.
+	d.hosts["prod"] = newTestHost()
+
+	got := map[string]bool{}
+	for _, target := range d.rememberedHosts() {
+		got[target] = true
+	}
+
+	if !got["bot"] || !got["staging"] {
+		t.Errorf("machines that were connected did not come back: %v", got)
+	}
+	if got["ci"] {
+		t.Error("a machine that is switched off came back after the restart")
+	}
+	if got["prod"] {
+		t.Error("a machine already connected was brought back a second time")
+	}
+}
+
+func TestARestartWithNothingRememberedBringsNothingBack(t *testing.T) {
+	// A first run has no snapshot, and connecting to every configured machine
+	// on startup is not what this does — that is what `connect` with no machine
+	// named is for, and doing it unasked opens a terminal on every machine
+	// somebody has ever written down.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{{Target: "bot"}, {Target: "prod"}}
+	d := New(cfg)
+
+	if got := d.rememberedHosts(); len(got) != 0 {
+		t.Errorf("a first run wants to connect to %v", got)
 	}
 }
