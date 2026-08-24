@@ -240,6 +240,10 @@ const (
 	stopUntilFixed
 )
 
+// reopenSettled is how long a terminal has to stay up before the machine
+// counts as steady again. A variable so a test can shorten it.
+var reopenSettled = 30 * time.Second
+
 // planLostPaneAction decides what a terminal going away means.
 //
 // Reopening used to be the only way to find out why one went, which is the

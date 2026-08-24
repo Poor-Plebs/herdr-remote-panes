@@ -156,6 +156,10 @@ type hostSync struct {
 	// be reached at all.
 	failCount int
 	gaveUp    bool
+	// lastReopen is when a terminal was last opened again, which is how long
+	// the current one has had to stay up.
+	lastReopen time.Time
+
 	// shellFailures counts terminals that died on this machine in a row, so an
 	// unreachable one is not reopened endlessly.
 	shellFailures int
@@ -953,6 +957,7 @@ func (d *Daemon) connect(host config.Host) error {
 	// up on is tried again.
 	state.failCount = 0
 	state.shellFailures = 0
+	state.lastReopen = time.Time{}
 	state.gaveUp = false
 	return connectErr
 }
@@ -1659,8 +1664,17 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 
 		for paneID := range state.shellPanes {
 			if index.alive[paneID] {
-				// A terminal that is up means the machine is fine again.
-				state.shellFailures = 0
+				// A terminal that has stayed up means the machine is fine
+				// again. Staying up is the part that was missing: a machine
+				// that accepts a connection and then drops it has a terminal
+				// that is up for a moment on every pass, and counting that as
+				// recovery reset the tally every time -- so the giving up this
+				// promises could not happen, and such a machine had a pane
+				// opened and shut every couple of seconds for as long as the
+				// session lasted.
+				if state.lastReopen.IsZero() || time.Since(state.lastReopen) > reopenSettled {
+					state.shellFailures = 0
+				}
 				continue
 			}
 			if planLostPane(mirror.Failed(paneID)) {
@@ -1680,6 +1694,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 						state.host.Target, state.shellFailures)
 				default:
 					log.Printf("%s: terminal %s dropped, reopening", state.host.Target, paneID)
+					state.lastReopen = time.Now()
 					state.reopenShell = true
 				}
 			}
