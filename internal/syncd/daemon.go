@@ -628,8 +628,20 @@ func (d *Daemon) rememberPlacement(state *hostSync, result json.RawMessage, plac
 }
 
 // closeRemoteTerminals closes the machine's terminals behind mirrors that were
-// closed here, and forgets the dismissal: the terminal is gone, so there is
-// nothing left to avoid reopening.
+// closed here.
+//
+// The dismissal that stops a terminal being mirrored again is deliberately left
+// in place. Forgetting it here on the grounds that the terminal is now gone was
+// true of the machine and not of this pass: the listing everything after this
+// works from was taken before the close, so the terminal is still in it, and
+// with nothing left to say otherwise it was mirrored straight back. Closing a
+// mirrored tab therefore closed the terminal on the machine, opened a new
+// mirror of it, and -- once that mirror turned out to have nothing behind it --
+// opened a fresh terminal on the machine to replace it. You closed a tab and
+// got a different one.
+//
+// The dismissal goes on its own, from forgetTerminals, once a listing comes
+// back without that terminal in it.
 func (d *Daemon) closeRemoteTerminals(state *hostSync, terminalIDs []string, remotePanes []herdrcli.Pane) {
 	if len(terminalIDs) == 0 {
 		return
@@ -643,8 +655,6 @@ func (d *Daemon) closeRemoteTerminals(state *hostSync, terminalIDs []string, rem
 		paneID, ok := byTerminal[terminalID]
 		if !ok {
 			// Already gone on the machine; nothing to close.
-			delete(state.dismissed, terminalID)
-			delete(state.abandoned, terminalID)
 			continue
 		}
 		if _, err := state.client.Run("pane", "close", paneID); err != nil {
@@ -657,8 +667,6 @@ func (d *Daemon) closeRemoteTerminals(state *hostSync, terminalIDs []string, rem
 			}
 		}
 		log.Printf("%s: closed terminal %s to match", state.host.Target, paneID)
-		delete(state.dismissed, terminalID)
-		delete(state.abandoned, terminalID)
 	}
 }
 

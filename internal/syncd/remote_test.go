@@ -300,3 +300,62 @@ func TestMaxMirrorsCapsWhatOneMachineCanFillTheScreenWith(t *testing.T) {
 		t.Errorf("%d mirrors here, want the cap of %d filled", got, cfg.MaxMirrors)
 	}
 }
+
+func TestClosingAMirroredTabClosesItOnTheMachine(t *testing.T) {
+	// Without this, mirroring is two-way for everything except closing: the tab
+	// goes here and the work quietly carries on over there, which is the one
+	// asymmetry that surprises people. The setting exists for anyone who wants
+	// the old behaviour back.
+	for _, tt := range []struct {
+		propagate bool
+		wantThere int
+		what      string
+	}{
+		{true, 1, "the terminal goes with it"},
+		{false, 2, "the terminal stays on the machine"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			here := withFakeHerdr(t)
+			there, _ := withRemoteHerdr(t)
+
+			cfg := machineConfig("bot")
+			cfg.Hosts[0].Mode = "attach"
+			cfg.ClosePropagates = &tt.propagate
+			d := New(cfg)
+
+			if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+				t.Fatalf("connect: %s", reply.Message)
+			}
+			d.reconcileAll()
+			// A second terminal, so there is one to close and one to keep.
+			if reply := d.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
+				t.Fatalf("open: %s", reply.Message)
+			}
+			for i := 0; i < 3; i++ {
+				d.reconcileAll()
+			}
+			if got := len(there().Panes); got != 2 {
+				t.Fatalf("the machine has %d terminals, want 2 to start from", got)
+			}
+
+			// Closed here, in the sidebar, the way somebody would.
+			var mirror string
+			for id := range here().Panes {
+				mirror = id
+			}
+			closePaneByHand(t, mirror)
+			for i := 0; i < 3; i++ {
+				d.reconcileAll()
+			}
+
+			if got := len(there().Panes); got != tt.wantThere {
+				t.Errorf("the machine has %d terminals, want %d", got, tt.wantThere)
+			}
+			// Either way the mirror stays shut: closing something is not a
+			// request to have it back.
+			if got := panesFor(here(), "bot"); got != 1 {
+				t.Errorf("%d mirrors here, want the one that was not closed", got)
+			}
+		})
+	}
+}
