@@ -8,7 +8,7 @@
 # fail a change that has nothing to do with it.
 STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
 
-.PHONY: check fmt vet lint test build clean
+.PHONY: check fmt vet lint test build mutants clean
 
 ## check: everything CI does, in the order it does it
 check: fmt vet lint test build
@@ -32,6 +32,18 @@ lint:
 ## test: with the race detector, in a shuffled order
 test:
 	go test -race -shuffle=on ./...
+
+## mutants: changes to a package that no test would catch
+##
+## Not part of check: it runs the package's tests once per mutation, so it is
+## minutes rather than seconds, and a survivor is something to read rather than
+## a failure. Works on a copy under the temp directory; the tree is untouched.
+##
+##   make mutants PKG=./internal/config
+##   make mutants PKG=./internal/syncd FILES=daemon.go
+mutants:
+	@if [ -z "$(PKG)" ]; then echo "usage: make mutants PKG=./internal/config [FILES=one.go]"; exit 2; fi
+	go run ./tools/mutants $(PKG) $(FILES)
 
 ## build: the binary Herdr runs
 build:

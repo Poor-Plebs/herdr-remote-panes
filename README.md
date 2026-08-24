@@ -372,6 +372,25 @@ That is exactly what CI runs — formatting, vet, staticcheck, the tests with th
 race detector in a shuffled order, and the build — and the workflow runs the
 same targets, so the two cannot drift apart.
 
+Coverage says which lines a test ran. It does not say whether anything would
+have failed had those lines been wrong, and that gap is worth checking
+directly:
+
+```bash
+make mutants PKG=./internal/config
+```
+
+Each operator in the package is flipped in turn — `&&` for `||`, `>` for `>=`,
+a negation dropped — and the package's own tests are run against it. Anything
+that survives is a change no test would have caught. Most survivors are
+equivalent or unreachable, which is worth knowing too; the ones that are
+neither are where the bugs have been. Only covered lines are tried, since a
+change to a line nothing runs survives by definition.
+
+It works on a copy under the temp directory, so an interrupted run cannot leave
+a mutation in your tree, and it is not part of `make check`: it runs the tests
+once per mutation, so it is minutes rather than seconds.
+
 ## Trust
 
 This runs with your privileges and connects by SSH to machines you name. Read
