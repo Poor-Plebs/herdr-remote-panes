@@ -136,6 +136,7 @@ func TestARestartBringsBackTheTerminalsThatWereOpen(t *testing.T) {
 		}
 	}
 	before.reconcileAll()
+	terminalsAreRunning(t, held())
 	before.persist()
 
 	const want = 3
@@ -155,6 +156,9 @@ func TestARestartBringsBackTheTerminalsThatWereOpen(t *testing.T) {
 
 	// A new daemon over the same state, which is what a restart is. The panes
 	// from before are still in Herdr and nothing is behind them.
+	// Their bridges died with Herdr, which is what makes them husks rather than
+	// terminals: a pane whose bridge is running is somebody's live session.
+	herdrRestarted(t)
 	after := New(cfg)
 	if reply := after.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
 		t.Fatalf("reconnect: %s", reply.Message)
@@ -163,6 +167,7 @@ func TestARestartBringsBackTheTerminalsThatWereOpen(t *testing.T) {
 	// and let it settle.
 	for i := 0; i < want+3; i++ {
 		after.reconcileAll()
+		terminalsAreRunning(t, held())
 	}
 
 	herdr := held()
@@ -274,6 +279,7 @@ func TestClosingTheLastTerminalLeavesAWayBack(t *testing.T) {
 		t.Fatalf("connect: %s", reply.Message)
 	}
 	d.reconcileAll()
+	terminalsAreRunning(t, held())
 
 	var pane string
 	for id := range held().Panes {
@@ -285,6 +291,7 @@ func TestClosingTheLastTerminalLeavesAWayBack(t *testing.T) {
 	closePaneByHand(t, pane)
 	for i := 0; i < 3; i++ {
 		d.reconcileAll()
+		terminalsAreRunning(t, held())
 	}
 
 	// Not reopened behind the user's back: closing a terminal means closing it.
@@ -407,6 +414,7 @@ func TestAFlappingMachineIsLeftAloneRatherThanChurning(t *testing.T) {
 		t.Fatalf("connect: %s", reply.Message)
 	}
 	d.reconcileAll()
+	terminalsAreRunning(t, held())
 
 	dropped := "bot is not reachable over ssh: exit status 255: Connection reset by peer"
 
@@ -414,6 +422,7 @@ func TestAFlappingMachineIsLeftAloneRatherThanChurning(t *testing.T) {
 	// and the terminal is where somebody was working.
 	terminalDied(t, onlyPane(t, held()), dropped)
 	d.reconcileAll()
+	terminalsAreRunning(t, held())
 	if got := panesFor(held(), "bot"); got != 1 {
 		t.Fatalf("the first dropped terminal was not reopened: %d panes", got)
 	}
@@ -484,11 +493,13 @@ func TestATerminalThatDropsComesBack(t *testing.T) {
 		t.Fatalf("connect: %s", reply.Message)
 	}
 	d.reconcileAll()
+	terminalsAreRunning(t, held())
 
 	terminalDied(t, onlyPane(t, held()),
 		"bot is not reachable over ssh: exit status 255: Connection reset by peer")
 	for i := 0; i < 3; i++ {
 		d.reconcileAll()
+		terminalsAreRunning(t, held())
 	}
 
 	if got := panesFor(held(), "bot"); got != 1 {
@@ -512,11 +523,13 @@ func TestATerminalThatCannotComeBackIsNotReopened(t *testing.T) {
 		t.Fatalf("connect: %s", reply.Message)
 	}
 	d.reconcileAll()
+	terminalsAreRunning(t, held())
 
 	terminalDied(t, onlyPane(t, held()),
 		"bot is not reachable over ssh: exit status 255: REMOTE HOST IDENTIFICATION HAS CHANGED")
 	for i := 0; i < 4; i++ {
 		d.reconcileAll()
+		terminalsAreRunning(t, held())
 	}
 
 	if got := panesFor(held(), "bot"); got != 0 {
@@ -943,4 +956,21 @@ func addLocalPane(t *testing.T, workspace string) string {
 		t.Fatal(err)
 	}
 	return "local-pane"
+}
+
+// terminalsAreRunning marks every plain SSH terminal here as having a live
+// bridge. A plain SSH pane runs the same entrypoint a mirror does and leaves
+// the same mark, so a test where none of them do is a test where every one of
+// them looks like a pane Herdr restored with nothing behind it.
+func terminalsAreRunning(t *testing.T, held fakeHerdr) {
+	t.Helper()
+	forgetGoneBridges(t, held)
+	for id, pane := range held.Panes {
+		label, _ := pane["label"].(string)
+		if !strings.Contains(label, "@") {
+			continue
+		}
+		terminal, _ := pane["terminal_id"].(string)
+		mirrorIsRunning(t, id, terminal)
+	}
 }

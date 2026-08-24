@@ -950,38 +950,46 @@ func sanitizeForPath(s string) string {
 	return string(out)
 }
 
+// forgetGoneBridges removes the marks of panes that are no longer there.
+//
+// A bridge removes its own mark on the way out, so a pane that has gone leaves
+// nothing behind claiming to be alive. Leaving those lying about is its own kind
+// of wrong: a closed pane that still reads as running is not a thing that
+// happens, and a test built on it is testing something that cannot occur.
+func forgetGoneBridges(t *testing.T, held fakeHerdr) {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("HERDR_PLUGIN_STATE_DIR"), "panes",
+		sanitizeForPath(os.Getenv("HERDR_SESSION")))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		name := strings.TrimSuffix(entry.Name(), ".pid")
+		if entry.Name() == name {
+			continue
+		}
+		stillThere := false
+		for id := range held.Panes {
+			if sanitizeForPath(id) == name {
+				stillThere = true
+				break
+			}
+		}
+		if !stillThere {
+			if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
 // mirrorsAreRunning marks every mirror here as having a live bridge, which is
 // what happens a moment after one is opened.
 func mirrorsAreRunning(t *testing.T, here func() fakeHerdr, machines ...func() fakeHerdr) {
 	t.Helper()
 
-	// A bridge removes its own mark on the way out, so a pane that has gone
-	// leaves nothing behind claiming to be alive. Leaving those lying about is
-	// its own kind of wrong: a closed pane that still reads as running is not
-	// a thing that happens.
-	panes := here().Panes
-	dir := filepath.Join(os.Getenv("HERDR_PLUGIN_STATE_DIR"), "panes",
-		sanitizeForPath(os.Getenv("HERDR_SESSION")))
-	if entries, err := os.ReadDir(dir); err == nil {
-		for _, entry := range entries {
-			name := strings.TrimSuffix(entry.Name(), ".pid")
-			if entry.Name() == name {
-				continue
-			}
-			stillThere := false
-			for id := range panes {
-				if sanitizeForPath(id) == name {
-					stillThere = true
-					break
-				}
-			}
-			if !stillThere {
-				if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
-	}
+	forgetGoneBridges(t, here())
 
 	for id, pane := range here().Panes {
 		label, _ := pane["label"].(string)
