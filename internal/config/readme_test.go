@@ -1,7 +1,9 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -51,5 +53,66 @@ func TestTheWarningInTheREADMEIsOneAMisspellingActuallyCauses(t *testing.T) {
 	}
 	if !strings.Contains(problems, "plain SSH terminal") {
 		t.Errorf("the warning no longer says what happens instead: %q", problems)
+	}
+}
+
+// TestTheREADMEsExamplesAreConfigThisCanRead checks the JSON somebody will
+// paste.
+//
+// An example that does not parse is worse than none: it is pasted into the
+// file, the whole config stops being readable, and every machine in it
+// disappears at once. Nothing checked that these were even JSON.
+func TestTheREADMEsExamplesAreConfigThisCanRead(t *testing.T) {
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	blocks := regexp.MustCompile("(?s)```json\n(.*?)\n```").FindAllStringSubmatch(string(readme), -1)
+	if len(blocks) < 2 {
+		t.Fatalf("found %d JSON examples in the README; it shows more than that", len(blocks))
+	}
+
+	for _, block := range blocks {
+		example := block[1]
+		t.Run(strings.Join(strings.Fields(example), " "), func(t *testing.T) {
+			// A whole file, or a single machine out of one: the README shows
+			// both, and the difference is whether it has hosts in it.
+			if strings.Contains(example, `"hosts"`) {
+				dir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(example), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+
+				cfg, err := Load()
+				if err != nil {
+					t.Fatalf("the README's config does not load: %v", err)
+				}
+				if len(cfg.Hosts) == 0 {
+					t.Error("the README's config has no machines in it once read")
+				}
+				// And nothing in it is a setting that means nothing, which is
+				// what a stale example turns into.
+				for _, problem := range cfg.Problems() {
+					t.Errorf("the README's config has a problem with it: %s", problem)
+				}
+				return
+			}
+
+			var host Host
+			if err := json.Unmarshal([]byte(example), &host); err != nil {
+				t.Fatalf("the README's machine entry does not parse: %v", err)
+			}
+			if err := ValidTarget(host.Target); err != nil {
+				t.Errorf("the machine in the example is not usable: %v", err)
+			}
+			// The prose around this one is about turning mirroring on, so the
+			// mode has to be one that does.
+			if host.Mode != "" && !Defaults().Mirrors(host) {
+				t.Errorf("the example sets mode %q, which is not mirroring, and the text says it is",
+					host.Mode)
+			}
+		})
 	}
 }

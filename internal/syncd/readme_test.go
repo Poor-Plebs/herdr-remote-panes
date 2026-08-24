@@ -2,6 +2,8 @@ package syncd
 
 import (
 	"errors"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 	"os"
 	"strings"
 	"testing"
@@ -90,5 +92,62 @@ func TestTheREADMEDoesNotClaimPlainSSHMachinesArePolled(t *testing.T) {
 		if !strings.Contains(text, claim) {
 			t.Errorf("the README no longer says %q", claim)
 		}
+	}
+}
+
+// TestTheREADMEsSidebarIsNamedTheWayThisNamesThings holds the other picture in
+// the README to the code that produces what it shows.
+//
+// Every name in it comes from this plugin: a machine's space from
+// workspace_format, one that is not answering from workspace_format_down, and
+// its terminals from label_format. Change any of those and the picture is
+// describing a different program, with nothing to say so -- which is what had
+// happened to the picture of the menu.
+func TestTheREADMEsSidebarIsNamedTheWayThisNamesThings(t *testing.T) {
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const opening = "Your sidebar ends up looking like this, one space per machine:\n\n```\n"
+	start := strings.Index(string(readme), opening)
+	if start < 0 {
+		t.Fatal("the README no longer shows the sidebar")
+	}
+	start += len(opening)
+	end := strings.Index(string(readme)[start:], "\n```\n")
+	if end < 0 {
+		t.Fatal("the sidebar block in the README is not closed")
+	}
+	shown := string(readme)[start : start+end]
+
+	cfg := config.Defaults()
+	d := New(cfg)
+	reachable := config.Host{Target: "workbox"}
+	unreachable := config.Host{Target: "ci"}
+
+	// Each line of the picture, and the call that produces the name in it.
+	for _, tt := range []struct {
+		what string
+		name string
+	}{
+		{"a machine you can reach", cfg.WorkspaceLabelFor(reachable, true)},
+		{"a machine that is not answering", cfg.WorkspaceLabelFor(unreachable, false)},
+		{"a terminal on it", d.label(reachable, herdrcli.Pane{}, "shell")},
+		{"another one", d.label(reachable, herdrcli.Pane{}, "build")},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			if !strings.Contains(shown, tt.name) {
+				t.Errorf("the sidebar shows no %q, which is what this names it:\n%s",
+					tt.name, shown)
+			}
+			// On the line it belongs to, so the picture is not merely
+			// containing the right words somewhere.
+			for _, line := range strings.Split(shown, "\n") {
+				if strings.Contains(line, tt.what) && !strings.Contains(line, tt.name) {
+					t.Errorf("the line for %q reads %q, and this names it %q",
+						tt.what, strings.TrimSpace(line), tt.name)
+				}
+			}
+		})
 	}
 }
