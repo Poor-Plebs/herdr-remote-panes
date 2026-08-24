@@ -58,10 +58,10 @@ The key you bound opens this:
 ```
   Connect to a machine
 
- > 1. workbox            connected · 2 open
-   2. ci                 unreachable · enter to retry
-   3. buildbox           unreachable · mirrored · enter to retry
-   4. gh-runner          from ~/.ssh/config · ssh
+ > 1. workbox     connected · 2 open
+   2. ci          unreachable · host key changed · enter to retry
+   3. buildbox    unreachable · connection refused · mirrored · enter to retry
+   4. gh-runner   from ~/.ssh/config · ssh
 
   ↑↓ jk move · pgup/pgdn g/G jump · 1-9 pick · enter connect
   d disconnect · m toggle mirroring (experimental) · q cancel

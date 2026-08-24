@@ -104,3 +104,52 @@ func TestEveryKeyTheMenuOffersDoesSomething(t *testing.T) {
 		}
 	}
 }
+
+// TestTheREADMEShowsTheMenuThatIsDrawn holds the picture to the thing.
+//
+// The example in the README is what somebody decides from before installing
+// anything, and nothing kept it honest. It had drifted twice over without a
+// murmur: the column of names was still the wide fixed one from before it was
+// fitted to the names, and the unreachable rows still stopped at "unreachable"
+// after they had learned to say why.
+//
+// Rendered here rather than compared loosely, because a picture that is nearly
+// right is the kind of wrong nobody notices.
+func TestTheREADMEShowsTheMenuThatIsDrawn(t *testing.T) {
+	// The machines in the README, and the width the block is drawn at.
+	entries := []Entry{
+		{Target: "workbox", Configured: true, Connected: true, Terminals: 2},
+		{Target: "ci", Configured: true, GaveUp: true,
+			Reason: shortReason("host key changed — verify it")},
+		{Target: "buildbox", Configured: true, GaveUp: true, Mirroring: true,
+			Reason: shortReason("connection refused")},
+		{Target: "gh-runner"},
+	}
+	const cols = 84
+
+	var drawn []string
+	for _, line := range strings.Split(visible(render(entries, 0, cols, 20, "")), "\r\n") {
+		drawn = append(drawn, strings.TrimRight(line, " "))
+	}
+	want := strings.Join(drawn, "\n")
+
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const opening = "The key you bound opens this:\n\n```\n"
+	start := strings.Index(string(readme), opening)
+	if start < 0 {
+		t.Fatal("the README no longer shows the menu")
+	}
+	start += len(opening)
+	end := strings.Index(string(readme)[start:], "\n```\n")
+	if end < 0 {
+		t.Fatal("the menu block in the README is not closed")
+	}
+	got := string(readme)[start : start+end]
+
+	if got != want {
+		t.Errorf("the README shows a menu this does not draw.\n--- README ---\n%s\n--- drawn ---\n%s", got, want)
+	}
+}
