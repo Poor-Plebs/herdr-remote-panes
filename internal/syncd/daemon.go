@@ -76,6 +76,10 @@ type Daemon struct {
 	// reconciles folds overlapping reconcile requests into one.
 	reconciles coalescer
 
+	// touched remembers every machine this daemon has connected, so persisting
+	// can tell one it has dealt with from one it has not reached yet.
+	touched map[string]bool
+
 	// markedWorkspaces is what was last put on each space, and when.
 	markedWorkspaces map[string]workspaceMark
 
@@ -241,6 +245,7 @@ func NewWithConfigError(cfg config.Config, configErr error) *Daemon {
 	d := &Daemon{
 		hosts:            map[string]*hostSync{},
 		rootPanes:        map[string]string{},
+		touched:          map[string]bool{},
 		markedWorkspaces: map[string]workspaceMark{},
 		seenStray:        map[string]bool{},
 		snapshot:         loadSnapshot(),
@@ -979,6 +984,10 @@ func (d *Daemon) connect(host config.Host) error {
 		}
 		d.hosts[host.Target] = state
 	}
+	if d.touched == nil {
+		d.touched = map[string]bool{}
+	}
+	d.touched[host.Target] = true
 	state.lastErr = connectErr
 	// An explicit connect is a request to try now, so a machine that was given
 	// up on is tried again.
@@ -1527,6 +1536,23 @@ func (d *Daemon) persist() {
 			Shells:    len(state.shellPanes),
 		}
 	}
+	// What the last daemon recorded about machines this one has not reached.
+	//
+	// The snapshot was rebuilt from the machines currently connected, so
+	// connecting one erased every other -- and the snapshot is the only record
+	// of what a machine had open and of machines picked from ~/.ssh/config that
+	// were never written to the config file. The control socket answers while
+	// startup is still connecting, on purpose, so one connect from the menu in
+	// that window was enough: everything not yet reached lost its terminals and
+	// its place in the list.
+	//
+	// A machine this daemon has connected and then dropped is gone on purpose
+	// and stays gone. One it has never touched keeps what it had.
+	for target, saved := range d.snapshot.Hosts {
+		if _, live := current.Hosts[target]; !live && !d.touched[target] {
+			current.Hosts[target] = saved
+		}
+	}
 	d.snapshot = current
 
 	// Reconciling happens every couple of seconds whether anything changed or
@@ -1980,6 +2006,23 @@ func (d *Daemon) claimedPanes(also *hostSync) map[string]bool {
 			claimed[paneID] = true
 		}
 		for paneID := range other.shellPanes {
+			claimed[paneID] = true
+		}
+	}
+
+	// And what the last daemon left, for machines this one has not reached yet.
+	//
+	// The control socket is answering before startup has finished connecting,
+	// on purpose, so the menu works throughout. Connect a machine in that
+	// window and it reconciles while another machine's panes are still sitting
+	// there belonging to nobody -- and in a space they all share, that reads as
+	// somebody's stray pane and gets carried off. The machine that had it comes
+	// up a moment later with its terminal on the wrong host.
+	//
+	// A pane in here is either about to be reclaimed by its own machine or
+	// about to be closed as a leftover. Either way it is not a stray.
+	for _, saved := range d.snapshot.Hosts {
+		for _, paneID := range saved.Mirrors {
 			claimed[paneID] = true
 		}
 	}
