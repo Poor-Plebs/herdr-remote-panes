@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestShouldReportFailure(t *testing.T) {
@@ -240,5 +243,72 @@ func TestDescribeCommandKeepsTheMachineWhenTheRemoteCommandHasASeparator(t *test
 	}
 	if !strings.Contains(got, "inner-argument") {
 		t.Errorf("describeCommand = %q, want what is run on the machine kept", got)
+	}
+}
+
+func TestClosingAPaneIsRememberedAsDeliberate(t *testing.T) {
+	// Closing a pane signals this process, which makes the bridge exit with an
+	// error too, so the error alone cannot tell a deliberate close from a
+	// dropped link. What tells them apart is this flag being set on the way
+	// out -- and the decision that reads it has been tested all along while
+	// nothing tested that anything ever sets it. Getting this backwards means
+	// either reopening a terminal somebody just closed, or never recovering
+	// from a link that dropped.
+	restore := stopped.Load()
+	defer stopped.Store(restore)
+	stopped.Store(false)
+
+	stop := watchForStop(nil)
+	defer stop()
+
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatalf("signalling this process: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !stopped.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("a termination signal did not record that the exit was asked for")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	// And with it set, the exit is not reported as a failure, so the daemon
+	// leaves the terminal closed.
+	if shouldReportFailure(errors.New("signal: terminated"), stopped.Load()) {
+		t.Error("a pane closed by hand was recorded as a dropped connection")
+	}
+}
+
+func TestClosingAPaneTakesTheSSHWithIt(t *testing.T) {
+	// The bridge is the parent of an ssh that holds a connection open. Leaving
+	// it running when the pane closes leaks a connection per pane closed, and
+	// on the machine a session nobody can see.
+	restore := stopped.Load()
+	defer stopped.Store(restore)
+	stopped.Store(false)
+
+	child := exec.Command("/bin/sh", "-c", "sleep 30")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	stop := watchForStop(child.Process)
+	defer stop()
+
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatalf("signalling this process: %v", err)
+	}
+
+	waited := make(chan error, 1)
+	go func() { waited <- child.Wait() }()
+
+	select {
+	case err := <-waited:
+		if err == nil {
+			t.Error("the child exited cleanly; it was not signalled")
+		}
+	case <-time.After(10 * time.Second):
+		_ = child.Process.Kill()
+		t.Fatal("the ssh was left running after the pane was closed")
 	}
 }
