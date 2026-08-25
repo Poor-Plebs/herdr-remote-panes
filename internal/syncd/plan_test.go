@@ -2,6 +2,7 @@ package syncd
 
 import (
 	"errors"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
 	"net"
 	"os"
 	"path/filepath"
@@ -490,7 +491,7 @@ func TestAFailureNeedingAPersonIsNotRetried(t *testing.T) {
 		"prod: Permission denied (publickey).",
 		"ssh: Could not resolve hostname prd: Name or service not known",
 		"Received disconnect: Too many authentication failures",
-		"no herdr on the remote host",
+		remote.ErrNoHerdr.Error(),
 	}
 	for _, message := range settled {
 		err := errors.New(message)
@@ -547,7 +548,6 @@ Host key verification failed.`)
 		"ssh: Permission denied (publickey).":  "ssh permission denied — check your key",
 		"connect: Connection refused":          "connection refused",
 		"ssh: Could not resolve hostname nope": "host name does not resolve",
-		"bot: no herdr on the remote host":     "herdr not found on the machine",
 
 		// macOS words a timeout differently from Linux, so this used to fall
 		// through and print the raw ssh line.
@@ -566,6 +566,13 @@ Host key verification failed.`)
 		if got := summarizeError(errors.New(in)); got != want {
 			t.Errorf("summarizeError(%q) = %q, want %q", in, got, want)
 		}
+	}
+
+	// This plugin's own error, wrapped the way a caller wraps it, rather than
+	// spelled out as text: the wording belongs to the error and copying it here
+	// is how the two came to be written down twice.
+	if got := summarizeError(fmt.Errorf("bot: %w", remote.ErrNoHerdr)); got != "herdr not found on the machine" {
+		t.Errorf("summarizeError on ErrNoHerdr = %q, want the sentence about falling back", got)
 	}
 
 	t.Run("an unrecognised failure keeps its first line", func(t *testing.T) {
@@ -2574,7 +2581,7 @@ func TestEveryNamedFailureIsReachableAndDecided(t *testing.T) {
 		"Too many authentication failures":    true,
 		"Name or service not known":           true,
 		"Could not resolve hostname":          true,
-		"no herdr on the remote host":         true,
+		remote.ErrNoHerdr.Error():             true,
 
 		"Connection refused":          false,
 		"Connection timed out":        false,
@@ -3236,5 +3243,28 @@ func TestAPermissionRefusalIsSshsOwnAndNotTheMachinesOutput(t *testing.T) {
 			t.Errorf("%q is the machine reporting a file it cannot read, and this "+
 				"gives up on the machine for good over it", theirs)
 		}
+	}
+}
+
+func TestAMachineWithoutHerdrIsRecognisedFromTheErrorItself(t *testing.T) {
+	// The one cause in the table this plugin writes rather than reads off ssh.
+	// It used to be spelled out twice -- once where the error is made, once as
+	// the text to look for -- and a needle that stops matching does not fail,
+	// it just quietly stops recognising the thing it was for.
+	//
+	// What that costs: a machine without Herdr is asked again, which cannot
+	// come good, and the answer it gives is the raw error instead of the
+	// sentence that says mirroring has fallen back to plain SSH.
+	err := fmt.Errorf("bot: %w", remote.ErrNoHerdr)
+
+	known, ok := classify(err)
+	if !ok {
+		t.Fatalf("%v is not recognised, though it is this plugin's own error", err)
+	}
+	if !known.settled {
+		t.Error("a machine without Herdr would be asked again, and the answer cannot change")
+	}
+	if got := summarizeError(err); got != "herdr not found on the machine" {
+		t.Errorf("summarizeError(%v) = %q, want the sentence about falling back", err, got)
 	}
 }

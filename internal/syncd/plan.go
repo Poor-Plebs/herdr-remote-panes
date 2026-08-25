@@ -7,6 +7,7 @@ import (
 
 	"errors"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
 	"time"
 )
 
@@ -401,7 +402,11 @@ var knownFailures = []knownFailure{
 	{"Name or service not known", "host name does not resolve", true},
 	{"Could not resolve hostname", "host name does not resolve", true},
 	{"No route to host", "no route to host", false},
-	{"no herdr on the remote host", "herdr not found on the machine", true},
+	// Taken from the error itself rather than copied out of it. This is the one
+	// cause in the list that this plugin writes, so it is the one that can be
+	// reworded on a quiet afternoon -- and a needle that no longer matches does
+	// not fail, it just stops recognising a machine without Herdr on it.
+	{remote.ErrNoHerdr.Error(), "herdr not found on the machine", true},
 }
 
 // summarizeError reduces a failure to one line fit for a list.
