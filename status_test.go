@@ -261,3 +261,28 @@ func TestAnAbsurdlyNarrowTerminalIsLeftAlone(t *testing.T) {
 		}
 	}
 }
+
+func TestALineThatExactlyFitsIsLeftAlone(t *testing.T) {
+	// The bound is what a line may reach, not what it must stay under. Wrapping
+	// one character early costs a second line for nothing, and does it at
+	// whatever width somebody's terminal happens to be.
+	hosts := []syncd.HostInfo{
+		{Label: "prod", GaveUp: true, SSHOnly: true,
+			LastError: "host key changed — verify it, then update ~/.ssh/known_hosts"},
+	}
+	whole := statusLines(hosts, 0)
+	if len(whole) != 1 {
+		t.Fatalf("with no bound the line was split: %q", whole)
+	}
+	exact := text.Width(whole[0])
+
+	if got := statusLines(hosts, exact); len(got) != 1 {
+		t.Errorf("a line of %d in a terminal of %d was split into %d: %q",
+			exact, exact, len(got), got)
+	}
+	// One column narrower and it has to give.
+	if got := statusLines(hosts, exact-1); len(got) < 2 {
+		t.Errorf("a line of %d in a terminal of %d was left to run off the edge: %q",
+			exact, exact-1, got)
+	}
+}
