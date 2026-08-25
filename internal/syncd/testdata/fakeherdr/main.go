@@ -233,6 +233,32 @@ func main() {
 		case "rename":
 			state.Workspaces[id]["label"] = args[3]
 			save()
+		case "report-metadata":
+			// The sidebar marker. Which token a space carries is the whole of
+			// what somebody sees at a glance about whether the machine behind
+			// it is answering, and dropping it here left the choice between
+			// the two of them with nothing watching.
+			tokens, _ := state.Workspaces[id]["tokens"].(map[string]any)
+			if tokens == nil {
+				tokens = map[string]any{}
+			}
+			// Cleared first and set after, which is the order the arguments
+			// mean: a call clears the token for the other state and sets its
+			// own, and doing it the other way round would clear what it just
+			// set if a caller ever named the same one twice.
+			for i, a := range args {
+				if a == "--clear-token" && i+1 < len(args) {
+					delete(tokens, args[i+1])
+				}
+			}
+			for i, a := range args {
+				if a == "--token" && i+1 < len(args) {
+					name, value, _ := strings.Cut(args[i+1], "=")
+					tokens[name] = value
+				}
+			}
+			state.Workspaces[id]["tokens"] = tokens
+			save()
 		case "focus":
 			// Recorded because taking the screen, and not taking it, are both
 			// promises: picking a machine goes to it, and a pane opening on its

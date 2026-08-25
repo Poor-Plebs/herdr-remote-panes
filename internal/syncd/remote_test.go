@@ -2567,3 +2567,61 @@ func TestAPlainSSHMachineReportsNoAgents(t *testing.T) {
 		t.Fatalf("%d terminals here for bot, want 1: the test proved nothing", got)
 	}
 }
+
+// markerOn is the state token a machine's space carries here: "remote_up" when
+// the machine is answering, "remote_down" when it is not. It is what the glyph
+// beside the name in the sidebar is drawn from.
+func markerOn(t *testing.T, held fakeHerdr, label string) string {
+	t.Helper()
+	for _, ws := range held.Workspaces {
+		name, _ := ws["label"].(string)
+		if !strings.Contains(name, label) {
+			continue
+		}
+		tokens, _ := ws["tokens"].(map[string]any)
+		var carried []string
+		for token := range tokens {
+			carried = append(carried, token)
+		}
+		sort.Strings(carried)
+		return strings.Join(carried, ",")
+	}
+	return ""
+}
+
+func TestTheMarkerOnASpaceFollowsWhetherTheMachineAnswers(t *testing.T) {
+	// A machine's space wears a glyph saying whether the machine behind it is
+	// reachable, and it is the only thing in the sidebar that says so: the
+	// terminals look the same either way until you type in one.
+	//
+	// Which of the two it wears was decided by one negation with nothing
+	// holding it, so dropping that negation swapped them -- every reachable
+	// machine wearing the warning and every dead one looking fine, which is
+	// worse than having no marker at all.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	// Mirrored, because that is what gets polled: a machine on plain SSH is
+	// never asked anything, so it goes on wearing whatever it wore until you
+	// type in one of its terminals.
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	if got := markerOn(t, here(), "bot"); got != "remote_up" {
+		t.Fatalf("a machine that answers wears %q, want remote_up", got)
+	}
+
+	// The machine stops answering.
+	sshFails(t, "ssh: connect to host bot port 22: Connection refused")
+	d.reconcileAll()
+	d.reconcileAll()
+
+	if got := markerOn(t, here(), "bot"); got != "remote_down" {
+		t.Errorf("a machine that has stopped answering wears %q, want remote_down", got)
+	}
+}
