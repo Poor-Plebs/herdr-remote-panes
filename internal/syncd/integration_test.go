@@ -1880,3 +1880,52 @@ func TestTheDaemonDoesNotLeaveGoroutinesBehind(t *testing.T) {
 			"something is not being waited for", after, before)
 	}
 }
+
+func TestTheDaemonDoesNotLeaveFilesOpen(t *testing.T) {
+	// Every question the daemon asks Herdr is a subprocess with pipes on it,
+	// and it asks several per machine per poll, all session long. A descriptor
+	// left open by any of that is invisible until the session hits its limit,
+	// and what that looks like is every command failing at once, hours in,
+	// with an error about too many open files and nothing to say why.
+	//
+	// Linux only: this counts the descriptors the process actually holds, and
+	// /proc is where that can be asked. The plugin runs on macOS too, where
+	// this is skipped rather than guessed at.
+	const fds = "/proc/self/fd"
+	if _, err := os.Stat(fds); err != nil {
+		t.Skip("no /proc/self/fd here, so open files cannot be counted")
+	}
+	open := func() int {
+		entries, err := os.ReadDir(fds)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The directory handle this read is holding is one of them.
+		return len(entries) - 1
+	}
+
+	withFakeHerdr(t)
+	d := New(machineConfig("bot", "prod"))
+
+	// A first round, so that anything opened once is open before counting.
+	d.dispatch(Command{Cmd: "connect"})
+	d.reconcileAll()
+	d.dispatch(Command{Cmd: "disconnect", Host: "bot"})
+	before := open()
+
+	for i := 0; i < 15; i++ {
+		d.dispatch(Command{Cmd: "connect"})
+		d.reconcileAll()
+		d.dispatch(Command{Cmd: "disconnect", Host: "bot"})
+	}
+
+	// Room for a few: the runtime opens its own, and a machine that is
+	// connected holds things a disconnected one does not. Fifteen rounds
+	// across two machines is hundreds of subprocesses, so anything leaking
+	// per call would be far past this.
+	const slack = 8
+	if after := open(); after > before+slack {
+		t.Errorf("fifteen rounds left %d files open, up from %d: something is "+
+			"not being closed", after, before)
+	}
+}
