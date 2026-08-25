@@ -119,8 +119,12 @@ func TestWritesFromSeveralGoroutines(t *testing.T) {
 func TestWritingAfterCloseIsHarmless(t *testing.T) {
 	// The daemon stops on a signal, and something logging on the way out must
 	// not bring it down.
-	f, err := Open(filepath.Join(t.TempDir(), "daemon.log"), 1024)
+	path := filepath.Join(t.TempDir(), "daemon.log")
+	f, err := Open(path, 1024)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("while it was open\n")); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Close(); err != nil {
@@ -131,6 +135,22 @@ func TestWritingAfterCloseIsHarmless(t *testing.T) {
 	}
 	if _, err := f.Write([]byte("after the end\n")); err != nil {
 		t.Errorf("writing after close: %v", err)
+	}
+
+	// Harmless means the write was dropped, not that it was quietly let
+	// through. Checking only that nothing returned an error is satisfied by a
+	// Close that does nothing at all -- the file stays open, the writes keep
+	// landing, and the descriptor is never given back.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "while it was open") {
+		t.Errorf("the log lost what was written before the close: %q", raw)
+	}
+	if strings.Contains(string(raw), "after the end") {
+		t.Errorf("a write after the close reached the file, so the close did not "+
+			"close anything: %q", raw)
 	}
 }
 
