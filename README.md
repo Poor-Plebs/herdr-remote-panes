@@ -364,10 +364,13 @@ Herdr is holding, opening and closing them so that what you see here matches
 what should be there.
 
 That loop is about this machine, not the others. A plain SSH pane simply runs
-`ssh`, and the daemon never talks to the machine at all — which is why that mode
+`ssh`, and the loop never talks to the machine at all — which is why that mode
 needs nothing installed on it, and why a machine that goes away is noticed by
-its terminal dying rather than by being asked. Only a mirrored machine is polled
-over SSH, for the list of terminals to keep in step, over one reused connection.
+its terminal dying rather than by being asked. Connecting does talk to it, once,
+to check it answers: without that an unreachable machine would report `ok` and
+the trouble would only show up later as terminals that will not stay open. Only
+a mirrored machine is polled over SSH, for the list of terminals to keep in
+step, over one reused connection.
 
 A mirrored terminal is bridged with Herdr's own direct terminal attach, so it is
 a live terminal rather than a picture of one: what you type goes to the process
