@@ -148,3 +148,39 @@ func TestTheREADMEQuotesTheCollisionWarningWordForWord(t *testing.T) {
 		t.Errorf("the README quotes\n\t%q\nbut the code says\n\t%q", shown, want)
 	}
 }
+
+func TestTheREADMEInstallsThisRepository(t *testing.T) {
+	// The install line is the first command anybody runs, and it names the
+	// repository by hand in a file that has no other reason to know it. If this
+	// project is ever moved or renamed, that line keeps pointing at where it
+	// used to be — and the failure is somebody else's plugin being installed,
+	// or none.
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod, err := os.ReadFile("../../go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// github.com/Owner/repo -> Owner/repo, which is what the install takes.
+	var want string
+	for _, line := range strings.Split(string(mod), "\n") {
+		if rest, found := strings.CutPrefix(strings.TrimSpace(line), "module github.com/"); found {
+			want = strings.TrimSpace(rest)
+			break
+		}
+	}
+	if want == "" {
+		t.Fatal("go.mod names no GitHub module, so there is nothing to compare against")
+	}
+
+	if !strings.Contains(string(readme), "herdr plugin install "+want) {
+		t.Errorf("the README does not tell anybody to install %q", want)
+	}
+	// And the pinned form beside it, which is the same name again.
+	if !strings.Contains(string(readme), "herdr plugin install "+want+" --ref ") {
+		t.Errorf("the README's pinned install does not name %q", want)
+	}
+}

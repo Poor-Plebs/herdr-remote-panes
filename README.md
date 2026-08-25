@@ -38,6 +38,18 @@ herdr plugin install Poor-Plebs/herdr-remote-panes
 Herdr builds it from source, so this machine needs Go. The machines themselves
 need nothing but an SSH server you can already reach.
 
+That takes the latest commit. To pin a release instead:
+
+```bash
+herdr plugin install Poor-Plebs/herdr-remote-panes --ref v0.1.0
+```
+
+Updating is the same command again — there is no separate update. Herdr shows
+what it is about to install, including the version and the commit, and asks
+before replacing what is there. The daemon already running is left alone, so
+the new build does nothing until Herdr restarts; `herdr-remote-panes version`
+says which build is which.
+
 Then bind the menu to a key in `~/.config/herdr/config.toml`:
 
 ```toml
