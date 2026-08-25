@@ -300,6 +300,13 @@ func TestParseKeyConsumesWholeEscapeSequences(t *testing.T) {
 		// A paste beginning with nothing after it is a paste that never ends,
 		// which is covered with the other truncated sequences below.
 		{"something unrecognised", "\x1b[99;99;99R", keyNone},
+		// The ends of the range a final byte lives in. A sequence ending in
+		// one of these is still a whole sequence, and one not recognised as
+		// ending is one that goes on eating the keys typed after it. "~" is
+		// covered above by page up and the rest; "@" is the other end, and
+		// nothing reached it.
+		{"a sequence ending at the bottom of the range", "\x1b[@", keyNone},
+		{"the same with parameters", "\x1b[1;2@", keyNone},
 	}
 
 	for _, tt := range tests {
