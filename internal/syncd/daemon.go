@@ -1176,10 +1176,17 @@ func (d *Daemon) focusHost(target string) {
 	if !ok {
 		return
 	}
-	// The id is learned along the way by whatever needed it, and for a plain
-	// SSH machine whose pane already exists nothing in a pass does, so it is
-	// often not known here. Looking it up is what makes this work for a machine
-	// that was already connected, which is most of the times someone picks one.
+	// The id is learned along the way by whatever needed it. Every path that
+	// reaches this reconciles first, and reconciling learns it -- so this
+	// lookup is insurance rather than the usual way round, whatever the commit
+	// that added it thought.
+	//
+	// Measured rather than assumed: it fires nowhere in the suite, and the
+	// three shapes it was written for all arrive with the id already known --
+	// a machine reconnected after a restart, one whose panes are husks, and one
+	// whose panes are still alive and need nothing opened. Kept because the
+	// alternative is focusing nothing, and because a path that does not learn
+	// it would fail silently: the menu would look like it had done nothing.
 	if state.workspaceID == "" {
 		if _, err := d.findLocalWorkspace(state); err != nil {
 			log.Printf("focus %s: %v", target, err)
