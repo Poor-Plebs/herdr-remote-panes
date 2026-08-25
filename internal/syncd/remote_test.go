@@ -70,11 +70,7 @@ func withRemoteHerdrRunning(t *testing.T, up bool) (func(string) fakeHerdr, func
 		"  exit 1\n" +
 		"fi\n" +
 		"echo \"$prev | $last\" >> " + dir + "/asked.log\n" +
-		// HRP_FAKE_REFUSE is passed under a name of its own, so a test can
-		// make the machine refuse a call without this side refusing it too:
-		// both ends are the same program, and the plain name reaches both.
-		"HRP_TEST_FAKE_HERDR_STATE=" + dir + "/machine-$prev.json " +
-		"HRP_FAKE_REFUSE=\"$HRP_FAKE_REFUSE_REMOTE\" eval \"$last\"\n"
+		"HRP_TEST_FAKE_HERDR_STATE=" + dir + "/machine-$prev.json eval \"$last\"\n"
 
 	bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
 	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(script), 0o755); err != nil {
@@ -2251,13 +2247,29 @@ func TestTwoSpacesWithOneNameOnAMachineAreReported(t *testing.T) {
 	}
 }
 
+// refuseOnMachine makes the machine whose state file is at path say no to the
+// calls named, the way Herdr does when a pane has gone between the listing and
+// the request. Verbs are comma separated, each optionally with the error code
+// to refuse with: "tab create", "pane split:pane_not_found".
+//
+// Beside the state rather than in the environment, so it names one machine.
+// Both ends of a mirroring test run the same stand-in, and a variable reaches
+// both of them.
+func refuseOnMachine(t *testing.T, path, verbs string) {
+	t.Helper()
+	if err := os.WriteFile(path+".refuse", []byte(verbs), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path + ".refuse") })
+}
+
 func TestTurningMirroringOnSaysWhenNoTerminalOpened(t *testing.T) {
 	// The sibling of the unreachable case: the machine answers, the setting is
 	// written, and then opening a terminal on it fails anyway. The change has
 	// still happened -- it is on disk -- so the reply says so and then says
 	// what went wrong, rather than reading as though the toggle had not taken.
 	here := withFakeHerdr(t)
-	there, _ := withRemoteHerdr(t)
+	there, remoteState := withRemoteHerdr(t)
 	withConfigFile(t, `{"hosts":[{"target":"bot"},{"target":"bot","mode":"attach"}]}`)
 
 	cfg := machineConfig("bot")
@@ -2274,9 +2286,18 @@ func TestTurningMirroringOnSaysWhenNoTerminalOpened(t *testing.T) {
 	settle(t, d, here, 2, there)
 
 	// From here the machine refuses the one call that opens a terminal in it.
-	t.Setenv("HRP_FAKE_REFUSE_REMOTE", "tab create")
+	refuseOnMachine(t, remoteState, "tab create")
+	asked := there().Calls["tab create"]
 
 	reply := d.dispatch(Command{Cmd: "set-mode", Host: "bot", Mode: "attach"})
+
+	// Checked before the message, because if the toggle never got as far as
+	// asking then the message below is right about a different thing and says
+	// so confusingly. This is the setup failing, not the code.
+	if there().Calls["tab create"] == asked {
+		t.Fatalf("the toggle never asked the machine to open a terminal, so the "+
+			"branch this is about was not reached: %+v", there().Calls)
+	}
 
 	if !reply.OK {
 		t.Errorf("set-mode reported failure (%q), but the setting was written "+
@@ -2294,11 +2315,6 @@ func TestTurningMirroringOnSaysWhenNoTerminalOpened(t *testing.T) {
 		t.Errorf("reply spans lines, which the menu cannot draw: %q", reply.Message)
 	}
 
-	// And the machine really was asked, rather than the plugin deciding on its
-	// own that there was nothing to do.
-	if got := there().Calls["tab create"]; got == 0 {
-		t.Errorf("the machine was never asked to open a terminal: %+v", there().Calls)
-	}
 }
 
 func TestConnectingToASpaceThatIsAlreadyThereIsNotTwoSpaces(t *testing.T) {

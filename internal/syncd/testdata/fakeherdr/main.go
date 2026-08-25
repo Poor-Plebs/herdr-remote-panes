@@ -168,13 +168,22 @@ func main() {
 	// everything it understands. Named verbs, comma separated, each optionally
 	// with the code to refuse with:
 	//
-	//	HRP_FAKE_REFUSE="tab create"
-	//	HRP_FAKE_REFUSE="pane split:pane_not_found,tab create"
+	//	tab create
+	//	pane split:pane_not_found,tab create
+	//
+	// Read from a file beside the state rather than from the environment, so
+	// that it is scoped to one machine the same way the state is: both ends of
+	// a mirroring test run this same program, and a machine refusing a call is
+	// not this side refusing it too. An environment variable reached both, and
+	// threading a second one through the ssh stand-in's shell depended on how
+	// that shell treats an assignment in front of eval -- which differs, and
+	// differed between here and CI.
 	//
 	// Counted above rather than below, because a refused call is still a call
 	// the plugin made, and a test about giving up needs to see how often it
 	// tried.
-	for _, spec := range strings.Split(os.Getenv("HRP_FAKE_REFUSE"), ",") {
+	refusals, _ := os.ReadFile(path + ".refuse")
+	for _, spec := range strings.Split(string(refusals), ",") {
 		spec = strings.TrimSpace(spec)
 		if spec == "" {
 			continue
@@ -184,7 +193,7 @@ func main() {
 			spec, code = strings.TrimSpace(spec[:at]), strings.TrimSpace(spec[at+1:])
 		}
 		if spec == verb {
-			fail(code, "refused: HRP_FAKE_REFUSE names "+verb)
+			fail(code, "refused: the test named "+verb+" in this machine's .refuse file")
 		}
 	}
 
