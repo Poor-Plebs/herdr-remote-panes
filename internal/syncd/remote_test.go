@@ -2434,3 +2434,87 @@ func TestTheWarningAboutTwoSpacesIsSaidOnceAndOnlyWhenItIsTrue(t *testing.T) {
 			"a log stops being read: %s", n, logged.String())
 	}
 }
+
+// setAgentStatusOn changes what an agent on a machine reports about itself,
+// the way an agent does when it stops waiting and starts working.
+func setAgentStatusOn(t *testing.T, statePath, paneID, status string) {
+	t.Helper()
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held fakeHerdr
+	if err := json.Unmarshal(raw, &held); err != nil {
+		t.Fatal(err)
+	}
+	pane, ok := held.Panes[paneID]
+	if !ok {
+		t.Fatalf("no pane %s on the machine: %+v", paneID, held.Panes)
+	}
+	pane["agent_status"] = status
+	out, _ := json.Marshal(held)
+	if err := os.WriteFile(statePath, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// agentHere is what the sidebar would show for the one pane carrying an agent.
+func agentHere(t *testing.T, held fakeHerdr) (string, string) {
+	t.Helper()
+	name, status := "", ""
+	found := 0
+	for _, pane := range held.Panes {
+		if a, _ := pane["agent"].(string); a != "" {
+			name, _ = pane["agent"].(string)
+			status, _ = pane["agent_status"].(string)
+			found++
+		}
+	}
+	if found > 1 {
+		t.Fatalf("%d panes here carry an agent, want one: %+v", found, held.Panes)
+	}
+	return name, status
+}
+
+func TestAnAgentThatChangesStateOnTheMachineChangesHere(t *testing.T) {
+	// The state is the point of the agent showing up at all: an agent that is
+	// waiting for you looks the same as one that is working, unless the state
+	// keeps up. It is read on every pass and reported only when it differs,
+	// because reporting it every pass is a call per pane per poll.
+	//
+	// That "only when it differs" is the part with teeth. Skip too eagerly --
+	// on the pane having been reported at all, rather than on it having been
+	// reported the same -- and the first state a pane ever has is the only one
+	// it will ever show.
+	here := withFakeHerdr(t)
+	there, machineState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.Scope = "all"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	paneThere := addAgentPaneOn(t, machineState, "w-theirs", "shell", "claude", "working")
+	settle(t, d, here, 3, there)
+
+	if name, status := agentHere(t, here()); name != "claude" || status != "working" {
+		t.Fatalf("the agent shows here as %q/%q, want claude/working", name, status)
+	}
+
+	// It finishes and goes back to waiting.
+	setAgentStatusOn(t, machineState, paneThere, "idle")
+	settle(t, d, here, 3, there)
+
+	name, status := agentHere(t, here())
+	if name != "claude" {
+		t.Errorf("the agent is now shown as %q, want claude still", name)
+	}
+	if status != "idle" {
+		t.Errorf("the agent went idle on the machine and still reads as %q here, "+
+			"so the sidebar shows it working at something it finished", status)
+	}
+}
