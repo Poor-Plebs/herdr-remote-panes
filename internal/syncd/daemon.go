@@ -149,6 +149,9 @@ type hostSync struct {
 	// machine with fewer terminals than it has -- and the number is a setting,
 	// so somebody can do something about it if they are told.
 	atCapacity bool
+	// duplicateSpaces is more than one space on the machine answering to the
+	// name this machine's terminals live under.
+	duplicateSpaces bool
 	// shellPanes are the plain SSH panes opened for this host, watched so one
 	// whose connection drops can be brought back.
 	shellPanes map[string]bool
@@ -758,12 +761,36 @@ func (d *Daemon) findRemoteWorkspace(state *hostSync) (bool, error) {
 	// terminals are already in on that machine and quietly makes a second one
 	// beside it -- which is the reason the local lookup is tolerant, and the
 	// far side is no different.
+	// Two spaces with the same name is a different thing from the tolerance
+	// above, and worth saying. It happens when two machines answer to one hub
+	// name -- two laptops called the same thing, or two people sharing a space
+	// on purpose -- and both create it before either sees the other's. Each
+	// then settles on whichever came back first, which need not be the same
+	// one, and the two sit in separate spaces both called the same thing,
+	// seeing none of each other's terminals.
+	//
+	// Counted on the exact name only. A space that merely matches the looser
+	// rule is the format having changed, which is deliberate and not a problem.
+	duplicates := 0
+	for _, ws := range workspaces {
+		if ws.Label == label {
+			duplicates++
+		}
+	}
+
 	for _, ws := range workspaces {
 		if ws.Label == label || sameWorkspace(ws.Label, config.HubName()) {
+			if duplicates > 1 && !state.duplicateSpaces {
+				log.Printf("%s: %d spaces there are called %q; using %s. "+
+					"Rename the others, or give this machine its own remote_workspace_format",
+					state.host.Target, duplicates, label, ws.WorkspaceID)
+			}
+			state.duplicateSpaces = duplicates > 1
 			state.remoteWorkspaceID = ws.WorkspaceID
 			return true, nil
 		}
 	}
+	state.duplicateSpaces = false
 	return false, nil
 }
 
@@ -1418,6 +1445,7 @@ func (d *Daemon) status() []HostInfo {
 			SSHOnly:    state.sshOnly,
 			NoHerdr:    state.noHerdr,
 			AtCapacity: state.atCapacity,
+			SharedName: state.duplicateSpaces,
 			Terminals:  len(state.shellPanes),
 			Mirroring:  d.config().Mirrors(state.host),
 			GaveUp:     state.gaveUp,

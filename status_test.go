@@ -361,3 +361,25 @@ func TestAMachineAtTheMirrorLimitSaysSo(t *testing.T) {
 		t.Errorf("%q lost the failure that matters more", worse)
 	}
 }
+
+func TestAMachineWithTwoSpacesOfOneNameSaysSo(t *testing.T) {
+	// The state is the most confusing one there is: two people both "in
+	// pairing" on the same machine, in different spaces, seeing none of each
+	// other's terminals and neither of them wrong.
+	line := statusLines([]syncd.HostInfo{
+		{Label: "bot", Connected: true, Mirrors: 2, SharedName: true},
+	}, 0)[0]
+
+	if !strings.Contains(line, "more than one space") {
+		t.Errorf("%q does not say what is ambiguous", line)
+	}
+	if !strings.Contains(line, "remote_workspace_format") {
+		t.Errorf("%q does not say what would settle it", line)
+	}
+
+	// And an ordinary machine says nothing of the kind.
+	plain := statusLines([]syncd.HostInfo{{Label: "ci", Connected: true, Mirrors: 1}}, 0)[0]
+	if strings.Contains(plain, "more than one space") {
+		t.Errorf("an ordinary machine was told its name is ambiguous: %q", plain)
+	}
+}

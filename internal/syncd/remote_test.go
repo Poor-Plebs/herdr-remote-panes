@@ -1822,6 +1822,13 @@ func TestChangingHowTheSpaceOnAMachineIsNamedDoesNotMakeASecondOne(t *testing.T)
 	}
 	settle(t, second, here, 3, there)
 
+	// And a format change on its own is not two spaces of one name: there is
+	// one space, found by the looser rule, which is the whole point of that
+	// rule.
+	if hosts := second.dispatch(Command{Cmd: "status"}).Hosts; len(hosts) == 1 && hosts[0].SharedName {
+		t.Errorf("changing the format was reported as two spaces sharing a name: %+v", hosts[0])
+	}
+
 	after := spacesOnTheMachine()
 	if len(after) != 1 {
 		t.Errorf("after the format changed the machine has %d spaces, want the one it had:\n  was %v\n  now %v",
@@ -2181,5 +2188,60 @@ func TestAMachineOverTheMirrorLimitReportsIt(t *testing.T) {
 
 	if hosts := d.dispatch(Command{Cmd: "status"}).Hosts; len(hosts) == 1 && hosts[0].AtCapacity {
 		t.Errorf("the machine still says it is at its limit after the limit was raised: %+v", hosts[0])
+	}
+}
+
+func TestTwoSpacesWithOneNameOnAMachineAreReported(t *testing.T) {
+	// Two machines answering to one hub name — two laptops called the same
+	// thing, or two people sharing a space on purpose — can both create it
+	// before either sees the other's. Each then settles on whichever came back
+	// first, which need not be the same one, and they sit in separate spaces
+	// with the same name seeing none of each other's terminals.
+	//
+	// Nothing can stop that from one side. What it can do is notice, because
+	// the state it leaves is the most confusing one there is: both of you are
+	// "in pairing" and neither is wrong.
+	here := withFakeHerdr(t)
+	there, remoteState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.RemoteWorkspaceFormat = "pairing"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	if hosts := d.dispatch(Command{Cmd: "status"}).Hosts; len(hosts) != 1 || hosts[0].SharedName {
+		t.Fatalf("one space of that name is not a problem: %+v", hosts)
+	}
+
+	// Somebody else's daemon makes a second one before seeing ours.
+	raw, err := json.Marshal(fakeHerdr{
+		Panes: map[string]map[string]any{},
+		Workspaces: map[string]map[string]any{
+			"w1":    {"workspace_id": "w1", "label": "pairing"},
+			"other": {"workspace_id": "other", "label": "pairing"},
+		},
+		Next: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remoteState, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The machine's panes are gone with them, so the space it knew is stale and
+	// it looks again — which is when it sees both.
+	settle(t, d, here, 3, there)
+
+	hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+	if len(hosts) != 1 {
+		t.Fatalf("want one machine, got %+v", hosts)
+	}
+	if !hosts[0].SharedName {
+		t.Errorf("two spaces called the same thing and nothing says so: %+v", hosts[0])
 	}
 }

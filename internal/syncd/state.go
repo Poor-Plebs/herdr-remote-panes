@@ -120,6 +120,10 @@ type HostInfo struct {
 	NoHerdr bool `json:"no_herdr,omitempty"`
 	// AtCapacity is a machine with more terminals than max_mirrors allows.
 	AtCapacity bool `json:"at_capacity,omitempty"`
+	// SharedName is more than one space on the machine answering to the name
+	// this machine's terminals live under, so which one is being used is a
+	// matter of what came back first.
+	SharedName bool `json:"shared_name,omitempty"`
 	// Terminals is how many plain SSH terminals this machine has open, which
 	// is what a machine in SSH mode has instead of mirrors.
 	Terminals int `json:"terminals,omitempty"`

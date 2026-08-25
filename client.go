@@ -108,6 +108,9 @@ func statusLines(hosts []syncd.HostInfo, width int) []string {
 		// More terminals than the limit allows. Different from the count below:
 		// those were tried and failed, and trying again may work; these were
 		// never tried, and will not be until the number is changed.
+		if h.SharedName && r.state == "ok" {
+			r.state = "more than one space on the machine has this machine's name — rename the others, or set remote_workspace_format"
+		}
 		if h.AtCapacity && r.state == "ok" {
 			r.state = "at the mirror limit — raise max_mirrors to mirror the rest"
 		}
