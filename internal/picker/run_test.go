@@ -145,13 +145,19 @@ func TestQuittingTheMenuDoesNothingAtAll(t *testing.T) {
 	// The way out has to be the way out: somebody who opens the menu by
 	// accident and presses q must not have connected to anything.
 	for _, keys := range []string{"q", "Q", "\x03", "\x1b"} {
-		got := runMenu(t, threeMachines, keys)
+		// A digit after the quit, which would connect to the first machine if
+		// the quit were not read. Without it this passes for a menu that never
+		// ran at all: "nothing happened" is exactly what a broken one does.
+		got := runMenu(t, threeMachines, keys+"1")
 		if got.err != nil {
 			t.Errorf("quitting with %q returned %v", keys, got.err)
 		}
 		if len(got.connected)+len(got.closed)+len(got.modes) != 0 {
 			t.Errorf("quitting with %q did something: connected=%v closed=%v modes=%v",
 				keys, got.connected, got.closed, got.modes)
+		}
+		if !strings.Contains(got.drawn, "alpha") {
+			t.Errorf("quitting with %q: the menu was never drawn, so this proves nothing", keys)
 		}
 	}
 }
@@ -160,9 +166,16 @@ func TestDisconnectingSomethingThatIsNotConnectedDoesNothing(t *testing.T) {
 	// d closes a machine's panes here. With nothing open there is nothing to
 	// close, and asking the daemon anyway would answer "not connected" -- an
 	// error message for pressing a key that could have done nothing quietly.
-	got := runMenu(t, threeMachines, "dq")
+	// Followed by moving and choosing, so the run proves d was read and did
+	// nothing rather than proving the menu never got that far: with only "dq"
+	// this passes for a menu that quit before reading anything.
+	got := runMenu(t, threeMachines, "dj\r")
+
 	if len(got.closed) != 0 {
 		t.Errorf("d on a machine that is not connected asked to close %v", got.closed)
+	}
+	if len(got.connected) != 1 || got.connected[0] != "beta" {
+		t.Errorf("connected to %v after d, want beta: d swallowed what came next", got.connected)
 	}
 }
 
