@@ -99,7 +99,7 @@ func Run(connect Connect, setMode SetMode, disconnect Disconnect) error {
 			// Closing the panes here, not the work there, so this is
 			// recoverable: enter brings the machine back with its terminals.
 			entry := entries[selected]
-			if !entry.Connected && !entry.GaveUp {
+			if !worthDisconnecting(entry) {
 				break
 			}
 			if _, err := disconnect(entry.Target); err != nil {
@@ -147,6 +147,21 @@ func planDigitChoice(pressed key, count int) (int, bool) {
 		return 0, false
 	}
 	return index, true
+}
+
+// worthDisconnecting reports whether d has anything to do to a machine.
+//
+// A machine that has never been connected to has no panes here to close, so
+// pressing d on one is a no-op rather than an error. One that was given up on
+// does: giving up leaves its terminals on screen wearing the failure, and d is
+// how they are cleared.
+//
+// Its own function so that it can be tested. Inline it was a condition in a key
+// handler, reachable only by driving the whole menu against a running daemon,
+// which is why inverting it -- so that d did nothing to a connected machine --
+// broke no test at all.
+func worthDisconnecting(entry Entry) bool {
+	return entry.Connected || entry.GaveUp
 }
 
 // planSelectionAfterChange keeps the cursor on the list after it changes.

@@ -57,6 +57,7 @@ type mutation struct {
 	line     int
 	column   int
 	source   string
+	clamp    bool // the boundary maps to itself, so both spellings agree
 }
 
 func main() {
@@ -134,14 +135,17 @@ func main() {
 	// about the decision on that line -- and on a package that talks to
 	// something else for a living they are most of the list. Separating them
 	// is the difference between a report worth reading and a wall.
-	onErrors := 0
+	onErrors, onClamps := 0, 0
 	for _, m := range survived {
-		if isErrorBranch(m.source) {
+		switch {
+		case isErrorBranch(m.source):
 			onErrors++
+		case m.clamp:
+			onClamps++
 		}
 	}
-	if onErrors > 0 {
-		fmt.Println(errorBranchNote(onErrors, len(survived)-onErrors))
+	if note := survivorNote(onErrors, onClamps, len(survived)-onErrors-onClamps); note != "" {
+		fmt.Println(note)
 	}
 	fmt.Println("\nA survivor is a change nothing would have failed on. Read each one and" +
 		"\ndecide which it is: equivalent, unreachable, or untested.")
@@ -242,6 +246,13 @@ func mutationsInFile(path, rel string) ([]mutation, error) {
 	}
 	lines := strings.Split(string(src), "\n")
 
+	// What a node is written as, so two of them can be compared as somebody
+	// reading the line would compare them.
+	textOf := func(n ast.Node) string {
+		return strings.TrimSpace(string(src[fset.Position(n.Pos()).Offset:fset.Position(n.End()).Offset]))
+	}
+	clampAt := map[token.Pos]bool{}
+
 	var out []mutation
 	add := func(pos token.Pos, old, new string) {
 		at := fset.Position(pos)
@@ -252,10 +263,17 @@ func mutationsInFile(path, rel string) ([]mutation, error) {
 		out = append(out, mutation{
 			file: rel, offset: at.Offset, old: old, new: new,
 			line: at.Line, column: at.Column, source: source,
+			clamp: clampAt[pos],
 		})
 	}
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch e := n.(type) {
+		case *ast.IfStmt:
+			// Visited before its own condition, so what is recorded here is
+			// there to be read when the comparison inside it comes round.
+			if cond, ok := e.Cond.(*ast.BinaryExpr); ok && isClamp(textOf, cond, e.Body) {
+				clampAt[cond.OpPos] = true
+			}
 		case *ast.BinaryExpr:
 			if to, ok := flip[e.Op]; ok {
 				add(e.OpPos, e.Op.String(), to.String())
@@ -391,24 +409,84 @@ func pointAt(m mutation) string {
 		strings.Repeat(" ", under) + strings.Repeat("^", len(m.old))
 }
 
-// errorBranchNote says how the survivors divide, in a sentence rather than in
+// survivorNote says how the survivors divide, in a sentence rather than in
 // numbers glued to a phrase: "the other 1 are decisions" makes a reader stop
 // and reread a line that had nothing to say.
-func errorBranchNote(onErrors, rest int) string {
-	var b strings.Builder
-	if onErrors == 1 {
-		b.WriteString("1 is an error branch, surviving until something makes that call fail")
-	} else {
-		fmt.Fprintf(&b, "%d are error branches, surviving until something makes those calls fail", onErrors)
+func survivorNote(onErrors, onClamps, rest int) string {
+	var clauses []string
+	switch onErrors {
+	case 0:
+	case 1:
+		clauses = append(clauses, "1 is an error branch, surviving until something makes that call fail")
+	default:
+		clauses = append(clauses, fmt.Sprintf(
+			"%d are error branches, surviving until something makes those calls fail", onErrors))
+	}
+	switch onClamps {
+	case 0:
+	case 1:
+		clauses = append(clauses, "1 holds a value to a bound, where both spellings of the boundary agree")
+	default:
+		clauses = append(clauses, fmt.Sprintf(
+			"%d hold a value to a bound, where both spellings of the boundary agree", onClamps))
 	}
 	switch {
-	case rest == 1:
-		b.WriteString(";\nthe other is a decision with nothing holding it")
-	case rest > 1:
-		fmt.Fprintf(&b, ";\nthe other %d are decisions with nothing holding them", rest)
+	case rest == 1 && len(clauses) > 0:
+		clauses = append(clauses, "the other is a decision with nothing holding it")
+	case rest > 1 && len(clauses) > 0:
+		clauses = append(clauses, fmt.Sprintf("the other %d are decisions with nothing holding them", rest))
 	}
-	b.WriteString(".")
-	return b.String()
+	if len(clauses) == 0 {
+		return ""
+	}
+	return strings.Join(clauses, ";\n") + "."
+}
+
+// isClamp reports whether an if-statement holds a value to a bound, in the shape
+//
+//	if width < 8 { width = 8 }
+//	if w > widest { widest = w }
+//	if next < 0 { return 0 }
+//
+// These make up a large share of any survivor list and none of them is worth
+// reading twice: the only mutations on a comparison are the two spellings of
+// its boundary, and at the boundary the branch assigns the value that is
+// already there. Whichever way it is written the result is the same, so the
+// change is equivalent by construction rather than by anything a test could
+// have said.
+//
+// Deliberately narrow. It asks that the branch be one statement naming the two
+// things compared and nothing else, so that "if first+visible > count { first =
+// count - visible }" -- equivalent too, but by an argument about arithmetic
+// rather than about shape -- is left in the list to be read.
+func isClamp(textOf func(ast.Node) string, cond *ast.BinaryExpr, body *ast.BlockStmt) bool {
+	switch cond.Op {
+	case token.LSS, token.LEQ, token.GTR, token.GEQ:
+	default:
+		// Only a boundary can map to itself. Flipping == to != changes which
+		// branch runs at every value, including this one.
+		return false
+	}
+	if body == nil || len(body.List) != 1 {
+		return false
+	}
+	x, y := textOf(cond.X), textOf(cond.Y)
+	switch st := body.List[0].(type) {
+	case *ast.AssignStmt:
+		// Plain assignment: := would declare something else of the same name.
+		if st.Tok != token.ASSIGN || len(st.Lhs) != 1 || len(st.Rhs) != 1 {
+			return false
+		}
+		lhs, rhs := textOf(st.Lhs[0]), textOf(st.Rhs[0])
+		return (lhs == x && rhs == y) || (lhs == y && rhs == x)
+	case *ast.ReturnStmt:
+		if len(st.Results) != 1 {
+			return false
+		}
+		got := textOf(st.Results[0])
+		return got == x || got == y
+	}
+	return false
 }
 
 // isErrorBranch reports whether a line is testing an error rather than

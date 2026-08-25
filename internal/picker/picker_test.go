@@ -656,3 +656,31 @@ func TestTheCursorStaysOnTheListWhenItShrinks(t *testing.T) {
 		t.Errorf("with nothing left the cursor is at %d", got)
 	}
 }
+
+func TestWhichMachinesDCanDoSomethingTo(t *testing.T) {
+	// d closes a machine's panes here. On a machine that was never connected
+	// there is nothing to close, so it does nothing rather than reporting an
+	// error at somebody for pressing a key the menu offers.
+	//
+	// A machine that was given up on is the case worth having: giving up
+	// leaves its terminals on screen wearing the failure, and d is how they go.
+	// It is also the one that reads as an exception, so it is the one that gets
+	// dropped when this is rewritten.
+	for _, tt := range []struct {
+		what  string
+		entry Entry
+		want  bool
+	}{
+		{"connected", Entry{Connected: true}, true},
+		{"given up on", Entry{GaveUp: true}, true},
+		{"given up on while connected", Entry{Connected: true, GaveUp: true}, true},
+		{"never connected", Entry{}, false},
+		// Configured but not connected is the ordinary state of a machine in
+		// the list, and by far the commonest thing the cursor sits on.
+		{"configured but idle", Entry{Configured: true, Mirroring: true}, false},
+	} {
+		if got := worthDisconnecting(tt.entry); got != tt.want {
+			t.Errorf("d on a machine %s: %v, want %v", tt.what, got, tt.want)
+		}
+	}
+}

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 )
@@ -75,18 +78,30 @@ func TestTheSurvivorsAreCountedInASentence(t *testing.T) {
 	// read. "the other 1 are decisions" makes them stop on a line that had
 	// nothing to say.
 	for _, tt := range []struct {
-		onErrors, rest int
-		want           string
+		onErrors, onClamps, rest int
+		want                     string
 	}{
-		{1, 0, "1 is an error branch, surviving until something makes that call fail."},
-		{3, 0, "3 are error branches, surviving until something makes those calls fail."},
-		{1, 1, "1 is an error branch, surviving until something makes that call fail;\n" +
+		{1, 0, 0, "1 is an error branch, surviving until something makes that call fail."},
+		{3, 0, 0, "3 are error branches, surviving until something makes those calls fail."},
+		{1, 0, 1, "1 is an error branch, surviving until something makes that call fail;\n" +
 			"the other is a decision with nothing holding it."},
-		{24, 29, "24 are error branches, surviving until something makes those calls fail;\n" +
+		{24, 0, 29, "24 are error branches, surviving until something makes those calls fail;\n" +
 			"the other 29 are decisions with nothing holding them."},
+		// Bounds on their own, which is what a layout package looks like.
+		{0, 1, 0, "1 holds a value to a bound, where both spellings of the boundary agree."},
+		{0, 9, 2, "9 hold a value to a bound, where both spellings of the boundary agree;\n" +
+			"the other 2 are decisions with nothing holding them."},
+		{2, 3, 1, "2 are error branches, surviving until something makes those calls fail;\n" +
+			"3 hold a value to a bound, where both spellings of the boundary agree;\n" +
+			"the other is a decision with nothing holding it."},
+		// Nothing to divide up: the caller prints no line rather than a
+		// sentence about none of anything.
+		{0, 0, 4, ""},
+		{0, 0, 0, ""},
 	} {
-		if got := errorBranchNote(tt.onErrors, tt.rest); got != tt.want {
-			t.Errorf("errorBranchNote(%d, %d) =\n%q\nwant\n%q", tt.onErrors, tt.rest, got, tt.want)
+		if got := survivorNote(tt.onErrors, tt.onClamps, tt.rest); got != tt.want {
+			t.Errorf("survivorNote(%d, %d, %d) =\n%q\nwant\n%q",
+				tt.onErrors, tt.onClamps, tt.rest, got, tt.want)
 		}
 	}
 }
@@ -116,6 +131,62 @@ func TestAnErrorBranchIsRecognisedByItsShape(t *testing.T) {
 	} {
 		if isErrorBranch(source) {
 			t.Errorf("%q was counted as an error branch", source)
+		}
+	}
+}
+
+// clampsIn parses a function body and reports, for each if-statement in it,
+// whether it reads as holding a value to a bound.
+func clampsIn(t *testing.T, body string) []bool {
+	t.Helper()
+	src := "package p\nfunc f() {\n" + body + "\n}\n"
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		t.Fatalf("parsing the snippet: %v", err)
+	}
+	textOf := func(n ast.Node) string {
+		return strings.TrimSpace(src[fset.Position(n.Pos()).Offset:fset.Position(n.End()).Offset])
+	}
+	var got []bool
+	ast.Inspect(file, func(n ast.Node) bool {
+		if stmt, ok := n.(*ast.IfStmt); ok {
+			cond, _ := stmt.Cond.(*ast.BinaryExpr)
+			got = append(got, cond != nil && isClamp(textOf, cond, stmt.Body))
+		}
+		return true
+	})
+	return got
+}
+
+func TestABoundHeldToItselfIsRecognised(t *testing.T) {
+	// A survivor list from anything that lays out a screen is mostly these,
+	// and none of them is worth a second reading: at the boundary the branch
+	// assigns the value that is already there, so both spellings agree.
+	for _, tt := range []struct {
+		what string
+		body string
+		want bool
+	}{
+		{"a floor", "width := 3\nif width < 8 {\nwidth = 8\n}\n_ = width", true},
+		{"a ceiling", "width := 3\nif width > 40 {\nwidth = 40\n}\n_ = width", true},
+		{"a running maximum", "w, widest := 1, 2\nif w > widest {\nwidest = w\n}\n_ = widest", true},
+		{"a bound returned rather than assigned", "next := 1\nif next < 0 {\nreturn\n}\n_ = next", false},
+
+		// Not bounds. Each of these is a decision, and a change to it means
+		// something -- so leaving them in the list is the point.
+		{"a comparison of two other things", "a, b, c := 1, 2, 3\nif a < b {\nc = a\n}\n_ = c", false},
+		{"a branch that does more than clamp", "w, m := 1, 2\nif w > m {\nm = w\nw = 0\n}\n_ = w", false},
+		{"equality, where no boundary maps to itself", "a, b := 1, 2\nif a == b {\na = b\n}\n_ = a", false},
+		{"a declaration rather than an assignment", "a, b := 1, 2\nif a < b {\nc := b\n_ = c\n}\n_ = a", false},
+		{"arithmetic on the compared side", "f, v, c := 1, 2, 3\nif f+v > c {\nf = c - v\n}\n_ = f", false},
+	} {
+		got := clampsIn(t, tt.body)
+		if len(got) != 1 {
+			t.Fatalf("%s: found %d if-statements in the snippet, want 1", tt.what, len(got))
+		}
+		if got[0] != tt.want {
+			t.Errorf("%s: read as a bound = %v, want %v", tt.what, got[0], tt.want)
 		}
 	}
 }
