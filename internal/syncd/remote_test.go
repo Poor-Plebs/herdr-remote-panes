@@ -1623,3 +1623,93 @@ func TestTerminalsComingAndGoingDoNotAccumulate(t *testing.T) {
 			cycles, got, settled)
 	}
 }
+
+// envOf is what a pane was told when it was opened.
+func envOf(pane map[string]any) map[string]string {
+	out := map[string]string{}
+	raw, _ := pane["env"].(map[string]any)
+	for k, v := range raw {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	return out
+}
+
+func TestAMirrorIsToldWhichTerminalOnWhichMachineInWhichMode(t *testing.T) {
+	// Everything the pane's process knows arrives this way: which machine to
+	// reach, which session on it, which terminal to bridge, and how. Nothing
+	// checked any of it, so a setting that stopped reaching the pane looked
+	// exactly like one that arrived — and two of these decide whether what you
+	// type reaches the far end at all.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "observe"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+
+	mirrors := mirrorsHere(here(), "bot")
+	if len(mirrors) == 0 {
+		t.Fatal("no mirror was opened")
+	}
+	env := envOf(mirrors[0])
+
+	if got := env["HRP_TARGET"]; got != "bot" {
+		t.Errorf("the pane was told to reach %q, not bot", got)
+	}
+	// observe is read-only, and this is the only thing that makes it so. A
+	// machine set to watch a terminal that instead attaches to it takes the
+	// terminal away from whoever is using it.
+	if got := env["HRP_MODE"]; got != "observe" {
+		t.Errorf("the pane was told mode %q, not observe", got)
+	}
+	if env["HRP_TERMINAL"] == "" {
+		t.Error("the pane was not told which terminal to bridge")
+	}
+	if got := env["HRP_NAME"]; !strings.HasSuffix(got, "@bot") {
+		t.Errorf("the pane was named %q, which does not say which machine it is on", got)
+	}
+}
+
+func TestTurningTakeoverOffReachesThePane(t *testing.T) {
+	// takeover decides whether a mirror may evict a stale attach left by a
+	// terminal that went without saying so. Turning it off is a setting in the
+	// table, and the only thing it does is put one variable in front of the
+	// pane: if that stops happening the setting reads as working and does
+	// nothing at all.
+	for _, tt := range []struct {
+		what     string
+		takeover bool
+		want     string
+	}{
+		{"on, which is the default, says nothing", true, ""},
+		{"off has to be said", false, "false"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			here := withFakeHerdr(t)
+			there, _ := withRemoteHerdr(t)
+
+			cfg := machineConfig("bot")
+			cfg.Hosts[0].Mode = "attach"
+			cfg.Takeover = &tt.takeover
+			d := New(cfg)
+			if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+				t.Fatalf("connect: %s", reply.Message)
+			}
+			settle(t, d, here, 3, there)
+
+			mirrors := mirrorsHere(here(), "bot")
+			if len(mirrors) == 0 {
+				t.Fatal("no mirror was opened")
+			}
+			if got := envOf(mirrors[0])["HRP_TAKEOVER"]; got != tt.want {
+				t.Errorf("the pane was told HRP_TAKEOVER=%q, want %q", got, tt.want)
+			}
+		})
+	}
+}

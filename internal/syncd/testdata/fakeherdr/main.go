@@ -315,6 +315,21 @@ func main() {
 				focused = true
 			}
 		}
+		// What the pane is told. This is the whole of the interface between the
+		// daemon and the process in the pane -- which machine, which terminal,
+		// which mode, whether it may take over a stale attach -- and none of it
+		// was recorded, so a setting that stopped reaching the pane looked
+		// exactly like one that arrived.
+		env := map[string]any{}
+		for i, a := range args {
+			if a != "--env" || i+1 >= len(args) {
+				continue
+			}
+			if name, value, found := strings.Cut(args[i+1], "="); found {
+				env[name] = value
+			}
+		}
+
 		id := state.paneID(workspace)
 		state.Panes[id] = map[string]any{
 			// Marked as this plugin's, because Herdr will not let a plugin
@@ -324,6 +339,7 @@ func main() {
 			"plugin":  true,
 			"pane_id": id, "tab_id": tab, "workspace_id": workspace,
 			"terminal_id": state.id("term_"), "label": "", "focused": focused,
+			"env": env,
 		}
 		save()
 		ok(map[string]any{"plugin_pane": map[string]any{"pane": state.Panes[id]}})
