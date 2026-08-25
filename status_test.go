@@ -20,7 +20,7 @@ func TestStatusColumnsFitWhatIsInThem(t *testing.T) {
 		{Label: "prod", Connected: true, Mirrors: 2},
 		{Label: "ci", Connected: true, SSHOnly: true, Terminals: 12},
 	}
-	lines := statusLines(hosts)
+	lines := statusLines(hosts, 0)
 	if len(lines) != len(hosts) {
 		t.Fatalf("got %d lines for %d machines", len(lines), len(hosts))
 	}
@@ -55,7 +55,7 @@ func TestStatusSaysHowAMachineIsReachedEvenWhenItIsNot(t *testing.T) {
 	hosts := []syncd.HostInfo{
 		{Label: "staging", GaveUp: true, LastError: "host key changed"},
 	}
-	line := statusLines(hosts)[0]
+	line := statusLines(hosts, 0)[0]
 
 	if !strings.Contains(line, "mirrored") {
 		t.Errorf("%q does not say how the machine is reached", line)
@@ -76,7 +76,7 @@ func TestStatusCountsAreRightAligned(t *testing.T) {
 		{Label: "bbb", Connected: true, SSHOnly: true, Terminals: 100},
 	}
 	var at []int
-	for _, line := range statusLines(hosts) {
+	for _, line := range statusLines(hosts, 0) {
 		i := strings.Index(line, "ssh")
 		if i < 0 {
 			t.Fatalf("no kind in %q", line)
@@ -94,15 +94,15 @@ func TestStatusMakesALabelSafeToPrint(t *testing.T) {
 	hosts := []syncd.HostInfo{
 		{Label: "bot\x1b[31m\nrest", Connected: true, SSHOnly: true, Terminals: 1},
 	}
-	line := statusLines(hosts)[0]
+	line := statusLines(hosts, 0)[0]
 	if strings.ContainsAny(line, "\n\r") || strings.ContainsRune(line, 0x1b) {
 		t.Errorf("%q carries something that steers the terminal", line)
 	}
 }
 
 func TestStatusOfNothingIsNoLines(t *testing.T) {
-	if got := statusLines(nil); len(got) != 0 {
-		t.Errorf("statusLines(nil) = %q, want nothing", got)
+	if got := statusLines(nil, 0); len(got) != 0 {
+		t.Errorf("statusLines(nil, 0) = %q, want nothing", got)
 	}
 }
 
@@ -113,7 +113,7 @@ func TestStatusSaysWhenATerminalCouldNotBeMirrored(t *testing.T) {
 	// missing and nothing anywhere explaining it.
 	line := statusLines([]syncd.HostInfo{
 		{Label: "bot", Connected: true, Mirrors: 2, Unmirrored: 1},
-	})[0]
+	}, 0)[0]
 
 	if !strings.Contains(line, "could not be mirrored") {
 		t.Errorf("%q does not say a terminal was given up on", line)
@@ -133,7 +133,7 @@ func TestAMachineThatCannotBeReachedSaysThatFirst(t *testing.T) {
 	line := statusLines([]syncd.HostInfo{{
 		Label: "bot", Connected: false, GaveUp: true, Unmirrored: 2,
 		LastError: "host key changed — verify it, then update ~/.ssh/known_hosts",
-	}})[0]
+	}}, 0)[0]
 
 	if !strings.Contains(line, "host key changed") {
 		t.Errorf("%q does not say what is actually wrong", line)
@@ -151,7 +151,7 @@ func TestAMachinesFailureCannotRepaintTheStatusLine(t *testing.T) {
 	lines := statusLines([]syncd.HostInfo{{
 		Label:     "bot",
 		LastError: "banner\x1b[2K\rrefused\nand a second line",
-	}})
+	}}, 0)
 	if len(lines) != 1 {
 		t.Fatalf("want one line, got %d: %v", len(lines), lines)
 	}
@@ -176,7 +176,7 @@ func TestAMachineStillBeingRetriedHasNothingToCountEither(t *testing.T) {
 	// neither flag set the way this one does.
 	line := statusLines([]syncd.HostInfo{
 		{Label: "staging", SSHOnly: true, LastError: "connection refused"},
-	})[0]
+	}, 0)[0]
 
 	if strings.Contains(line, "0") {
 		t.Errorf("%q counts terminals on a machine that is not connected", line)
@@ -187,5 +187,77 @@ func TestAMachineStillBeingRetriedHasNothingToCountEither(t *testing.T) {
 	}
 	if !strings.Contains(line, "connection refused") {
 		t.Errorf("%q does not say what is wrong", line)
+	}
+}
+
+func TestALongFailureCarriesOnUnderItsColumn(t *testing.T) {
+	// A failure can run past a hundred characters. Left to the terminal it
+	// breaks mid-word at whatever column the window happens to end at, and the
+	// rest starts hard against the left margin — where a machine's name goes,
+	// so the tail of one machine's trouble reads as another machine's row.
+	hosts := []syncd.HostInfo{
+		{Label: "bot", Connected: true, SSHOnly: true, Terminals: 1},
+		{Label: "prod", GaveUp: true, SSHOnly: true,
+			LastError: "host key changed — verify it, then update ~/.ssh/known_hosts"},
+	}
+	const width = 80
+	lines := statusLines(hosts, width)
+
+	for _, line := range lines {
+		if got := text.Width(line); got > width {
+			t.Errorf("a line is %d wide against a terminal of %d: %q", got, width, line)
+		}
+	}
+	if len(lines) < 3 {
+		t.Fatalf("the long failure was not carried on: %q", lines)
+	}
+
+	// The carried-on part starts under the state, not under the name.
+	first := lines[1]
+	stateAt := strings.Index(first, "unreachable")
+	if stateAt < 0 {
+		t.Fatalf("no state in %q", first)
+	}
+	for _, line := range lines[2:] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if indent := len(line) - len(strings.TrimLeft(line, " ")); indent != stateAt {
+			t.Errorf("a carried-on line starts at column %d, not under the state at %d: %q",
+				indent, stateAt, line)
+		}
+	}
+
+	// And nothing is lost in the carrying.
+	joined := strings.Join(strings.Fields(strings.Join(lines, " ")), " ")
+	if !strings.Contains(joined, "update ~/.ssh/known_hosts") {
+		t.Errorf("the end of the message went missing: %q", joined)
+	}
+}
+
+func TestWithNoTerminalTheLineIsLeftWhole(t *testing.T) {
+	// Run as a plugin action the output goes to the log, and piped it goes to
+	// whatever is reading. Both want the line as it is: breaking it into
+	// columns nobody is looking at helps no one and makes it harder to grep.
+	hosts := []syncd.HostInfo{
+		{Label: "prod", GaveUp: true, SSHOnly: true,
+			LastError: "host key changed — verify it, then update ~/.ssh/known_hosts"},
+	}
+	if lines := statusLines(hosts, 0); len(lines) != 1 {
+		t.Errorf("with no width the line was broken into %d: %q", len(lines), lines)
+	}
+}
+
+func TestAnAbsurdlyNarrowTerminalIsLeftAlone(t *testing.T) {
+	// Wrapping into a column a few characters wide produces a paragraph one
+	// word per line, which is worse than a line that runs off the edge.
+	hosts := []syncd.HostInfo{
+		{Label: "prod", GaveUp: true, SSHOnly: true,
+			LastError: "host key changed — verify it, then update ~/.ssh/known_hosts"},
+	}
+	for _, width := range []int{1, 10, 25, 30} {
+		if lines := statusLines(hosts, width); len(lines) != 1 {
+			t.Errorf("at %d columns the line was broken into %d: %q", width, len(lines), lines)
+		}
 	}
 }

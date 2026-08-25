@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
@@ -54,7 +55,7 @@ func status() error {
 		report("no hosts connected")
 		return nil
 	}
-	for _, line := range statusLines(reply.Hosts) {
+	for _, line := range statusLines(reply.Hosts, outputWidth()) {
 		fmt.Println(line)
 	}
 	if os.Getenv("HERDR_PLUGIN_ACTION_ID") != "" {
@@ -70,7 +71,7 @@ func status() error {
 // prod, ci, all on plain SSH -- put every state some twenty columns from the
 // machine it belongs to. Names are measured in terminal cells rather than
 // characters, since a label can hold anything the user wrote in the config.
-func statusLines(hosts []syncd.HostInfo) []string {
+func statusLines(hosts []syncd.HostInfo, width int) []string {
 	type row struct{ name, count, kind, state string }
 
 	rows := make([]row, 0, len(hosts))
@@ -118,17 +119,69 @@ func statusLines(hosts []syncd.HostInfo) []string {
 		kindCol = max(kindCol, text.Width(r.kind))
 	}
 
+	// Where the state starts, which is where a state too long for the terminal
+	// carries on: "  name  count kind  ".
+	indent := 2 + nameCol + 2 + countCol + 1 + kindCol + 2
+
 	lines := make([]string, 0, len(rows))
 	for _, r := range rows {
-		lines = append(lines, strings.TrimRight(fmt.Sprintf("  %s  %s %s  %s",
+		prefix := fmt.Sprintf("  %s  %s %s  ",
 			text.Pad(r.name, nameCol),
 			// Counts right-aligned, so a two-digit one does not shift the
 			// column that follows it.
 			strings.Repeat(" ", countCol-text.Width(r.count))+r.count,
-			text.Pad(r.kind, kindCol),
-			r.state), " "))
+			text.Pad(r.kind, kindCol))
+
+		// A failure can run to a hundred characters and more, and left to the
+		// terminal it breaks mid-word at whatever column the window happens to
+		// end at, with the rest starting hard against the left margin where a
+		// machine's name goes. Carried on under the state instead, the columns
+		// survive and the second line reads as more of the same thing.
+		room := width - indent
+		if width <= 0 || indent+text.Width(r.state) <= width || room < 20 {
+			lines = append(lines, strings.TrimRight(prefix+r.state, " "))
+			continue
+		}
+		for i, part := range text.Wrap(r.state, room, maxStateLines) {
+			if i == 0 {
+				lines = append(lines, prefix+part)
+				continue
+			}
+			lines = append(lines, strings.Repeat(" ", indent)+part)
+		}
 	}
 	return lines
+}
+
+// maxStateLines bounds how far one machine's state may run. Generous -- the
+// longest thing here is an ssh failure, and those are a sentence -- but not
+// unbounded, since what a machine says about itself is not this side's to
+// trust.
+const maxStateLines = 8
+
+// outputWidth is how wide status may draw, or 0 for no limit.
+//
+// Asked of the terminal the same way the menu asks. When there is no terminal
+// -- run as a plugin action, whose output goes to the log, or piped into
+// something -- there is no width to respect and nothing is wrapped: both want
+// the line whole.
+func outputWidth() int {
+	cmd := exec.Command("stty", "size")
+	cmd.Stdin = os.Stdin
+	cmd.Stderr = nil
+	out, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) != 2 {
+		return 0
+	}
+	cols, err := strconv.Atoi(fields[1])
+	if err != nil || cols <= 0 {
+		return 0
+	}
+	return cols
 }
 
 // statusSummary is the one line Herdr shows as a notification.
