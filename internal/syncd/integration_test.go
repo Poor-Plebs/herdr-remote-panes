@@ -1929,3 +1929,72 @@ func TestTheDaemonDoesNotLeaveFilesOpen(t *testing.T) {
 			"not being closed", after, before)
 	}
 }
+
+func TestARestartBringsBackAMachineNobodyNamesAgain(t *testing.T) {
+	// The test above restarts by connecting to the machine by name, which is
+	// not what happens. Nobody types anything after a Herdr restart: the daemon
+	// starts, reads the snapshot, and reconnects what was there.
+	//
+	// That is a different path -- the machines come back through connectEach
+	// rather than through the connect command -- and it is the one every
+	// restart takes, so it is worth walking rather than standing beside.
+	held := withFakeHerdr(t)
+
+	// A machine that is not in the config at all, which is the case the
+	// snapshot exists for: one picked out of ~/.ssh/config never reaches the
+	// config file, so nothing but the snapshot remembers it was there.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host bot\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	before := New(config.Defaults())
+	if reply := before.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	before.reconcileAll()
+	terminalsAreRunning(t, held())
+	before.persist()
+
+	const want = 1
+	if got := panesFor(held(), "bot"); got != want {
+		t.Fatalf("started with %d terminals, want %d", got, want)
+	}
+
+	// The restart, and then what the daemon does on its own: read what was
+	// remembered and bring it back. Written as the startup does it, so this
+	// fails if that sequence changes rather than quietly testing something
+	// else.
+	herdrRestarted(t)
+	after := New(config.Defaults())
+
+	remembered := after.rememberedHosts()
+	if len(remembered) == 0 {
+		t.Fatal("nothing was remembered, so the restart had nothing to bring back")
+	}
+	var hosts []config.Host
+	for _, target := range remembered {
+		host, err := after.hostConfig(target)
+		if err != nil {
+			t.Fatalf("a remembered machine has no settings: %v", err)
+		}
+		hosts = append(hosts, host)
+	}
+	after.connectEach(hosts)
+
+	for i := 0; i < want+3; i++ {
+		after.reconcileAll()
+		terminalsAreRunning(t, held())
+	}
+
+	if got := panesFor(held(), "bot"); got != want {
+		t.Errorf("after a restart nobody typed anything into, there are %d terminals, want %d", got, want)
+	}
+	if hosts := after.dispatch(Command{Cmd: "status"}).Hosts; len(hosts) != 1 || !hosts[0].Connected {
+		t.Errorf("the machine did not come back connected: %+v", hosts)
+	}
+}
