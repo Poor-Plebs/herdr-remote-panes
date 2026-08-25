@@ -3,9 +3,9 @@ package syncd
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/mirror"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
