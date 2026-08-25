@@ -77,3 +77,60 @@ func TestEveryDocCommentNamesItsOwnFunction(t *testing.T) {
 	}
 	t.Logf("checked %d documented functions", checked)
 }
+
+func TestEveryPackageSaysWhatItIsFor(t *testing.T) {
+	// A package comment is the first thing anybody reads about a package, and
+	// the only part of it `go doc` shows without being asked for a name. It has
+	// to sit immediately above the package clause with no blank line, and one
+	// that does not is not a package comment at all -- it is a floating comment
+	// that reads exactly like one, in a file that renders with no
+	// documentation whatever.
+	//
+	// This package had that: the words were written, in the right file, saying
+	// the right thing, and separated from the clause by the import block.
+	seen := map[string]bool{}
+	documented := map[string]bool{}
+
+	err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			// testdata is not built by the go tool, and bin and the dot
+			// directories are not ours.
+			if name := entry.Name(); path != "." && (strings.HasPrefix(name, ".") ||
+				name == "bin" || name == "vendor" || name == "testdata") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+
+		dir := filepath.Dir(path)
+		seen[dir] = true
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		if file.Doc != nil {
+			documented[dir] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(seen) == 0 {
+		t.Fatal("no packages were found to check, so this proved nothing")
+	}
+	for dir := range seen {
+		if !documented[dir] {
+			t.Errorf("no file in %s opens with a package comment, so `go doc %s` "+
+				"says nothing about what it is for", dir, dir)
+		}
+	}
+}

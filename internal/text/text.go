@@ -1,10 +1,3 @@
-package text
-
-import (
-	"strings"
-	"unicode"
-)
-
 // Package text draws names this plugin did not write.
 //
 // Machine names come from ~/.ssh/config, and terminal names come from whatever
@@ -12,6 +5,12 @@ import (
 // course. Both end up in a terminal here. A newline drew a row nothing knew
 // about, an escape sequence changed the colour of everything after it, and a
 // long name ran past the edge of what it was drawn into.
+package text
+
+import (
+	"strings"
+	"unicode"
+)
 
 // Sanitize makes a name safe to draw: one line, no control characters, no
 // escape sequences.
