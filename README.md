@@ -201,6 +201,21 @@ that does not resolve, a key the machine will not take — gets none, because th
 second try would fail in exactly the same way. Fix whatever is wrong and pick
 the machine from the menu, which is how you say "try now".
 
+**Who else can see your space on a machine.** The space this plugin makes there
+is named after *your* machine, so two people mirroring the same remote each get
+their own and neither mirrors the other's — that is what `scope` being `shared`
+means. It is not privacy, though. The space lives in that machine's Herdr, under
+the account you log in as, so anyone who can be that user there sees it listed
+and can open the terminals in it. A different Unix account cannot: the socket is
+readable only by its owner. And anyone mirroring the machine with `"scope":
+"all"` mirrors everything on it, yours included.
+
+One way to end up sharing without meaning to: the name comes from your
+hostname, so two machines called the same thing — two `localhost`s, or a pair of
+laptops from one company image — land in the same space and mirror each other's
+terminals. With `attach` they will take them from each other. Give one of them a
+different `remote_workspace_format` if that happens.
+
 **Machines without Herdr just work.** They get a plain SSH terminal. Mirroring
 is the only part that needs Herdr at both ends, and a machine that turns out not
 to have it falls back rather than refusing to connect.
