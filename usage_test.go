@@ -428,3 +428,30 @@ func TestASelectionThatIsNotAMachineIsRefused(t *testing.T) {
 		t.Errorf("a plain machine name %q was refused", name)
 	}
 }
+
+func TestTheREADMEShowsTheVersionOutputThatIsPrinted(t *testing.T) {
+	// The README shows both lines so somebody can compare them against their
+	// own: the point of the command is that the two revisions differ, and that
+	// only reads if the second column lines up under the first. Padding is the
+	// easiest thing here to change without noticing, and the least likely to
+	// be checked against a README afterwards.
+	readme, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The revisions the README happens to use, taken from what it shows rather
+	// than repeated here, so rewriting the example does not need this changed.
+	shown := regexp.MustCompile(`herdr-remote-panes ([0-9a-f]{7})\ndaemon +([0-9a-f]{7})`).
+		FindStringSubmatch(string(readme))
+	if shown == nil {
+		t.Fatal("the README no longer shows the two lines `version` prints")
+	}
+
+	got := versionLines(shown[1], shown[2])
+	if len(got) != 2 {
+		t.Fatalf("version printed %d lines, want 2: %q", len(got), got)
+	}
+	if want := shown[0]; strings.Join(got, "\n") != want {
+		t.Errorf("version prints\n%q\nand the README shows\n%q", strings.Join(got, "\n"), want)
+	}
+}

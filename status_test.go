@@ -547,3 +547,29 @@ func readmeText(t *testing.T) string {
 	}
 	return string(raw)
 }
+
+func TestTheREADMEQuotesAStatusLineTheCodeWouldPrint(t *testing.T) {
+	// The README shows a status line for a machine that was asked to mirror and
+	// could not. Shown rather than described, so somebody can match what is on
+	// their screen against it -- which only works if it is what would be on
+	// their screen, down to the spaces that put the columns where they are.
+	//
+	// The line drifts if the message is reworded or the columns move, and
+	// neither of those is a change anybody would think to check a README for.
+	want := "  bot  2 ssh  mirroring off: no herdr found on the machine — " +
+		"set herdr_bin if it is installed elsewhere there"
+
+	if !strings.Contains(readmeText(t), want) {
+		t.Errorf("the README does not show this line, which is what status prints "+
+			"for a machine that could not mirror:\n%s", want)
+	}
+
+	// The machine the README's text is about: two terminals over plain SSH,
+	// because the Herdr it needed was not found there.
+	got := statusLines([]syncd.HostInfo{{
+		Label: "bot", Connected: true, SSHOnly: true, Terminals: 2, NoHerdr: true,
+	}}, 0)
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("status prints\n%q\nand the README shows\n%q", got, want)
+	}
+}

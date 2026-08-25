@@ -377,7 +377,7 @@ ssh workbox 'command -v herdr || ls ~/.local/bin/herdr /opt/herdr/bin/herdr'
 `status` says which machine, and that the setting exists:
 
 ```
-bot  2 ssh  mirroring off: no herdr found on the machine — set herdr_bin if it is installed elsewhere there
+  bot  2 ssh  mirroring off: no herdr found on the machine — set herdr_bin if it is installed elsewhere there
 ```
 
 **A machine says `at the mirror limit`.** One machine may mirror only so many
