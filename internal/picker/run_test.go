@@ -227,3 +227,51 @@ func TestTheMenuKeepsTakingKeysAfterAToggle(t *testing.T) {
 			"the cursor moved when the list was rebuilt", got.connected)
 	}
 }
+
+// endsWithTheLastByte hands back its final byte together with io.EOF, which
+// io.Reader permits and a terminal closing on a keypress does.
+type endsWithTheLastByte struct {
+	keys string
+	at   int
+}
+
+func (r *endsWithTheLastByte) Read(p []byte) (int, error) {
+	if r.at >= len(r.keys) {
+		return 0, io.EOF
+	}
+	p[0] = r.keys[r.at]
+	r.at++
+	if r.at == len(r.keys) {
+		return 1, io.EOF
+	}
+	return 1, nil
+}
+
+func TestAKeyArrivingWithTheEndOfTheStreamIsStillAKey(t *testing.T) {
+	// io.Reader may return what it read and the error that ended the stream in
+	// one call, and its contract says to use the bytes before considering the
+	// error. Reading that as nothing loses the keypress -- and what it is lost
+	// as is a quit, so the menu shuts instead of moving, which looks like the
+	// arrow keys closing the menu.
+	for _, tt := range []struct {
+		keys string
+		want key
+	}{
+		{"j", keyDown},
+		{"k", keyUp},
+		{"\x1b[B", keyDown},
+		{"\x1b[A", keyUp},
+		{"\r", keyEnter},
+	} {
+		if got := parseKey(&endsWithTheLastByte{keys: tt.keys}); got != tt.want {
+			t.Errorf("%q arriving with the end of the stream read as %v, want %v",
+				tt.keys, got, tt.want)
+		}
+	}
+
+	// And a stream with nothing left in it is still a quit, which is what the
+	// menu does when its input goes away.
+	if got := parseKey(&endsWithTheLastByte{}); got != keyQuit {
+		t.Errorf("an empty stream read as %v, want a quit", got)
+	}
+}

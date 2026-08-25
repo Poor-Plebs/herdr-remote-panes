@@ -937,8 +937,14 @@ const maxEscapeParams = 16
 func parseKey(r io.Reader) key {
 	var buf [1]byte
 	read := func() (byte, bool) {
-		n, err := r.Read(buf[:])
-		return buf[0], err == nil && n == 1
+		// The byte, not the error. io.Reader is allowed to hand back what it
+		// read together with the error that ended the stream, and says to use
+		// it: a terminal closing right after a keypress delivers both at once.
+		// Reading that as nothing turned the keypress into a quit, so the menu
+		// shut instead of moving -- and the next read says 0 and the error
+		// again, which is where quitting belongs.
+		n, _ := r.Read(buf[:])
+		return buf[0], n == 1
 	}
 
 	first, ok := read()
