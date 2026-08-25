@@ -184,3 +184,49 @@ func TestTheREADMEInstallsThisRepository(t *testing.T) {
 		t.Errorf("the README's pinned install does not name %q", want)
 	}
 }
+
+func TestEveryBadgeNamesThisRepository(t *testing.T) {
+	// The badges hardcode owner and repository in a file that has no other
+	// reason to know either, the same as the install line does. If this project
+	// is moved or renamed they keep pointing at where it used to be — and a
+	// badge that points somewhere else does not break, it reports on somebody
+	// else's project.
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod, err := os.ReadFile("../../go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var want string
+	for _, line := range strings.Split(string(mod), "\n") {
+		if rest, found := strings.CutPrefix(strings.TrimSpace(line), "module github.com/"); found {
+			want = strings.TrimSpace(rest)
+			break
+		}
+	}
+	if want == "" {
+		t.Fatal("go.mod names no GitHub module")
+	}
+
+	badges := 0
+	for _, line := range strings.Split(string(readme), "\n") {
+		if !strings.HasPrefix(line, "[![") {
+			continue
+		}
+		badges++
+		// Once per address, not once per line. A badge carries two — the image
+		// and where clicking it goes — and checking only that the name appears
+		// somewhere passes when one of the two points at another project.
+		if urls, named := strings.Count(line, "https://"), strings.Count(line, want); named != urls {
+			t.Errorf("a badge has %d addresses but names %q %d times: %s", urls, want, named, line)
+		}
+	}
+	// Finding none would pass every check above, which is the failure mode of
+	// reading a file in a test.
+	if badges < 4 {
+		t.Fatalf("found %d badges, want the four this README has", badges)
+	}
+}
