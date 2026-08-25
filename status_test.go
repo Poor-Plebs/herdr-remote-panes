@@ -446,3 +446,53 @@ func TestTheWorstQuietFailureIsTheOneReported(t *testing.T) {
 		})
 	}
 }
+
+func TestWrappingStartsAsSoonAsThereIsRoomToWrapInto(t *testing.T) {
+	// The narrow case is held from one side by the test above: too narrow, and
+	// the line is left whole. Held only from that side, the threshold could be
+	// raised to any number at all and every test would still pass -- and a
+	// threshold nobody can raise too far is the whole point of having one.
+	//
+	// So: walk the widths from one up to the whole line, find where wrapping
+	// begins, and check it begins as soon as the column it wraps into is worth
+	// having rather than somewhere well past that.
+	hosts := []syncd.HostInfo{
+		{Label: "prod", GaveUp: true, SSHOnly: true,
+			LastError: "host key changed — verify it, then update ~/.ssh/known_hosts"},
+	}
+	whole := statusLines(hosts, 0)[0]
+	full := text.Width(whole)
+
+	// The columns before the state, which is what the state has to wrap under.
+	// Everything up to and including the run of spaces after the kind -- so the
+	// start of the state itself, which for this host is what it says about
+	// being unreachable, not the ssh message carried inside it.
+	indent := strings.Index(whole, "unreachable")
+	if indent <= 0 {
+		t.Fatalf("could not find where the state begins in %q", whole)
+	}
+
+	first := 0
+	for w := 1; w < full; w++ {
+		if len(statusLines(hosts, w)) > 1 {
+			first = w
+			break
+		}
+	}
+	if first == 0 {
+		t.Fatalf("no width below %d wrapped at all", full)
+	}
+
+	// Deliberately not written against minWrapColumn. A test that measures the
+	// threshold against the threshold cannot fail: raise the constant and the
+	// expectation rises with it, which is how the first draft of this passed
+	// happily at twice the value. The numbers here say what the wrapping is
+	// for, in columns, and the constant has to keep up with them.
+	room := first - indent
+	if room < 15 {
+		t.Errorf("wrapping began with only %d columns to wrap into, which is a word per line", room)
+	}
+	if room > 25 {
+		t.Errorf("wrapping did not begin until there were %d columns to wrap into, so terminals wide enough to wrap were left running off the edge", room)
+	}
+}

@@ -161,8 +161,14 @@ func statusLines(hosts []syncd.HostInfo, width int) []string {
 		// end at, with the rest starting hard against the left margin where a
 		// machine's name goes. Carried on under the state instead, the columns
 		// survive and the second line reads as more of the same thing.
+		// Whether to wrap at all: not when there is no width to respect, not
+		// when it already fits, and not when what is left of the terminal after
+		// the columns is too narrow to wrap into. That last one is a terminal
+		// so narrow the state would come out one word per line, which is worse
+		// to read than a line running off the edge -- and the edge at least
+		// uses the whole width, where a column of syllables uses a fifth of it.
 		room := width - indent
-		if width <= 0 || indent+text.Width(r.state) <= width || room < 20 {
+		if width <= 0 || indent+text.Width(r.state) <= width || room < minWrapColumn {
 			lines = append(lines, strings.TrimRight(prefix+r.state, " "))
 			continue
 		}
@@ -176,6 +182,11 @@ func statusLines(hosts []syncd.HostInfo, width int) []string {
 	}
 	return lines
 }
+
+// minWrapColumn is the narrowest column worth wrapping a state into. Roughly a
+// long word and a short one: below it the wrapping is doing more harm than the
+// overrun it prevents.
+const minWrapColumn = 20
 
 // maxStateLines bounds how far one machine's state may run. Generous -- the
 // longest thing here is an ssh failure, and those are a sentence -- but not
