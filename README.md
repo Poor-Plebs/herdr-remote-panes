@@ -216,6 +216,11 @@ laptops from one company image — land in the same space and mirror each other'
 terminals. With `attach` they will take them from each other. Give one of them a
 different `remote_workspace_format` if that happens.
 
+Sharing a space with someone *on purpose* — both of you working in it, each
+driving the terminals you opened — is a planned feature rather than a supported
+one. The design, and what already works today if you want to try it by hand, is
+in [docs/pairing.md](docs/pairing.md).
+
 **Machines without Herdr just work.** They get a plain SSH terminal. Mirroring
 is the only part that needs Herdr at both ends, and a machine that turns out not
 to have it falls back rather than refusing to connect.

@@ -29,6 +29,29 @@ None of these require an attachment. They inject into a pane by id whoever is
 driving it, which is exactly the escape hatch pairing needs and the reason this
 design does not need a handover protocol.
 
+## What works today, by hand
+
+None of the below is built, but the shape of it already works, and it is worth
+knowing because it is also how the feature will behave. Both of you point at the
+same space on the machine and pick opposite modes:
+
+```json
+{ "target": "deploy@vm", "remote_workspace_format": "pairing", "mode": "attach" }
+```
+
+and, for the other person, the same with `"mode": "observe"`. You both then see
+the same terminals; one of you can type in them and the other watches live.
+
+The limits are the reason this is a plan and not a recipe. Only one of you can
+type, and swapping means both of you editing config. If you both choose
+`attach`, the second one either fails or evicts the first depending on
+`takeover`, which is a takeover war rather than a handover. And nothing on
+either side shows who is driving.
+
+What the watcher can still do, today, is push into a terminal without taking it:
+`herdr pane run <pane-id> <command>` on the machine itself. That is the piece
+the design is built around.
+
 ## Decisions taken
 
 - **A terminal nobody here created is watched, not driven.** That covers your
