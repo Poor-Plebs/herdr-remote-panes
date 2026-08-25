@@ -1397,6 +1397,31 @@ func (d *Daemon) connectEach(hosts []config.Host) []error {
 		}(i, host)
 	}
 	wg.Wait()
+
+	// The same second step connecting to one machine takes. Connecting alone
+	// only opens the SSH connection; what makes a machine's space exist over
+	// there -- and records which space it is -- is ensuring its presence.
+	//
+	// Without it, connecting everything left every mirrored machine with no
+	// space on it and no id for one, so nothing was mirrored and the reply
+	// still said how many machines had been reconnected. Worse, each pass then
+	// looked the space up again over SSH, found nothing, and did it for the
+	// rest of the session.
+	//
+	// After the wait rather than inside it: this takes the daemon's lock, and
+	// the point of the goroutines above is the connecting, which does not.
+	for i, host := range hosts {
+		if errs[i] != nil {
+			continue
+		}
+		if _, err := d.ensureRemotePresence(host); err != nil {
+			// Not a connect failure: the machine answered, and its terminals
+			// here are what the caller asked for. Said once, where the rest of
+			// a pass's trouble is said.
+			log.Printf("%s: connected, but no terminal opened there: %s",
+				host.Target, summarizeError(err))
+		}
+	}
 	return errs
 }
 

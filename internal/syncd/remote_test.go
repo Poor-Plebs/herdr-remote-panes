@@ -2625,3 +2625,65 @@ func TestTheMarkerOnASpaceFollowsWhetherTheMachineAnswers(t *testing.T) {
 		t.Errorf("a machine that has stopped answering wears %q, want remote_down", got)
 	}
 }
+
+func TestReconnectingEverythingMirrorsTheSameAsNamingOneMachine(t *testing.T) {
+	// "connect" with no machine is a bindable "bring my remote spaces back",
+	// and it is what the daemon does to every configured machine at startup.
+	// It used to do half of what naming a machine does: it opened the SSH
+	// connection and stopped there.
+	//
+	// For a machine on plain SSH that is the whole job. For a mirrored one it
+	// is not: what makes its space exist over there, and records which space it
+	// is, is the step after connecting. Without it nothing was mirrored, the
+	// reply still said how many machines had been reconnected, and every pass
+	// afterwards looked the space up again over SSH -- found nothing, and did
+	// it again two seconds later for the rest of the session.
+	//
+	// So this compares the two paths rather than asserting a number: whatever
+	// naming a machine gets you, reconnecting everything gets you too.
+	named := func(t *testing.T, cmd Command) (mirrors, panesHere, spacesThere, lookups int) {
+		here := withFakeHerdr(t)
+		there, _ := withRemoteHerdr(t)
+		cfg := machineConfig("bot")
+		cfg.Hosts[0].Mode = "attach"
+		d := New(cfg)
+		if reply := d.dispatch(cmd); !reply.OK {
+			t.Fatalf("%+v: %s", cmd, reply.Message)
+		}
+		settle(t, d, here, 5, there)
+
+		before := there().Calls["workspace list"]
+		settle(t, d, here, 5, there)
+		lookups = there().Calls["workspace list"] - before
+
+		hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+		if len(hosts) != 1 {
+			t.Fatalf("want one machine, got %+v", hosts)
+		}
+		spaces := 0
+		for _, ws := range there().Workspaces {
+			_ = ws
+			spaces++
+		}
+		return hosts[0].Mirrors, panesFor(here(), "bot"), spaces, lookups
+	}
+
+	wantMirrors, wantPanes, wantSpaces, wantLookups := named(t, Command{Cmd: "connect", Host: "bot"})
+	if wantMirrors == 0 || wantSpaces == 0 {
+		t.Fatalf("naming a machine mirrored %d into %d spaces; this test has nothing to compare against",
+			wantMirrors, wantSpaces)
+	}
+
+	mirrors, panes, spaces, lookups := named(t, Command{Cmd: "connect"})
+	if mirrors != wantMirrors || panes != wantPanes || spaces != wantSpaces {
+		t.Errorf("reconnecting everything gave %d mirrors, %d panes here and %d spaces there; "+
+			"naming the machine gave %d, %d and %d",
+			mirrors, panes, spaces, wantMirrors, wantPanes, wantSpaces)
+	}
+	// And it settles rather than asking the same question forever.
+	if lookups > wantLookups {
+		t.Errorf("after reconnecting everything the machine is asked for its spaces "+
+			"%d times over five passes, against %d when the machine was named",
+			lookups, wantLookups)
+	}
+}
