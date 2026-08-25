@@ -110,3 +110,90 @@ func TestTheREADMEOnlyBindsActionsThatExist(t *testing.T) {
 		}
 	}
 }
+
+// manifestCommands returns every command line the manifest tells Herdr to run,
+// as the argument list it would run.
+func manifestCommands(t *testing.T) (build []string, rest [][]string) {
+	t.Helper()
+	raw, err := os.ReadFile("../../herdr-plugin.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := ""
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[[") {
+			section = strings.Trim(trimmed, "[]")
+			continue
+		}
+		inner, ok := strings.CutPrefix(trimmed, "command = [")
+		if !ok {
+			continue
+		}
+		var args []string
+		for _, field := range strings.Split(strings.TrimSuffix(inner, "]"), ",") {
+			args = append(args, strings.Trim(strings.TrimSpace(field), `"`))
+		}
+		if section == "build" {
+			build = args
+			continue
+		}
+		rest = append(rest, args)
+	}
+	return build, rest
+}
+
+func TestEveryCommandTheManifestRunsIsOneThisBinaryHas(t *testing.T) {
+	// The test above holds the ids to what main handles. Herdr does not run
+	// ids: it runs the command arrays, and nothing held those. An argument
+	// changed without its id, or a binary built somewhere other than where the
+	// actions look for it, leaves the manifest reading correctly and every
+	// entry in it failing when picked.
+	build, commands := manifestCommands(t)
+	if len(build) == 0 {
+		t.Fatal("the manifest has no build command; the format has moved")
+	}
+	if len(commands) < 8 {
+		t.Fatalf("found %d commands to check, which is fewer than the manifest has", len(commands))
+	}
+
+	// Where the build puts the binary, taken from the build itself.
+	built := ""
+	for i, arg := range build {
+		if arg == "-o" && i+1 < len(build) {
+			built = build[i+1]
+		}
+	}
+	if built == "" {
+		t.Fatal("the build command does not say where it puts the binary")
+	}
+
+	main, err := os.ReadFile("../../main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The words main dispatches on, taken from its switch rather than guessed.
+	handled := map[string]bool{}
+	for _, line := range strings.Split(string(main), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "case \"") {
+			continue
+		}
+		for _, part := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(trimmed, "case "), ":"), ",") {
+			handled[strings.Trim(strings.TrimSpace(part), `"`)] = true
+		}
+	}
+
+	for _, args := range commands {
+		if got, want := args[0], "./"+built; got != want {
+			t.Errorf("the manifest runs %q, but the build puts the binary at %q", got, want)
+		}
+		if len(args) < 2 {
+			t.Errorf("the manifest runs %v with no command at all", args)
+			continue
+		}
+		if sub := args[len(args)-1]; !handled[sub] {
+			t.Errorf("the manifest runs %q, which main does not dispatch on", sub)
+		}
+	}
+}
