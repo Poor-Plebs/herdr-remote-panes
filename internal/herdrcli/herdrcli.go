@@ -525,12 +525,3 @@ func SplitPane(direction string) error {
 func splitPaneArgs(direction string) []string {
 	return []string{"pane", "split", "--direction", direction, "--focus"}
 }
-
-// ReportWorkspaceToken attaches display-only metadata to a workspace. Whether
-// it is shown depends on the user's sidebar template, so it complements the
-// marker in the workspace name rather than replacing it.
-func ReportWorkspaceToken(workspaceID, source, name, value string) error {
-	_, err := Run("workspace", "report-metadata", workspaceID,
-		"--source", source, "--token", name+"="+value)
-	return err
-}

@@ -716,3 +716,47 @@ func TestTwoWarningsShareTheOneLine(t *testing.T) {
 			"reserving room for nothing", got)
 	}
 }
+
+func TestEveryKeyCanSayItsOwnName(t *testing.T) {
+	// These names appear only in failure messages, which is why nothing
+	// exercises them: a passing run never formats a key. That is also what
+	// makes them worth holding. A name that is wrong is not wrong quietly --
+	// it is wrong in the message somebody is reading while working out why
+	// something else broke, and it sends them after the wrong key.
+	named := map[key]string{
+		keyUp: "up", keyDown: "down", keyEnter: "enter", keyQuit: "quit",
+		keyNone: "nothing", keyToggle: "toggle mirroring",
+		keyPageUp: "page up", keyPageDown: "page down",
+		keyTop: "top", keyBottom: "bottom", keyDisconnect: "disconnect",
+	}
+
+	// Every one of them, so a key added without a name here shows up as the
+	// number in the private-use block it happens to be.
+	for k := keyUp; k <= keyDisconnect; k++ {
+		want, ok := named[k]
+		if !ok {
+			t.Errorf("the key %#x is not in this test, so nothing says what it "+
+				"should be called", uint32(k))
+			continue
+		}
+		if got := k.String(); got != want {
+			t.Errorf("the key %#x calls itself %q, want %q", uint32(k), got, want)
+		}
+	}
+
+	// Two keys sharing a name would make a failure message ambiguous in
+	// exactly the situation it is meant to settle.
+	seen := map[string]key{}
+	for k, name := range named {
+		if other, clash := seen[name]; clash {
+			t.Errorf("%#x and %#x are both called %q", uint32(k), uint32(other), name)
+		}
+		seen[name] = k
+	}
+
+	// An ordinary keystroke is itself, quoted, so a digit reads as a digit
+	// rather than as a number nobody can place.
+	if got := key('3').String(); got != `'3'` {
+		t.Errorf("an ordinary key reads as %s, want '3'", got)
+	}
+}
