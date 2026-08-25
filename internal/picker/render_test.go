@@ -953,8 +953,23 @@ func TestTheWindowAlwaysHoldsTheCursorAndNothingElseIsOutOfBounds(t *testing.T) 
 	// because the mistakes here are all at boundaries — an empty list, a single
 	// machine, a popup one row shorter than it needs — and those are exactly
 	// the shapes nobody thinks to write down.
-	for count := 0; count <= 12; count++ {
+	// Every small shape exhaustively, then a few large ones. The small ones are
+	// where the boundaries are; the large ones are where a window that is a
+	// fraction of the list gets used in earnest, and nothing else here has more
+	// machines than fit on a screen.
+	counts := []int{}
+	for n := 0; n <= 12; n++ {
+		counts = append(counts, n)
+	}
+	counts = append(counts, 25, 100, 500)
+
+	for _, count := range counts {
 		for selected := 0; selected < count || (count == 0 && selected == 0); selected++ {
+			// A long list is checked at its ends and middle rather than at
+			// every position, which would be half a million layouts.
+			if count > 12 && selected != 0 && selected != count/2 && selected != count-1 {
+				continue
+			}
 			for rows := 1; rows <= 16; rows++ {
 				for warnLines := 0; warnLines <= 2; warnLines++ {
 					got := planLayout(count, selected, rows, warnLines)
