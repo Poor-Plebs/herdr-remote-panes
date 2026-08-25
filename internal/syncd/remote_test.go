@@ -69,7 +69,11 @@ func withRemoteHerdrRunning(t *testing.T, up bool) (func(string) fakeHerdr, func
 		"  exit 1\n" +
 		"fi\n" +
 		"echo \"$prev | $last\" >> " + dir + "/asked.log\n" +
-		"HRP_TEST_FAKE_HERDR_STATE=" + dir + "/machine-$prev.json eval \"$last\"\n"
+		// HRP_FAKE_REFUSE is passed under a name of its own, so a test can
+		// make the machine refuse a call without this side refusing it too:
+		// both ends are the same program, and the plain name reaches both.
+		"HRP_TEST_FAKE_HERDR_STATE=" + dir + "/machine-$prev.json " +
+		"HRP_FAKE_REFUSE=\"$HRP_FAKE_REFUSE_REMOTE\" eval \"$last\"\n"
 
 	bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
 	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(script), 0o755); err != nil {
@@ -2243,5 +2247,55 @@ func TestTwoSpacesWithOneNameOnAMachineAreReported(t *testing.T) {
 	}
 	if !hosts[0].SharedName {
 		t.Errorf("two spaces called the same thing and nothing says so: %+v", hosts[0])
+	}
+}
+
+func TestTurningMirroringOnSaysWhenNoTerminalOpened(t *testing.T) {
+	// The sibling of the unreachable case: the machine answers, the setting is
+	// written, and then opening a terminal on it fails anyway. The change has
+	// still happened -- it is on disk -- so the reply says so and then says
+	// what went wrong, rather than reading as though the toggle had not taken.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+	withConfigFile(t, `{"hosts":[{"target":"bot"},{"target":"bot","mode":"attach"}]}`)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+
+	// Mirrored once already, so the machine's space is there and the toggle
+	// below finds it rather than making it. Made fresh, a space comes with a
+	// shell in it and there is nothing left to open -- which is the path the
+	// ordinary toggle takes, and not this one.
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	// From here the machine refuses the one call that opens a terminal in it.
+	t.Setenv("HRP_FAKE_REFUSE_REMOTE", "tab create")
+
+	reply := d.dispatch(Command{Cmd: "set-mode", Host: "bot", Mode: "attach"})
+
+	if !reply.OK {
+		t.Errorf("set-mode reported failure (%q), but the setting was written "+
+			"before this and the menu will show it changed", reply.Message)
+	}
+	if !strings.Contains(reply.Message, "mirroring on for bot") {
+		t.Errorf("reply = %q, want it to say the change happened", reply.Message)
+	}
+	if !strings.Contains(reply.Message, "no terminal opened") {
+		t.Errorf("reply = %q, want it to say what did not happen", reply.Message)
+	}
+	// One line. This goes on a menu screen, and the refusal it is reporting
+	// arrives as a JSON envelope.
+	if strings.Contains(reply.Message, "\n") {
+		t.Errorf("reply spans lines, which the menu cannot draw: %q", reply.Message)
+	}
+
+	// And the machine really was asked, rather than the plugin deciding on its
+	// own that there was nothing to do.
+	if got := there().Calls["tab create"]; got == 0 {
+		t.Errorf("the machine was never asked to open a terminal: %+v", there().Calls)
 	}
 }

@@ -161,6 +161,33 @@ func main() {
 	state.Calls[verb]++
 	save()
 
+	// A verb the test wants refused. Herdr can say no to any call -- a pane
+	// that went away between the listing and the request, a session that shut
+	// down mid-poll -- and what the plugin does about each refusal is a branch
+	// that nothing could otherwise reach, because this stand-in succeeds at
+	// everything it understands. Named verbs, comma separated, each optionally
+	// with the code to refuse with:
+	//
+	//	HRP_FAKE_REFUSE="tab create"
+	//	HRP_FAKE_REFUSE="pane split:pane_not_found,tab create"
+	//
+	// Counted above rather than below, because a refused call is still a call
+	// the plugin made, and a test about giving up needs to see how often it
+	// tried.
+	for _, spec := range strings.Split(os.Getenv("HRP_FAKE_REFUSE"), ",") {
+		spec = strings.TrimSpace(spec)
+		if spec == "" {
+			continue
+		}
+		code := "internal_error"
+		if at := strings.LastIndex(spec, ":"); at >= 0 {
+			spec, code = strings.TrimSpace(spec[:at]), strings.TrimSpace(spec[at+1:])
+		}
+		if spec == verb {
+			fail(code, "refused: HRP_FAKE_REFUSE names "+verb)
+		}
+	}
+
 	switch {
 	case join == "pane list":
 		ok(map[string]any{"panes": values(state.Panes)})
