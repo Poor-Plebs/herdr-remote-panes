@@ -1611,3 +1611,60 @@ func TestAListingThatFailedDoesNotPruneAnything(t *testing.T) {
 		t.Error("a pass that could not list panes pruned the marks anyway")
 	}
 }
+
+func TestAMachineThatRecoversStartsAgainWithACleanSlate(t *testing.T) {
+	// The other half of leaving a flapping machine alone. A terminal that stays
+	// up means the machine is fine again, and the tally of dropped ones has to
+	// go back to nothing — otherwise a machine that had a bad afternoon last
+	// week is one drop away from being given up on for good, and the only way
+	// back is restarting Herdr.
+	//
+	// Short here, because "stayed up" is measured against the clock and a test
+	// cannot wait thirty seconds for it.
+	restore := reopenSettled
+	reopenSettled = time.Millisecond
+	defer func() { reopenSettled = restore }()
+
+	held := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+	terminalsAreRunning(t, held())
+
+	dropped := "bot is not reachable over ssh: exit status 255: Connection reset by peer"
+
+	// A bad spell: enough drops to be one away from giving up, but not there.
+	for i := 0; i < maxHostAttempts-1; i++ {
+		terminalDied(t, onlyPane(t, held()), dropped)
+		d.reconcileAll()
+		terminalsAreRunning(t, held())
+	}
+	if hosts := d.dispatch(Command{Cmd: "status"}).Hosts; len(hosts) != 1 || hosts[0].GaveUp {
+		t.Fatalf("the machine was given up on before the test began: %+v", hosts)
+	}
+
+	// Then it comes good: a terminal stays up long enough to count.
+	time.Sleep(5 * time.Millisecond)
+	d.reconcileAll()
+	terminalsAreRunning(t, held())
+
+	// One more drop must not be the last straw, because the tally started
+	// again when the machine came back.
+	terminalDied(t, onlyPane(t, held()), dropped)
+	d.reconcileAll()
+	terminalsAreRunning(t, held())
+
+	hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+	if len(hosts) != 1 {
+		t.Fatalf("want one machine, got %+v", hosts)
+	}
+	if hosts[0].GaveUp {
+		t.Error("a machine that recovered and then dropped once was given up on; " +
+			"its tally did not start again")
+	}
+	if got := panesFor(held(), "bot"); got != 1 {
+		t.Errorf("the machine has %d terminals after recovering, want 1", got)
+	}
+}
