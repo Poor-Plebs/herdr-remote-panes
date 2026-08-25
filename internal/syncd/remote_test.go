@@ -1772,3 +1772,135 @@ func TestWhereHerdrLivesOnAMachineReachesThePane(t *testing.T) {
 		})
 	}
 }
+
+func TestChangingHowTheSpaceOnAMachineIsNamedDoesNotMakeASecondOne(t *testing.T) {
+	// The space this plugin makes on a machine is named after this machine, and
+	// remote_workspace_format decides how. Change it and the lookup has to
+	// still recognise the space the terminals are already in — otherwise it
+	// decides there is none, makes a second one beside the first, and the work
+	// is left in a space nothing is watching.
+	//
+	// The rule that recognises it is tested on its own. This is the part that
+	// uses it: the lookup, and the creating that happens when the lookup says
+	// no.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	first := New(cfg)
+	if reply := first.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, first, here, 3, there)
+
+	spacesOnTheMachine := func() map[string]string {
+		out := map[string]string{}
+		for id, ws := range there().Workspaces {
+			label, _ := ws["label"].(string)
+			out[id] = label
+		}
+		return out
+	}
+	before := spacesOnTheMachine()
+	if len(before) != 1 {
+		t.Fatalf("the machine has %d spaces to begin with: %v", len(before), before)
+	}
+	var originalID, originalLabel string
+	for id, label := range before {
+		originalID, originalLabel = id, label
+	}
+
+	// A different format, and a daemon that has never seen this machine — which
+	// is what a restart after editing the config is.
+	changed := machineConfig("bot")
+	changed.Hosts[0].Mode = "attach"
+	changed.RemoteWorkspaceFormat = "from {hub}"
+	second := New(changed)
+	if reply := second.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("reconnect: %s", reply.Message)
+	}
+	settle(t, second, here, 3, there)
+
+	after := spacesOnTheMachine()
+	if len(after) != 1 {
+		t.Errorf("after the format changed the machine has %d spaces, want the one it had:\n  was %v\n  now %v",
+			len(after), before, after)
+	}
+	if label, still := after[originalID]; !still {
+		t.Errorf("the space the terminals were in (%s, %q) is gone", originalID, originalLabel)
+	} else if label != originalLabel {
+		t.Logf("the space was renamed from %q to %q, which is fine: it is the same space", originalLabel, label)
+	}
+}
+
+func TestAMachinesOwnSpacesAreNotClaimed(t *testing.T) {
+	// "Whatever else the machine has running stays in its own spaces, private
+	// and untouched" is what the README promises, and the lookup that finds
+	// this plugin's space on a machine is what keeps it: a lookup that settled
+	// for any space would adopt whatever the machine had open, mirror it here,
+	// and start closing terminals in it to match.
+	here := withFakeHerdr(t)
+	there, remoteState := withRemoteHerdr(t)
+
+	// The machine is already being used for something of its own, before this
+	// plugin has ever connected. Written straight into its state, because
+	// addPaneOn needs a machine that has been talked to and the whole point
+	// here is that this was there first.
+	seed := fakeHerdr{
+		Panes: map[string]map[string]any{
+			"their-work:p1": {
+				"pane_id": "their-work:p1", "workspace_id": "their-work",
+				"tab_id": "their-work-tab", "terminal_id": "term_theirs", "label": "",
+				"terminal_title_stripped": "a build nobody asked us about",
+			},
+		},
+		Workspaces: map[string]map[string]any{
+			"their-work": {"workspace_id": "their-work", "label": "their-work"},
+		},
+		Next: 1,
+	}
+	raw, err := json.Marshal(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remoteState, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(there().Workspaces); got != 1 {
+		t.Fatalf("the machine started with %d spaces, want the one it was given", got)
+	}
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+
+	spaces := there().Workspaces
+	if len(spaces) != 2 {
+		t.Fatalf("the machine has %d spaces, want its own and one for us: %v", len(spaces), spaces)
+	}
+	if _, still := spaces["their-work"]; !still {
+		t.Error("the machine's own space is gone")
+	}
+
+	// And what is mirrored here is ours, not theirs.
+	for _, pane := range mirrorsHere(here(), "bot") {
+		if title, _ := pane["terminal_title_stripped"].(string); strings.Contains(title, "nobody asked") {
+			t.Error("the machine's own work was mirrored here")
+		}
+	}
+	// The pane in the machine's own space is still there and still theirs.
+	theirs := 0
+	for _, pane := range there().Panes {
+		if ws, _ := pane["workspace_id"].(string); ws == "their-work" {
+			theirs++
+		}
+	}
+	if theirs != 1 {
+		t.Errorf("the machine's own space holds %d panes, want the one it had", theirs)
+	}
+}
