@@ -246,3 +246,44 @@ func TestTheSocketPathStaysShortEnoughToBind(t *testing.T) {
 		t.Errorf("the fallback is not in the temp directory: %q", fallback)
 	}
 }
+
+func TestEachSessionGetsItsOwnSocket(t *testing.T) {
+	// Herdr's plugin state directory is shared by every session, but each
+	// session runs its own daemon. Two of them on one socket means the second
+	// finds the first one already listening and exits -- so the second window
+	// has a menu that talks to the first window's machines, which is the kind
+	// of wrong that takes a long evening to work out.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+
+	t.Setenv("HERDR_SESSION", "hub")
+	hub, err := ControlSocket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_SESSION", "work")
+	work, err := ControlSocket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hub == work {
+		t.Errorf("two sessions were given the same socket, %q, so the second "+
+			"daemon would find the first one's and give up", hub)
+	}
+
+	// No session named at all is still one session rather than none: it wants
+	// the same socket every time, not one named after nothing.
+	t.Setenv("HERDR_SESSION", "")
+	unnamed, err := ControlSocket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_SESSION", "default")
+	named, err := ControlSocket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unnamed != named {
+		t.Errorf("with no session named the socket is %q, but the default session's "+
+			"is %q, so the two would not find each other", unnamed, named)
+	}
+}
