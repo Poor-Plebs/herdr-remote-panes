@@ -3,6 +3,7 @@ package syncd
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/mirror"
 	"os"
@@ -2297,5 +2298,123 @@ func TestTurningMirroringOnSaysWhenNoTerminalOpened(t *testing.T) {
 	// own that there was nothing to do.
 	if got := there().Calls["tab create"]; got == 0 {
 		t.Errorf("the machine was never asked to open a terminal: %+v", there().Calls)
+	}
+}
+
+func TestConnectingToASpaceThatIsAlreadyThereIsNotTwoSpaces(t *testing.T) {
+	// The ordinary case, and the one with no test: a machine whose space this
+	// plugin made earlier and is now finding again. Connecting the first time
+	// creates it, which is a different path -- nothing is counted, because
+	// there was nothing there to count -- so every test so far went down that
+	// one and came back before the counting ever ran.
+	//
+	// What it guards is the arithmetic that decides two spaces share a name.
+	// Off by one there, and every reconnection to a perfectly ordinary machine
+	// reports the most confusing state there is.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.RemoteWorkspaceFormat = "pairing"
+	d := New(cfg)
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	// Away and back, so the space is found rather than made.
+	if reply := d.dispatch(Command{Cmd: "disconnect", Host: "bot"}); !reply.OK {
+		t.Fatalf("disconnect: %s", reply.Message)
+	}
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connecting again: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	// One space, not a second one beside it.
+	spaces := 0
+	for _, ws := range there().Workspaces {
+		if label, _ := ws["label"].(string); label == "pairing" {
+			spaces++
+		}
+	}
+	if spaces != 1 {
+		t.Fatalf("connecting again left %d spaces called pairing, want 1: %+v", spaces, there().Workspaces)
+	}
+
+	hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+	if len(hosts) != 1 {
+		t.Fatalf("want one machine, got %+v", hosts)
+	}
+	if hosts[0].SharedName {
+		t.Errorf("finding the one space it made earlier was reported as two "+
+			"spaces sharing a name: %+v", hosts[0])
+	}
+}
+
+func TestTheWarningAboutTwoSpacesIsSaidOnceAndOnlyWhenItIsTrue(t *testing.T) {
+	// The warning is the only thing that explains the state, so it has to be
+	// there when it is true. It also has to be quiet the rest of the time: the
+	// lookup it sits in runs on every connection and on every poll that finds
+	// the space stale, and a warning repeated at that rate is one nobody reads
+	// by the time it matters.
+	here := withFakeHerdr(t)
+	there, remoteState := withRemoteHerdr(t)
+
+	var logged strings.Builder
+	saved := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(saved) })
+	said := func() int {
+		return strings.Count(logged.String(), "spaces there are called")
+	}
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.RemoteWorkspaceFormat = "pairing"
+	d := New(cfg)
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+	// Away and back, so the space is looked up and found rather than made.
+	d.dispatch(Command{Cmd: "disconnect", Host: "bot"})
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connecting again: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	if n := said(); n != 0 {
+		t.Fatalf("one space of that name was called two %d times: %s", n, logged.String())
+	}
+
+	// Somebody else's daemon makes a second one of the same name.
+	raw, err := json.Marshal(fakeHerdr{
+		Panes: map[string]map[string]any{},
+		Workspaces: map[string]map[string]any{
+			"w1":    {"workspace_id": "w1", "label": "pairing"},
+			"other": {"workspace_id": "other", "label": "pairing"},
+		},
+		Next: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remoteState, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Several passes, each of which looks the space up again.
+	settle(t, d, here, 4, there)
+
+	switch n := said(); {
+	case n == 0:
+		t.Errorf("two spaces called the same thing and the log never said so: %s", logged.String())
+	case n > 1:
+		t.Errorf("the warning was written %d times, once per pass, which is how "+
+			"a log stops being read: %s", n, logged.String())
 	}
 }
