@@ -186,6 +186,14 @@ under something that outlives it. With mirroring the work is on the machine
 rather than in the pane, so it is still running and the mirror simply finds it
 again.
 
+**Turning mirroring on or off leaves you with one terminal, whatever you had.**
+The two modes are nothing alike underneath, so the machine's panes here are
+dropped and it is connected again in the new way — and connecting to a machine
+opens a terminal, the same as picking it from the menu does. What that costs depends on which way you went: work on a
+mirrored machine is on the machine and is still there afterwards, while a plain
+SSH terminal's shell goes when its pane does, so anything running in one of
+those is lost. Worth finishing what you are doing first.
+
 **An unreachable machine is left alone** rather than retried forever in the
 background. How soon depends on the cause: something that might pass on its own
 gets a second try, and something that needs you — a changed host key, a name

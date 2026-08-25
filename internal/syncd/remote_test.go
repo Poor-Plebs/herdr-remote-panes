@@ -2004,3 +2004,134 @@ func TestEditingWhereHerdrLivesTakesEffectTheSameWay(t *testing.T) {
 		t.Errorf("the connection built for the old path is still being used:\n%s", since)
 	}
 }
+
+func TestTogglingTheModeLeavesOneTerminalWhateverThereWas(t *testing.T) {
+	// The two modes are nothing alike underneath, so switching drops the
+	// machine's panes here and connects it again in the new way. What comes
+	// back is one terminal, not the several you may have had — which the README
+	// now says, because it is visible and somebody would otherwise think their
+	// terminals had been lost by accident.
+	//
+	// Held so the README stays true, and because the alternative reading of
+	// this line — a machine that had nothing getting a terminal it never asked
+	// for — is the other way it can go wrong.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+	withConfigFile(t, `{"hosts":[{"target":"bot"}]}`)
+
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	for i := 0; i < 2; i++ {
+		if reply := d.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
+			t.Fatalf("open: %s", reply.Message)
+		}
+	}
+	settle(t, d, here, 3, there)
+	if got := panesFor(here(), "bot"); got != 3 {
+		t.Fatalf("started with %d terminals, want 3", got)
+	}
+
+	if reply := d.dispatch(Command{Cmd: "set-mode", Host: "bot", Mode: "attach"}); !reply.OK {
+		t.Fatalf("toggle on: %s", reply.Message)
+	}
+	settle(t, d, here, 5, there)
+
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Errorf("after turning mirroring on there are %d terminals, want the one the README promises", got)
+	}
+	// And it is a mirror now, not the plain terminal it was.
+	if hosts := d.dispatch(Command{Cmd: "status"}).Hosts; len(hosts) != 1 || hosts[0].SSHOnly {
+		t.Errorf("status = %+v, want the machine mirrored", hosts)
+	}
+}
+
+func TestTogglingAMachineWithNothingOpenStillLeavesOne(t *testing.T) {
+	// I expected nothing here, on the grounds that turning a setting on is not
+	// a request for a terminal. It gives one, and that is right: toggling is a
+	// disconnect and a connect, and connecting to a machine opens a terminal
+	// and takes you to it — which is what the menu's enter does and what this
+	// key is beside.
+	//
+	// So the answer is one terminal either way, which is what the README says.
+	// Written down because "one back, not all of them" invites the question of
+	// what happens when there were none.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+	withConfigFile(t, `{"hosts":[{"target":"bot"}]}`)
+
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	// Closed by hand: the machine is connected and has nothing open.
+	for _, pane := range mirrorsHere(here(), "bot") {
+		if id, _ := pane["pane_id"].(string); id != "" {
+			closePaneByHand(t, id)
+		}
+	}
+	settle(t, d, here, 2, there)
+	if got := panesFor(here(), "bot"); got != 0 {
+		t.Fatalf("the machine still has %d terminals after they were closed", got)
+	}
+
+	if reply := d.dispatch(Command{Cmd: "set-mode", Host: "bot", Mode: "attach"}); !reply.OK {
+		t.Fatalf("toggle: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Errorf("toggling a machine with nothing open left it with %d terminals, want 1", got)
+	}
+}
+
+func TestAMachineTurnedOffMirroringInTheFileComesBackWithATerminal(t *testing.T) {
+	// The other route to changing a mode: edit the file rather than press m,
+	// then restart Herdr. The daemon comes back to a machine whose snapshot is
+	// full of mirrors and a config that says plain SSH — and mirrors cannot be
+	// kept up that way, so they are closed.
+	//
+	// Closing them is right; leaving it at that is not. The machine would come
+	// back with nothing, looking like a connection that had failed, when all
+	// that happened is somebody changed a setting. It gets a terminal in the
+	// new style instead.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	mirrored := machineConfig("bot")
+	mirrored.Hosts[0].Mode = "attach"
+	before := New(mirrored)
+	if reply := before.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, before, here, 3, there)
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Fatalf("started with %d mirrors, want 1", got)
+	}
+	before.persist()
+
+	// The file now says plain SSH, and Herdr restarts.
+	herdrRestarted(t)
+	plain := machineConfig("bot") // mode defaults to ssh
+	after := New(plain)
+
+	// The way starting up reaches a machine, which is not the way the menu
+	// does: it connects and leaves it there. Nothing opens a terminal on the
+	// spot, so what the machine ends up with is decided by the pass that
+	// follows — which is the whole of what is being tested.
+	after.connectEach(after.config().Hosts)
+	for i := 0; i < 4; i++ {
+		after.reconcileAll()
+		terminalsAreRunning(t, here())
+	}
+
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Errorf("after mirroring was turned off in the file the machine has %d terminals, want 1", got)
+	}
+	if hosts := after.dispatch(Command{Cmd: "status"}).Hosts; len(hosts) != 1 || !hosts[0].SSHOnly {
+		t.Errorf("status = %+v, want the machine on plain SSH", hosts)
+	}
+}
