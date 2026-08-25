@@ -85,8 +85,12 @@ func TestTheREADMEDoesNotClaimPlainSSHMachinesArePolled(t *testing.T) {
 	}
 	// What makes the plain SSH mode need nothing installed, and what makes a
 	// machine going away take a moment to notice.
+	//
+	// The loop, not the daemon: connecting does talk to a plain SSH machine,
+	// once, to check it answers. This used to pin the wider claim, and pinning
+	// it is what caught the wording going stale when that check was added.
 	for _, claim := range []string{
-		"the daemon never talks to the machine at all",
+		"the loop never talks to the machine at all",
 		"Only a mirrored machine is polled",
 	} {
 		if !strings.Contains(text, claim) {
