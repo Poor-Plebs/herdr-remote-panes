@@ -290,6 +290,10 @@ func TestAPaneIdIsShortenedToThePartThatDistinguishesIt(t *testing.T) {
 		{"w10:p123", "p123"},
 		{"w2:", "w2:"}, // nothing after the colon: keep what there is
 		{":", ":"},
+		// A colon first, with a pane after it. Not something Herdr hands out,
+		// but the difference between finding the colon and finding it after
+		// something, which is one character in the condition.
+		{":p6", "p6"},
 		{"", ""},
 		{"a:b:c", "c"}, // the last colon, so a scoped id keeps its pane part
 	} {
