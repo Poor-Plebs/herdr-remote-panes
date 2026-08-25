@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"io"
 	"os"
 	"regexp"
@@ -355,5 +357,74 @@ func TestWhichMachineACommandIsAimedAt(t *testing.T) {
 					tt.args, tt.env, host, named, tt.want, tt.wantNamed)
 			}
 		})
+	}
+}
+
+func TestWhatASelectionIsReadAs(t *testing.T) {
+	// connect with no machine named falls back to whatever is selected in the
+	// terminal, so this turns a highlighted word into an argument for ssh. The
+	// text is not necessarily something you wrote -- a line of someone else's
+	// output can be selected as easily as a hostname.
+	for _, tt := range []struct{ what, ctxJSON, want string }{
+		{"a selected name", `{"selected_text":"bot"}`, "bot"},
+		// Herdr hands back what was highlighted, and a double-click takes the
+		// spaces around a word with it.
+		{"spaces around it", `{"selected_text":"  bot\n"}`, "bot"},
+		{"nothing selected", `{"selected_text":""}`, ""},
+		{"only spaces selected", `{"selected_text":"   \t\n"}`, ""},
+		{"no context at all", "", ""},
+		{"a context that will not parse", "{not json", ""},
+		{"a context with no selection in it", `{"workspace_id":"w1"}`, ""},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			t.Setenv("HERDR_PLUGIN_CONTEXT_JSON", tt.ctxJSON)
+			if got := selectedText(); got != tt.want {
+				t.Errorf("selectedText() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestASelectionThatIsNotAMachineIsRefused(t *testing.T) {
+	// The README says so, in the section about what this trusts: a selection is
+	// checked before it is used, and anything ssh would read as an option
+	// rather than a machine is refused.
+	//
+	// The two halves of that are tested apart -- what a selection is read as,
+	// above, and what counts as a plausible machine, in the config package.
+	// This is the join: that what comes out of one is what goes into the other,
+	// and that a line of output selected by accident does not become an
+	// argument to ssh.
+	for _, tt := range []struct{ what, selected string }{
+		{"a line of prose", "the build failed on bot"},
+		{"something ssh reads as an option", "-oProxyCommand=touch /tmp/pwned"},
+		{"a leading dash", "-bot"},
+		{"a line with a newline inside it", "bot\nrm -rf /"},
+		{"an escape sequence", "bot\x1b[31m"},
+		{"a tab", "bot\tprod"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			raw, err := json.Marshal(map[string]string{"selected_text": tt.selected})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HERDR_PLUGIN_CONTEXT_JSON", string(raw))
+
+			name := selectedText()
+			if name == "" {
+				return // Nothing to hand on, which is refusal enough.
+			}
+			if err := config.PlausibleTarget(name); err == nil {
+				t.Errorf("a selection of %q comes out as %q and is accepted as a machine",
+					tt.selected, name)
+			}
+		})
+	}
+
+	// And an ordinary name still works, so this is not passing by refusing
+	// everything.
+	t.Setenv("HERDR_PLUGIN_CONTEXT_JSON", `{"selected_text":"workbox"}`)
+	if name := selectedText(); config.PlausibleTarget(name) != nil {
+		t.Errorf("a plain machine name %q was refused", name)
 	}
 }
