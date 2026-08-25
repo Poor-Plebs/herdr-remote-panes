@@ -984,6 +984,18 @@ func TestTheWindowAlwaysHoldsTheCursorAndNothingElseIsOutOfBounds(t *testing.T) 
 						t.Fatalf("count=%d rows=%d warn=%d shows every machine and still counts them",
 							count, rows, warnLines)
 					}
+					// And the other way round, which is the half that matters:
+					// the count is the only thing on screen saying the list
+					// goes on. Without it a popup showing one machine of forty
+					// looks like a machine list with one machine in it.
+					//
+					// Below four rows there is no row to spare for it -- what
+					// is drawn there is the heading and the machine the cursor
+					// is on, and nothing else fits.
+					if rows >= 4 && !got.counter && got.last-got.first < count {
+						t.Fatalf("count=%d rows=%d warn=%d shows %d machines and does not say the rest are there",
+							count, rows, warnLines, got.last-got.first)
+					}
 					if count == 0 {
 						continue
 					}
