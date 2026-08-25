@@ -195,6 +195,21 @@ func TestDecodeToleratesNotices(t *testing.T) {
 			name: "the last envelope wins",
 			out:  `{"id":"a","error":{"code":"e","message":"m"}}` + "\n" + ok,
 		},
+		{
+			// An error with a notice beside it. On its own an error envelope
+			// is rescued by the whole-output reading below even if the
+			// line-by-line pass drops it, so the two cannot be told apart --
+			// a notice is what stops the whole output being JSON, and leaves
+			// the line-by-line pass as the only thing that can find it.
+			name:    "an error envelope with a notice before it",
+			out:     "note: a new version of herdr is available\n" + `{"id":"x","error":{"code":"pane_not_found","message":"gone"}}`,
+			wantErr: true,
+		},
+		{
+			name:    "an error envelope with a notice after it",
+			out:     `{"id":"x","error":{"code":"pane_not_found","message":"gone"}}` + "\nnote: restart needed",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -615,5 +630,43 @@ func TestTheFlagNamesHerdrWouldIgnoreIfTheyWereWrong(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAResponseIsReadAsWhatItIsRatherThanMerelyAsAFailure(t *testing.T) {
+	// Two ways of getting an error back that are not the same error, and the
+	// difference decides what the daemon does next.
+	//
+	// "pane_not_found" is benign: the pane went away between being listed and
+	// being acted on, which happens on any busy session, and the caller carries
+	// on. "unreadable response" is not benign. A test that asks only whether
+	// something failed passes for either, so dropping the real error on the way
+	// out and reporting the output as gibberish looks like a pass.
+	notFound := `{"id":"x","error":{"code":"pane_not_found","message":"gone"}}`
+
+	for _, out := range []string{
+		notFound,
+		"note: a new version of herdr is available\n" + notFound,
+		notFound + "\nnote: restart needed",
+		"warning: x\n" + notFound + "\nnote: y",
+	} {
+		_, err := Decode([]byte(out), []string{"pane", "close"})
+		if err == nil {
+			t.Errorf("Decode(%q) reported no error at all", out)
+			continue
+		}
+		if !IsNotFound(err) {
+			t.Errorf("Decode(%q) = %v, which no longer reads as a pane that has "+
+				"gone -- so a pane closing under us becomes a failure", out, err)
+		}
+	}
+
+	// And an envelope carrying neither a result nor an error is not a quiet
+	// success. Read as one, a command that did nothing at all reports that it
+	// worked, and the caller goes on to use what it did not get.
+	for _, out := range []string{`{"id":"x"}`, "{}", `{"id":"x","other":1}`} {
+		if _, err := Decode([]byte(out), []string{"pane", "list"}); err == nil {
+			t.Errorf("Decode(%q) read an envelope with nothing in it as a success", out)
+		}
 	}
 }
