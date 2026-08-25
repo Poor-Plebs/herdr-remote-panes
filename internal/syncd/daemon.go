@@ -139,6 +139,11 @@ type hostSync struct {
 	// sshOnly marks a host used through plain SSH panes: it has no Herdr, so
 	// there is nothing to discover or mirror and reconcile leaves it alone.
 	sshOnly bool
+	// noHerdr is set when mirroring was asked for and the machine turned out
+	// not to have Herdr where this could find it. The machine still works —
+	// falling back is better than refusing — but the setting says one thing
+	// and the machine is doing another, and only the log knew.
+	noHerdr bool
 	// shellPanes are the plain SSH panes opened for this host, watched so one
 	// whose connection drops can be brought back.
 	shellPanes map[string]bool
@@ -973,6 +978,7 @@ func (d *Daemon) connect(host config.Host) error {
 	client := remote.NewWithBin(host.Target, d.config().SessionFor(host), d.config().BinFor(host))
 
 	sshOnly := !d.config().Mirrors(host)
+	noHerdr := false
 	var connectErr error
 	if sshOnly {
 		// Without this an unreachable machine reports "ok", because nothing
@@ -987,8 +993,14 @@ func (d *Daemon) connect(host config.Host) error {
 			// host is still registered so it keeps being retried and shows up
 			// as unreachable rather than vanishing from status entirely.
 			if errors.Is(err, remote.ErrNoHerdr) {
-				log.Printf("%s has no herdr; using plain ssh panes", host.Target)
+				// Named the remedy, because there usually is one: herdr is
+				// commonly installed somewhere the PATH an SSH session gets
+				// does not reach, and herdr_bin is how to say where.
+				log.Printf("%s: no herdr on the machine's PATH, so plain ssh terminals; "+
+					"if it is installed elsewhere there, set herdr_bin for this machine",
+					host.Target)
 				sshOnly = true
+				noHerdr = true
 			} else {
 				connectErr = err
 			}
@@ -1001,6 +1013,7 @@ func (d *Daemon) connect(host config.Host) error {
 	if ok {
 		state.host = host
 		state.sshOnly = sshOnly
+		state.noHerdr = noHerdr
 		clear(state.dismissed)
 		clear(state.abandoned)
 		// The settings can have moved on since this host was first connected:
@@ -1020,6 +1033,7 @@ func (d *Daemon) connect(host config.Host) error {
 			host:      host,
 			client:    client,
 			sshOnly:   sshOnly,
+			noHerdr:   noHerdr,
 			mirrors:   map[string]string{},
 			dismissed: map[string]bool{},
 			abandoned: map[string]bool{},
@@ -1397,6 +1411,7 @@ func (d *Daemon) status() []HostInfo {
 			Connected:  state.lastErr == nil,
 			Mirrors:    len(state.mirrors),
 			SSHOnly:    state.sshOnly,
+			NoHerdr:    state.noHerdr,
 			Terminals:  len(state.shellPanes),
 			Mirroring:  d.config().Mirrors(state.host),
 			GaveUp:     state.gaveUp,

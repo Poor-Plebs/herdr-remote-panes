@@ -286,3 +286,39 @@ func TestALineThatExactlyFitsIsLeftAlone(t *testing.T) {
 			exact, exact-1, got)
 	}
 }
+
+func TestAMachineThatCouldNotMirrorSaysSo(t *testing.T) {
+	// Mirroring falls back to plain SSH when the machine turns out not to have
+	// Herdr, which is right — the machine still works. What was missing is
+	// anybody being told: the menu reads the setting and says mirroring is on,
+	// status reads the machine and says ssh, and the reason was in the daemon's
+	// log where nobody was looking.
+	line := statusLines([]syncd.HostInfo{
+		{Label: "bot", Connected: true, SSHOnly: true, NoHerdr: true, Terminals: 2},
+	}, 0)[0]
+
+	if !strings.Contains(line, "no herdr") {
+		t.Errorf("%q does not say why the machine is not mirroring", line)
+	}
+	// And what to do about it, because there usually is something: herdr is
+	// often installed off the PATH an SSH session gets.
+	if !strings.Contains(line, "herdr_bin") {
+		t.Errorf("%q does not say what would fix it", line)
+	}
+
+	// A machine that was never asked to mirror says nothing of the kind.
+	plain := statusLines([]syncd.HostInfo{
+		{Label: "ci", Connected: true, SSHOnly: true, Terminals: 1},
+	}, 0)[0]
+	if strings.Contains(plain, "no herdr") {
+		t.Errorf("a plain SSH machine was told it could not mirror: %q", plain)
+	}
+
+	// And a machine that cannot be reached at all has something worse to say.
+	worse := statusLines([]syncd.HostInfo{
+		{Label: "prod", SSHOnly: true, NoHerdr: true, GaveUp: true, LastError: "connection refused"},
+	}, 0)[0]
+	if !strings.Contains(worse, "connection refused") {
+		t.Errorf("%q lost the failure that matters more", worse)
+	}
+}

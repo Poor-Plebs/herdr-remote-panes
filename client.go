@@ -99,6 +99,12 @@ func statusLines(hosts []syncd.HostInfo, width int) []string {
 		// count simply reads lower than what is on the machine, with nothing
 		// to say why. Only when there is nothing worse to report: a machine
 		// that cannot be reached at all has a better answer than this one.
+		// Asked to mirror and could not. The machine works, so this is not a
+		// failure — but the settings say one thing and the machine is doing
+		// another, and without this only the daemon's log knew.
+		if h.NoHerdr && r.state == "ok" {
+			r.state = "mirroring off: no herdr found on the machine — set herdr_bin if it is installed elsewhere there"
+		}
 		if h.Unmirrored > 0 && r.state == "ok" {
 			r.state = fmt.Sprintf("%d could not be mirrored — connect again to retry", h.Unmirrored)
 		}

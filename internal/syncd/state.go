@@ -114,6 +114,10 @@ type HostInfo struct {
 	Mirrors   int    `json:"mirrors"`
 	// SSHOnly marks a host reached through plain SSH panes.
 	SSHOnly bool `json:"ssh_only,omitempty"`
+	// NoHerdr is a machine that was asked to mirror and could not, because
+	// Herdr was not found on it. It works, as a plain SSH machine; the setting
+	// simply is not doing what it says.
+	NoHerdr bool `json:"no_herdr,omitempty"`
 	// Terminals is how many plain SSH terminals this machine has open, which
 	// is what a machine in SSH mode has instead of mirrors.
 	Terminals int `json:"terminals,omitempty"`

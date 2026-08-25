@@ -329,6 +329,27 @@ Connecting to a slow machine does not do this. That path talks to the machine
 before it takes the daemon, so the menu stays usable while you connect to
 something that is not answering.
 
+**A machine says `ssh` when you asked it to mirror.** Mirroring needs Herdr on
+the machine, and the probe looks for it on the PATH an SSH session gets — which
+is not the PATH you get when you log in and use it. Installed by hand, it is
+usually somewhere that PATH does not reach, and the machine then reads as one
+without Herdr at all. Falling back to a plain SSH terminal is deliberate: the
+machine still works. `status` says so, and says what would fix it:
+
+```
+bot  2 ssh  mirroring off: no herdr found on the machine — set herdr_bin if it is installed elsewhere there
+```
+
+Find it, and name it for that machine:
+
+```bash
+ssh workbox 'command -v herdr || ls ~/.local/bin/herdr'
+```
+
+```json
+{ "target": "workbox", "mode": "attach", "herdr_bin": "/home/you/.local/bin/herdr" }
+```
+
 **Terminals on a machine keep disappearing.** Two machines answering to the
 same name share one space, and each pass reads the other's terminals as panes
 that wandered in and closes them. Connecting both leaves one of them with
