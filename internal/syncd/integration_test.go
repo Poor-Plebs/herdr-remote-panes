@@ -1738,3 +1738,54 @@ func TestWithNoSpaceAtAllNewTerminalIsAnOrdinaryOne(t *testing.T) {
 		t.Errorf("a terminal was opened on a machine nobody named and nobody was looking at")
 	}
 }
+
+func TestAMachineWithNothingRunningIsStillNoticedGoingAway(t *testing.T) {
+	// A machine on plain SSH is never polled: there is nothing on it to ask,
+	// and its terminals carry their own connections. So while one is open,
+	// nothing here would learn the machine had gone until you typed in it --
+	// which is fine, because typing in it is when you find out anyway.
+	//
+	// With nothing open there is no such moment. Nothing here would ever talk
+	// to the machine again, and it would sit in the list reading "ok" for as
+	// long as the session lasted, however dead it was. So the one case where
+	// the machine is asked outright is the case where nothing else will.
+	held := withFakeHerdr(t)
+
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+
+	// Close its one terminal, the way closing the pane in the sidebar does.
+	var opened string
+	for id, pane := range held().Panes {
+		if label, _ := pane["label"].(string); strings.HasSuffix(label, "@bot") {
+			opened = id
+		}
+	}
+	if opened == "" {
+		t.Fatalf("connecting opened no terminal to close: %+v", held().Panes)
+	}
+	closePaneByHand(t, opened)
+	d.reconcileAll()
+
+	// Still fine, and now with nothing of its own running here.
+	if hosts := d.dispatch(Command{Cmd: "status"}).Hosts; len(hosts) != 1 || !hosts[0].Connected {
+		t.Fatalf("the machine was written off before it had gone anywhere: %+v", hosts)
+	}
+
+	sshFails(t, "ssh: connect to host bot port 22: Connection refused")
+	d.reconcileAll()
+
+	hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+	if len(hosts) != 1 {
+		t.Fatalf("want one machine, got %+v", hosts)
+	}
+	if hosts[0].Connected {
+		t.Errorf("the machine has stopped answering and still reads as connected, "+
+			"which is what it would read as for the rest of the session: %+v", hosts[0])
+	}
+	if !strings.Contains(hosts[0].LastError, "refused") {
+		t.Errorf("nothing says why it is not connected: %+v", hosts[0])
+	}
+}
