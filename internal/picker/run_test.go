@@ -31,6 +31,14 @@ type menuRun struct {
 // waiting for a key that is never coming.
 func runMenu(t *testing.T, machines, keys string) menuRun {
 	t.Helper()
+	return runMenuConfigured(t, machines, "", keys)
+}
+
+// runMenuConfigured is runMenu with a plugin config as well, for the machines
+// whose settings the menu reads rather than only their names: whether one is
+// mirrored decides which way its toggle goes.
+func runMenuConfigured(t *testing.T, machines, pluginConfig, keys string) menuRun {
+	t.Helper()
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -40,9 +48,15 @@ func runMenu(t *testing.T, machines, keys string) menuRun {
 	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte(machines), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// No plugin config and no daemon: every machine is one ~/.ssh/config knows
-	// about and none of them is connected.
-	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", t.TempDir())
+	// No daemon, so none of them is connected. With no plugin config either,
+	// every machine is one ~/.ssh/config knows about and nothing more.
+	configDir := t.TempDir()
+	if pluginConfig != "" {
+		if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(pluginConfig), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", configDir)
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	t.Setenv("HERDR_SESSION", "no-daemon-here")
 
@@ -273,5 +287,62 @@ func TestAKeyArrivingWithTheEndOfTheStreamIsStillAKey(t *testing.T) {
 	// menu does when its input goes away.
 	if got := parseKey(&endsWithTheLastByte{}); got != keyQuit {
 		t.Errorf("an empty stream read as %v, want a quit", got)
+	}
+}
+
+func TestPagingMovesTheCursorAndConnectsToWhereItLands(t *testing.T) {
+	// "pgup/pgdn g/G jump" is on the menu's own key hints, and the two paging
+	// keys were the only ones on that line never pressed here. The rest of the
+	// movement keys have a case each; these had none, so how far a page moves
+	// -- worked out from the layout, which is a different calculation from the
+	// one that draws it -- was never taken through the menu at all.
+	for _, tt := range []struct {
+		what, keys, want string
+	}{
+		// A page is the whole list when the list fits, so paging down lands on
+		// the last machine and paging up on the first.
+		{"page down goes to the end", "\x1b[6~\r", "gamma"},
+		{"page up from the top stays", "\x1b[5~\r", "alpha"},
+		{"down then up comes back", "\x1b[6~\x1b[5~\r", "alpha"},
+		// And paging past an end stops there rather than wrapping, which is
+		// what a page-sized jump has to do to stay predictable.
+		{"page down twice is still the end", "\x1b[6~\x1b[6~\r", "gamma"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			got := runMenu(t, threeMachines, tt.keys)
+			if got.err != nil {
+				t.Fatalf("the menu returned %v", got.err)
+			}
+			if len(got.connected) != 1 || got.connected[0] != tt.want {
+				t.Errorf("connected to %v, want just %q", got.connected, tt.want)
+			}
+		})
+	}
+}
+
+func TestTheToggleAsksForTheOppositeOfWhatAMachineIs(t *testing.T) {
+	// m toggles mirroring for the machine under the cursor. Which way it goes
+	// depends on what the machine already is, and only one of the two
+	// directions was ever pressed: a machine that is not mirrored is asked to
+	// attach. A machine that is mirrored has to be asked for plain SSH, and
+	// asking it to attach again would be a key that looks broken.
+	mirrored := `{"hosts":[{"target":"alpha","mode":"attach"}]}`
+
+	got := runMenuConfigured(t, threeMachines, mirrored, "m")
+	if len(got.modes) != 1 {
+		t.Fatalf("pressing m asked for %v, want one change", got.modes)
+	}
+	if target, mode := got.modes[0][0], got.modes[0][1]; target != "alpha" || mode != "ssh" {
+		t.Errorf("pressing m on a mirrored machine asked for %q on %q, want ssh on alpha", mode, target)
+	}
+
+	// And the other way, which is the direction that was already covered:
+	// the same key on a machine that is not mirrored asks it to mirror.
+	got = runMenuConfigured(t, threeMachines, `{"hosts":[{"target":"alpha"}]}`, "m")
+	if len(got.modes) != 1 {
+		t.Fatalf("pressing m asked for %v, want one change", got.modes)
+	}
+	if mode := got.modes[0][1]; mode != "attach" {
+		t.Errorf("pressing m on a machine that is not mirrored asked for %q, want attach", mode)
 	}
 }
