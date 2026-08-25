@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -1830,5 +1831,52 @@ func TestTerminalsOnOneMachineDoNotShareAName(t *testing.T) {
 	}
 	if total != 4 {
 		t.Errorf("%d terminals on the machine, want 4: %v", total, seen)
+	}
+}
+
+func TestTheDaemonDoesNotLeaveGoroutinesBehind(t *testing.T) {
+	// This runs for as long as the Herdr session does, polling every machine
+	// every couple of seconds and answering the menu in between. A goroutine
+	// left behind by any of that is not a leak anybody notices in a test run;
+	// it is one that shows up as a session using more memory every hour it is
+	// open, which is exactly the sort of thing nobody attributes to a plugin.
+	//
+	// Both places the daemon starts goroutines wait for them before returning.
+	// This holds that: the point is not that today's code leaks but that a
+	// wait dropped from either loop would go unnoticed.
+	// Counting goroutines is only meaningful while nothing else in the package
+	// is running, which is the case here: no test in it calls t.Parallel, so
+	// they run one at a time and what is counted is this test's own.
+	withFakeHerdr(t)
+	d := New(machineConfig("bot", "prod", "ci"))
+
+	// A first round so that anything started once is started before counting.
+	d.dispatch(Command{Cmd: "connect"})
+	d.reconcileAll()
+	d.dispatch(Command{Cmd: "disconnect", Host: "bot"})
+
+	settleGoroutines := func(target int) int {
+		n := runtime.NumGoroutine()
+		for i := 0; i < 100 && n > target; i++ {
+			time.Sleep(10 * time.Millisecond)
+			n = runtime.NumGoroutine()
+		}
+		return n
+	}
+	before := settleGoroutines(0)
+
+	for i := 0; i < 20; i++ {
+		d.dispatch(Command{Cmd: "connect"})
+		d.reconcileAll()
+		d.dispatch(Command{Cmd: "disconnect", Host: "bot"})
+	}
+
+	// Room for a few: the runtime keeps its own, and a goroutine on its way
+	// out is not a goroutine left behind. Twenty rounds across three machines
+	// is enough that anything leaking per round would be far past this.
+	const slack = 5
+	if after := settleGoroutines(before + slack); after > before+slack {
+		t.Errorf("twenty rounds left %d goroutines running, up from %d: "+
+			"something is not being waited for", after, before)
 	}
 }
