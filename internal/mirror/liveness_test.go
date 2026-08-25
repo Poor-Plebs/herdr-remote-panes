@@ -521,3 +521,57 @@ func TestAMarkWithNoRealProcessInItIsNotAlive(t *testing.T) {
 		})
 	}
 }
+
+func TestWithoutAStateDirectoryNothingIsWrittenAnywhere(t *testing.T) {
+	// Every mark goes under the state directory Herdr provides, and everything
+	// in the suite provides one. Without it there is nowhere marks belong, and
+	// the answer has to be to do nothing -- not to fall back to a relative path
+	// and start writing pid files into whatever directory the plugin was
+	// started from.
+	//
+	// That is not a hypothetical environment: it is this binary run by hand,
+	// which is how somebody checks whether it works at all.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", "")
+
+	// Somewhere to notice anything written by mistake.
+	dir := t.TempDir()
+	before, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(before) })
+
+	MarkFailed("w1:p1", "ssh: connect to host bot port 22: Connection refused")
+	ClearFailed("w1:p1")
+	ClearLive("w1:p1")
+	Prune(map[string]bool{"w1:p1": true})
+
+	// Nothing is marked, because nothing could be.
+	if IsLive("w1:p1") {
+		t.Error("a pane read as live with nowhere for a mark to have been written")
+	}
+	if Failed("w1:p1") {
+		t.Error("a pane read as failed with nowhere for a mark to have been written")
+	}
+	if _, live := LiveTerminal("w1:p1"); live {
+		t.Error("a terminal read as bridged with nowhere for a mark to have been written")
+	}
+	if reason := FailureReason("w1:p1"); reason != "" {
+		t.Errorf("a failure came back as %q with nowhere for it to have been written", reason)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("with no state directory, %v was written into the working directory", names)
+	}
+}

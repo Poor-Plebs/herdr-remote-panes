@@ -2,6 +2,7 @@ package herdrcli
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -668,5 +669,27 @@ func TestAResponseIsReadAsWhatItIsRatherThanMerelyAsAFailure(t *testing.T) {
 		if _, err := Decode([]byte(out), []string{"pane", "list"}); err == nil {
 			t.Errorf("Decode(%q) read an envelope with nothing in it as a success", out)
 		}
+	}
+}
+
+func TestWhichHerdrBinaryIsRun(t *testing.T) {
+	// Herdr injects the path to itself, and everything in the suite sets it --
+	// which is why the case a real run takes had never been run at all. If the
+	// fallback were wrong, every invocation outside a test would fail on a
+	// binary that could not be found, and the tests would go on passing.
+	t.Setenv("HERDR_BIN_PATH", "/opt/herdr/bin/herdr")
+	if got := Bin(); got != "/opt/herdr/bin/herdr" {
+		t.Errorf("Bin() = %q, want the path Herdr injected", got)
+	}
+
+	// Unset, and set to nothing, are both "Herdr did not say": fall back to
+	// the name and let the PATH answer.
+	t.Setenv("HERDR_BIN_PATH", "")
+	if got := Bin(); got != "herdr" {
+		t.Errorf("with no path injected, Bin() = %q, want herdr", got)
+	}
+	os.Unsetenv("HERDR_BIN_PATH")
+	if got := Bin(); got != "herdr" {
+		t.Errorf("with the variable unset, Bin() = %q, want herdr", got)
 	}
 }
