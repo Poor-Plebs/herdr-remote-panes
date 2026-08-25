@@ -167,6 +167,12 @@ func statusLines(hosts []syncd.HostInfo, width int) []string {
 		// so narrow the state would come out one word per line, which is worse
 		// to read than a line running off the edge -- and the edge at least
 		// uses the whole width, where a column of syllables uses a fifth of it.
+		//
+		// The middle one decides nothing: a state that already fits comes back
+		// from the wrapping whole, so taking it out changes no line at any
+		// width -- checked against every width from none to two hundred. It
+		// earns its place by saying "it already fits" out loud, and by not
+		// walking the string in the case that is nearly all of them.
 		room := width - indent
 		if width <= 0 || indent+text.Width(r.state) <= width || room < minWrapColumn {
 			lines = append(lines, strings.TrimRight(prefix+r.state, " "))
