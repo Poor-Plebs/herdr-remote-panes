@@ -1668,3 +1668,73 @@ func TestAMachineThatRecoversStartsAgainWithACleanSlate(t *testing.T) {
 		t.Errorf("the machine has %d terminals after recovering, want 1", got)
 	}
 }
+
+func TestInsideAMachinesSpaceNewTerminalGoesToThatMachine(t *testing.T) {
+	// "New terminal on the machine whose space you are in, and go to it" is
+	// what the manifest promises, and it is the whole reason this action is
+	// worth binding over a new-tab key. The case for being somewhere else is
+	// tested; this is the case for being somewhere.
+	//
+	// Driven the way Herdr drives it — by the space the key was pressed in,
+	// with no machine named — because that is the only way the plugin finds out
+	// which machine you meant, and a test that names the machine outright skips
+	// the part being tested.
+	held := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+
+	d.mu.Lock()
+	workspace := d.hosts["bot"].workspaceID
+	d.mu.Unlock()
+	if workspace == "" {
+		t.Fatal("the machine has no space to be in")
+	}
+	before := panesFor(held(), "bot")
+
+	reply := d.dispatch(Command{Cmd: "open", Workspace: workspace})
+	if !reply.OK {
+		t.Fatalf("open inside the machine's space: %s", reply.Message)
+	}
+	if strings.Contains(reply.Message, "local") {
+		t.Errorf("open in a machine's space said %q, which is the answer for being somewhere else", reply.Message)
+	}
+	if got := panesFor(held(), "bot"); got != before+1 {
+		t.Errorf("the machine has %d terminals, want one more than the %d it had", got, before)
+	}
+}
+
+func TestWithNoSpaceAtAllNewTerminalIsAnOrdinaryOne(t *testing.T) {
+	// Herdr does not always say where an action was invoked from — a keybinding
+	// pressed outside any workspace, or a context this cannot read. With
+	// nothing to go on, "new terminal" means what it means everywhere else
+	// rather than guessing at a machine.
+	held := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	before := panesFor(held(), "bot")
+
+	// Nothing should be asked of Herdr about a space nobody named. Looking one
+	// up means listing every workspace, and the answer for an empty id is
+	// always the same: no machine. The guard that skips it is invisible in the
+	// result and only shows in the count.
+	askedBefore := held().Calls["workspace list"]
+
+	reply := d.dispatch(Command{Cmd: "open"})
+	if !reply.OK {
+		t.Fatalf("open with no space: %s", reply.Message)
+	}
+	if now := held().Calls["workspace list"]; now != askedBefore {
+		t.Errorf("Herdr was asked to list its spaces %d times to resolve a space nobody gave",
+			now-askedBefore)
+	}
+	if !strings.Contains(reply.Message, "local") {
+		t.Errorf("open with no space said %q, which does not read as an ordinary pane", reply.Message)
+	}
+	if got := panesFor(held(), "bot"); got != before {
+		t.Errorf("a terminal was opened on a machine nobody named and nobody was looking at")
+	}
+}
