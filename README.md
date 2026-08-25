@@ -400,10 +400,22 @@ make mutants PKG=./internal/config
 
 Each operator in the package is flipped in turn — `&&` for `||`, `>` for `>=`,
 a negation dropped — and the package's own tests are run against it. Anything
-that survives is a change no test would have caught. Most survivors are
-equivalent or unreachable, which is worth knowing too; the ones that are
-neither are where the bugs have been. Only covered lines are tried, since a
-change to a line nothing runs survives by definition.
+that survives is a change no test would have caught, and it says which operator
+on the line it changed, since a line often holds several:
+
+```
+SURVIVED  internal/syncd/daemon.go:1420:52  < -> <=
+            if last := d.lastPrune.Load(); last != 0 && now.Sub(...) < pruneInterval {
+                                                                    ^
+```
+
+Most survivors are equivalent or unreachable, which is worth knowing too; the
+ones that are neither are where the bugs have been. Error branches are counted
+apart at the end, because they survive until something makes that call fail —
+a question about fault injection rather than about the decision on that line,
+and on the packages that talk to Herdr for a living they are most of the list.
+Only covered lines are tried, since a change to a line nothing runs survives by
+definition.
 
 It works on a copy under the temp directory, so an interrupted run cannot leave
 a mutation in your tree, and it is not part of `make check`: it runs the tests

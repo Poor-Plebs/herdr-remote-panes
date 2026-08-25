@@ -69,3 +69,53 @@ func TestACaretThatCannotBePlacedStillShowsTheLine(t *testing.T) {
 		})
 	}
 }
+
+func TestTheSurvivorsAreCountedInASentence(t *testing.T) {
+	// The report is read by somebody deciding where to look next, so it has to
+	// read. "the other 1 are decisions" makes them stop on a line that had
+	// nothing to say.
+	for _, tt := range []struct {
+		onErrors, rest int
+		want           string
+	}{
+		{1, 0, "1 is an error branch, surviving until something makes that call fail."},
+		{3, 0, "3 are error branches, surviving until something makes those calls fail."},
+		{1, 1, "1 is an error branch, surviving until something makes that call fail;\n" +
+			"the other is a decision with nothing holding it."},
+		{24, 29, "24 are error branches, surviving until something makes those calls fail;\n" +
+			"the other 29 are decisions with nothing holding them."},
+	} {
+		if got := errorBranchNote(tt.onErrors, tt.rest); got != tt.want {
+			t.Errorf("errorBranchNote(%d, %d) =\n%q\nwant\n%q", tt.onErrors, tt.rest, got, tt.want)
+		}
+	}
+}
+
+func TestAnErrorBranchIsRecognisedByItsShape(t *testing.T) {
+	// Read off the line rather than the syntax tree: what is wanted is the
+	// shape somebody recognises when skimming, and these are that shape
+	// whatever they parse to.
+	for _, source := range []string{
+		"if err != nil {",
+		"\t\tif err := f(); err != nil {",
+		"if _, err := herdrcli.Run(\"pane\", \"list\"); err != nil {",
+		"if rmErr := os.Remove(socket); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {",
+		"if err == nil {",
+	} {
+		if !isErrorBranch(source) {
+			t.Errorf("%q was not read as an error branch", source)
+		}
+	}
+
+	// And a decision is not one, however much it looks like a guard.
+	for _, source := range []string{
+		"if placement == \"\" && !focus {",
+		"if len(state.shellPanes) == 0 {",
+		"if selected < 0 || selected >= count {",
+		"if state.workspaceID == \"\" {",
+	} {
+		if isErrorBranch(source) {
+			t.Errorf("%q was counted as an error branch", source)
+		}
+	}
+}

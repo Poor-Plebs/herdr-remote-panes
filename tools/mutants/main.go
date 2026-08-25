@@ -124,10 +124,27 @@ func main() {
 
 	fmt.Printf("\n%d mutations: %d caught, %d survived, %d would not build, in %s\n",
 		len(muts), caught, len(survived), unusable, time.Since(started).Round(time.Second))
-	if len(survived) > 0 {
-		fmt.Println("\nA survivor is a change nothing would have failed on. Read each one and" +
-			"\ndecide which it is: equivalent, unreachable, or untested.")
+	if len(survived) == 0 {
+		return
 	}
+
+	// Error branches are counted apart because they answer differently. A
+	// change to "if err != nil" survives whenever nothing in the tests makes
+	// that call fail, which is a question about fault injection rather than
+	// about the decision on that line -- and on a package that talks to
+	// something else for a living they are most of the list. Separating them
+	// is the difference between a report worth reading and a wall.
+	onErrors := 0
+	for _, m := range survived {
+		if isErrorBranch(m.source) {
+			onErrors++
+		}
+	}
+	if onErrors > 0 {
+		fmt.Println(errorBranchNote(onErrors, len(survived)-onErrors))
+	}
+	fmt.Println("\nA survivor is a change nothing would have failed on. Read each one and" +
+		"\ndecide which it is: equivalent, unreachable, or untested.")
 }
 
 // try applies one mutation, runs the package's tests, and puts the file back.
@@ -372,6 +389,39 @@ func pointAt(m mutation) string {
 	}
 	return "            " + trimmed + "\n            " +
 		strings.Repeat(" ", under) + strings.Repeat("^", len(m.old))
+}
+
+// errorBranchNote says how the survivors divide, in a sentence rather than in
+// numbers glued to a phrase: "the other 1 are decisions" makes a reader stop
+// and reread a line that had nothing to say.
+func errorBranchNote(onErrors, rest int) string {
+	var b strings.Builder
+	if onErrors == 1 {
+		b.WriteString("1 is an error branch, surviving until something makes that call fail")
+	} else {
+		fmt.Fprintf(&b, "%d are error branches, surviving until something makes those calls fail", onErrors)
+	}
+	switch {
+	case rest == 1:
+		b.WriteString(";\nthe other is a decision with nothing holding it")
+	case rest > 1:
+		fmt.Fprintf(&b, ";\nthe other %d are decisions with nothing holding them", rest)
+	}
+	b.WriteString(".")
+	return b.String()
+}
+
+// isErrorBranch reports whether a line is testing an error rather than
+// deciding something. Read from the source line rather than the syntax tree:
+// what is wanted is the shape somebody recognises when skimming a list, and
+// "if err != nil" is that shape whatever it parses to.
+func isErrorBranch(source string) bool {
+	for _, shape := range []string{"err != nil", "err == nil", "Err != nil", "Err == nil"} {
+		if strings.Contains(source, shape) {
+			return true
+		}
+	}
+	return false
 }
 
 // firstLines keeps a command's output to something readable.
