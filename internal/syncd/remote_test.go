@@ -2,6 +2,7 @@ package syncd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/mirror"
@@ -116,16 +117,22 @@ func addPaneOn(t *testing.T, statePath, workspace, title string) string {
 // addAgentPaneOn is addPaneOn for a terminal with an agent running in it.
 func addAgentPaneOn(t *testing.T, statePath, workspace, title, agent, status string) string {
 	t.Helper()
-	raw, err := os.ReadFile(statePath)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var held fakeHerdr
-	if err := json.Unmarshal(raw, &held); err != nil {
+	// A machine nobody has spoken to has no state file yet, which is the
+	// ordinary case for one reached over plain SSH: nothing here ever runs its
+	// Herdr, so nothing there ever writes anything down.
+	if raw, err := os.ReadFile(statePath); err == nil {
+		if err := json.Unmarshal(raw, &held); err != nil {
+			t.Fatal(err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
 	}
 	if held.Workspaces == nil {
 		held.Workspaces = map[string]map[string]any{}
+	}
+	if held.Panes == nil {
+		held.Panes = map[string]map[string]any{}
 	}
 	if _, ok := held.Workspaces[workspace]; !ok {
 		held.Workspaces[workspace] = map[string]any{"workspace_id": workspace, "label": workspace}
@@ -2516,5 +2523,47 @@ func TestAnAgentThatChangesStateOnTheMachineChangesHere(t *testing.T) {
 	if status != "idle" {
 		t.Errorf("the agent went idle on the machine and still reads as %q here, "+
 			"so the sidebar shows it working at something it finished", status)
+	}
+}
+
+func TestAPlainSSHMachineReportsNoAgents(t *testing.T) {
+	// The README says an agent on a machine reaches the sidebar only if the
+	// machine is mirrored, and somebody hit exactly this: Claude started in an
+	// SSH terminal, and nothing under agents.
+	//
+	// It is true because the agent's name and state are things the machine's
+	// own Herdr knows, and plain SSH never asks it anything. Held here so that
+	// the sentence and the behaviour cannot drift apart -- and so that a change
+	// which started reporting agents from a machine nobody is mirroring, on a
+	// pane that is only a terminal here, is a failure rather than a surprise.
+	prose := readmeProse(t)
+	if !strings.Contains(prose, "shows in the sidebar only if the machine is mirrored") {
+		t.Error("the README no longer says that an agent needs the machine mirrored")
+	}
+
+	here := withFakeHerdr(t)
+	there, machineState := withRemoteHerdr(t)
+
+	// No mode set, so plain SSH: the default, and what the sentence is about.
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	// An agent hard at work on the machine, which nothing here is watching.
+	addAgentPaneOn(t, machineState, "w-theirs", "shell", "claude", "working")
+	settle(t, d, here, 3, there)
+
+	for id, pane := range here().Panes {
+		if agent, _ := pane["agent"].(string); agent != "" {
+			t.Errorf("pane %s here reports the agent %q, but this machine is "+
+				"reached over plain SSH and nothing here has asked it anything", id, agent)
+		}
+	}
+
+	// And the terminal is there, so this is not passing because nothing is.
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Fatalf("%d terminals here for bot, want 1: the test proved nothing", got)
 	}
 }

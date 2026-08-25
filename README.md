@@ -225,6 +225,13 @@ in [docs/pairing.md](docs/pairing.md).
 is the only part that needs Herdr at both ends, and a machine that turns out not
 to have it falls back rather than refusing to connect.
 
+**An agent on a machine shows in the sidebar only if the machine is mirrored.**
+Start Claude in a plain SSH terminal and what Herdr has here is a terminal: the
+agent's name, and whether it is working or waiting for you, are things the
+machine's own Herdr knows, and mirroring is what asks it. Without mirroring
+there is nothing to ask. Turn it on for that machine with `m` and the agent
+appears under its own name, with its state, and keeps up as that changes.
+
 **Terminals you open on a machine stay on it.** Disconnecting closes the panes
 here, not the work there — a build running in one keeps running, which is what
 lets you reconnect and pick up where you left off. It also means they accumulate
