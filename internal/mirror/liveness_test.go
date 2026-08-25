@@ -58,6 +58,33 @@ func TestLivenessRejectsDeadAndCorruptMarks(t *testing.T) {
 	if IsLive("w1:p8") {
 		t.Error("an unreadable mark must not read as live")
 	}
+
+	// A number that parses and is not a process. These matter more than they
+	// look: the check for whether the process is still there is kill(2) with
+	// signal 0, and to kill(2) a pid of 0 means every process in this group
+	// and a negative one means a group of its own choosing. Nothing is
+	// delivered with signal 0, so today this is only a wrong answer -- but it
+	// is a wrong answer that the guard above is the only thing preventing.
+	for _, pid := range []string{"0", "-1", "-12345"} {
+		write("w1:p7", pid)
+		if IsLive("w1:p7") {
+			t.Errorf("a mark holding the pid %s read as live", pid)
+		}
+	}
+}
+
+func TestAMarkNeedsAPaneToBelongTo(t *testing.T) {
+	// Without a pane id there is no file to write, and the join would make one
+	// anyway: a ".pid" with nothing in front of it, in the session directory,
+	// which every pane without an id would then share as though it were theirs.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+
+	if got := livenessPath(""); got != "" {
+		t.Errorf("a pane with no id was given the mark file %q", got)
+	}
+	if got := livenessPath("w1:p1"); got == "" {
+		t.Error("a pane with an id was given no mark file at all")
+	}
 }
 
 func TestClearLive(t *testing.T) {
