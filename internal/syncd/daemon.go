@@ -144,6 +144,11 @@ type hostSync struct {
 	// falling back is better than refusing — but the setting says one thing
 	// and the machine is doing another, and only the log knew.
 	noHerdr bool
+	// atCapacity is a machine with more terminals than max_mirrors allows. The
+	// ones over the limit are simply not mirrored, which looks from here like a
+	// machine with fewer terminals than it has -- and the number is a setting,
+	// so somebody can do something about it if they are told.
+	atCapacity bool
 	// shellPanes are the plain SSH panes opened for this host, watched so one
 	// whose connection drops can be brought back.
 	shellPanes map[string]bool
@@ -1412,6 +1417,7 @@ func (d *Daemon) status() []HostInfo {
 			Mirrors:    len(state.mirrors),
 			SSHOnly:    state.sshOnly,
 			NoHerdr:    state.noHerdr,
+			AtCapacity: state.atCapacity,
 			Terminals:  len(state.shellPanes),
 			Mirroring:  d.config().Mirrors(state.host),
 			GaveUp:     state.gaveUp,
@@ -1966,8 +1972,9 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		BackedOff: backedOff,
 		Max:       d.config().MaxMirrors,
 	})
+	state.atCapacity = plan.AtCapacity
 	if plan.AtCapacity {
-		log.Printf("%s: mirror limit of %d reached, skipping the rest",
+		log.Printf("%s: mirror limit of %d reached, skipping the rest; raise max_mirrors to see them",
 			state.host.Target, d.config().MaxMirrors)
 	}
 

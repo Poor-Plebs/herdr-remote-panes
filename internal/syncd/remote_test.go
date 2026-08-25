@@ -2135,3 +2135,51 @@ func TestAMachineTurnedOffMirroringInTheFileComesBackWithATerminal(t *testing.T)
 		t.Errorf("status = %+v, want the machine on plain SSH", hosts)
 	}
 }
+
+func TestAMachineOverTheMirrorLimitReportsIt(t *testing.T) {
+	// End to end, because the flag has to survive the pass that sets it: the
+	// status listing is asked long after the reconcile that noticed.
+	here := withFakeHerdr(t)
+	there, remoteState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.MaxMirrors = 2
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	var shared string
+	for id := range there().Workspaces {
+		shared = id
+	}
+	// More terminals on the machine than the limit allows.
+	for i := 0; i < 3; i++ {
+		addPaneOn(t, remoteState, shared, "work")
+	}
+	settle(t, d, here, 4, there)
+
+	hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+	if len(hosts) != 1 {
+		t.Fatalf("want one machine, got %+v", hosts)
+	}
+	if !hosts[0].AtCapacity {
+		t.Errorf("the machine has more terminals than the limit and does not say so: %+v", hosts[0])
+	}
+	if hosts[0].Mirrors > cfg.MaxMirrors {
+		t.Errorf("%d mirrors against a limit of %d", hosts[0].Mirrors, cfg.MaxMirrors)
+	}
+
+	// And it stops saying so once the limit is no longer being hit.
+	under := machineConfig("bot")
+	under.Hosts[0].Mode = "attach"
+	under.MaxMirrors = 32
+	d.setConfig(under)
+	settle(t, d, here, 4, there)
+
+	if hosts := d.dispatch(Command{Cmd: "status"}).Hosts; len(hosts) == 1 && hosts[0].AtCapacity {
+		t.Errorf("the machine still says it is at its limit after the limit was raised: %+v", hosts[0])
+	}
+}

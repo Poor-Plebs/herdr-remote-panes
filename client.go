@@ -105,6 +105,12 @@ func statusLines(hosts []syncd.HostInfo, width int) []string {
 		if h.NoHerdr && r.state == "ok" {
 			r.state = "mirroring off: no herdr found on the machine — set herdr_bin if it is installed elsewhere there"
 		}
+		// More terminals than the limit allows. Different from the count below:
+		// those were tried and failed, and trying again may work; these were
+		// never tried, and will not be until the number is changed.
+		if h.AtCapacity && r.state == "ok" {
+			r.state = "at the mirror limit — raise max_mirrors to mirror the rest"
+		}
 		if h.Unmirrored > 0 && r.state == "ok" {
 			r.state = fmt.Sprintf("%d could not be mirrored — connect again to retry", h.Unmirrored)
 		}

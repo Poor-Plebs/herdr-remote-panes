@@ -251,7 +251,7 @@ All optional, in `$(herdr plugin config-dir poorplebs.remote-panes)/config.json`
 | `auto_start` | `true` | Start Herdr on the machine when mirroring needs it |
 | `scope` | `shared` | `shared` mirrors the shared space; `all` mirrors everything |
 | `session` | `default` | Which Herdr session on the machine is shared |
-| `max_mirrors` | `32` | Most terminals to mirror per machine |
+| `max_mirrors` | `32` | Most terminals to mirror per machine. Past it the rest are left alone, and `status` says so |
 | `takeover` | `true` | Take over a stale connection left by a closed terminal |
 | `herdr_bin` | found automatically | Where `herdr` lives on the machine |
 

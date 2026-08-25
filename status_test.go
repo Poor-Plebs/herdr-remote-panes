@@ -322,3 +322,42 @@ func TestAMachineThatCouldNotMirrorSaysSo(t *testing.T) {
 		t.Errorf("%q lost the failure that matters more", worse)
 	}
 }
+
+func TestAMachineAtTheMirrorLimitSaysSo(t *testing.T) {
+	// A machine with more terminals than max_mirrors allows simply does not
+	// mirror the rest. From here that looks like a machine with fewer terminals
+	// than it has, and the only word about it was in the daemon's log.
+	//
+	// It is a different thing from the count beside it, and says so: those were
+	// tried and failed, and connecting again may work, while these were never
+	// tried and will not be until the number changes.
+	line := statusLines([]syncd.HostInfo{
+		{Label: "bot", Connected: true, Mirrors: 32, AtCapacity: true},
+	}, 0)[0]
+
+	if !strings.Contains(line, "limit") {
+		t.Errorf("%q does not say the machine is at its limit", line)
+	}
+	if !strings.Contains(line, "max_mirrors") {
+		t.Errorf("%q does not say which setting decides it", line)
+	}
+	if strings.Contains(line, "retry") {
+		t.Errorf("%q offers a retry, which cannot help against a limit: %s", line, line)
+	}
+
+	// A machine under the limit says nothing of the kind.
+	under := statusLines([]syncd.HostInfo{
+		{Label: "ci", Connected: true, Mirrors: 3},
+	}, 0)[0]
+	if strings.Contains(under, "limit") {
+		t.Errorf("a machine under the limit was told it had reached one: %q", under)
+	}
+
+	// And a machine that cannot be reached still leads with that.
+	worse := statusLines([]syncd.HostInfo{
+		{Label: "prod", AtCapacity: true, GaveUp: true, LastError: "connection refused"},
+	}, 0)[0]
+	if !strings.Contains(worse, "connection refused") {
+		t.Errorf("%q lost the failure that matters more", worse)
+	}
+}

@@ -118,6 +118,8 @@ type HostInfo struct {
 	// Herdr was not found on it. It works, as a plain SSH machine; the setting
 	// simply is not doing what it says.
 	NoHerdr bool `json:"no_herdr,omitempty"`
+	// AtCapacity is a machine with more terminals than max_mirrors allows.
+	AtCapacity bool `json:"at_capacity,omitempty"`
 	// Terminals is how many plain SSH terminals this machine has open, which
 	// is what a machine in SSH mode has instead of mirrors.
 	Terminals int `json:"terminals,omitempty"`
