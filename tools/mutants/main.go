@@ -55,6 +55,7 @@ type mutation struct {
 	offset   int
 	old, new string
 	line     int
+	column   int
 	source   string
 }
 
@@ -107,8 +108,8 @@ func main() {
 		switch outcome {
 		case "survived":
 			survived = append(survived, m)
-			fmt.Printf("SURVIVED  %s:%d  %s -> %s\n            %s\n",
-				m.file, m.line, m.old, m.new, m.source)
+			fmt.Printf("SURVIVED  %s:%d:%d  %s -> %s\n%s\n",
+				m.file, m.line, m.column, m.old, m.new, pointAt(m))
 		case "caught":
 			caught++
 		default:
@@ -232,7 +233,8 @@ func mutationsInFile(path, rel string) ([]mutation, error) {
 			source = strings.TrimSpace(lines[at.Line-1])
 		}
 		out = append(out, mutation{
-			file: rel, offset: at.Offset, old: old, new: new, line: at.Line, source: source,
+			file: rel, offset: at.Offset, old: old, new: new,
+			line: at.Line, column: at.Column, source: source,
 		})
 	}
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -355,6 +357,21 @@ func run(dir, name string, args ...string) ([]byte, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	return cmd.CombinedOutput()
+}
+
+// pointAt shows the line with a caret under the operator that was changed. A
+// line can hold several -- "a <= b || c < d" has three -- and a report that
+// gives them all the same line number leaves them indistinguishable, which is
+// how four survivors on one line took a separate run each to tell apart.
+func pointAt(m mutation) string {
+	trimmed := strings.TrimLeft(m.source, " \t")
+	lost := len(m.source) - len(trimmed)
+	under := m.column - 1 - lost
+	if under < 0 || under > len(trimmed) {
+		return "            " + trimmed
+	}
+	return "            " + trimmed + "\n            " +
+		strings.Repeat(" ", under) + strings.Repeat("^", len(m.old))
 }
 
 // firstLines keeps a command's output to something readable.
