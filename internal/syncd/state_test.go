@@ -161,6 +161,50 @@ func TestCorruptSnapshotLoadsEmpty(t *testing.T) {
 	}
 }
 
+func TestASnapshotHoldingNothingStillComesBackUsable(t *testing.T) {
+	// Empty is not the same as broken, and the two arrive by different routes.
+	// Anything that will not parse is thrown away for a fresh one, which is
+	// what the test above holds. What this holds is the rest: a file that
+	// parses perfectly well and says nothing.
+	//
+	// Those come back with no map at all rather than an empty one, and the
+	// difference does not show until something is written to it, at which
+	// point the daemon stops with "assignment to entry in nil map" -- on
+	// startup, before anything it could have been blamed on.
+	for _, body := range []string{
+		"{}",             // an object with nothing in it
+		`{"hosts":null}`, // the field, saying nothing
+		"null",           // the whole document, saying nothing
+		"",               // nothing at all
+		"[]",             // the right JSON, the wrong shape
+		"{not json",      // not JSON, which the test above covers from the front
+	} {
+		t.Run(body, func(t *testing.T) {
+			t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+			t.Setenv("HERDR_SESSION", "hub")
+			path, err := snapshotPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			got := loadSnapshot()
+			if got.Hosts == nil {
+				t.Fatalf("a snapshot of %q came back with no map to write into", body)
+			}
+			// The map being there is the claim; writing to it is the proof,
+			// since that is what the daemon does next and what a nil one
+			// would stop on.
+			got.Hosts["bot"] = hostSnapshot{}
+			if len(got.Hosts) != 1 {
+				t.Errorf("a snapshot of %q gave a map that did not take an entry", body)
+			}
+		})
+	}
+}
+
 func TestASessionNameBecomesAFilenameWithoutTwoOfThemColliding(t *testing.T) {
 	// The name goes into a socket path, so anything a filesystem or a shell
 	// would read as something else is replaced. What matters is that the
