@@ -2565,11 +2565,16 @@ func TestEveryNamedFailureIsReachableAndDecided(t *testing.T) {
 	settled := map[string]bool{
 		"REMOTE HOST IDENTIFICATION HAS CHANGED": true,
 		"Host key verification failed":           true,
-		"Permission denied":                      true,
-		"Too many authentication failures":       true,
-		"Name or service not known":              true,
-		"Could not resolve hostname":             true,
-		"no herdr on the remote host":            true,
+		// Two spellings of one refusal, matched on ssh's own wording so that a
+		// file mode reported by the machine is not read as a key it would not
+		// take. Both are settled for the same reason: the next attempt offers
+		// the same key and is refused the same way.
+		"Permission denied (":                 true,
+		"Permission denied, please try again": true,
+		"Too many authentication failures":    true,
+		"Name or service not known":           true,
+		"Could not resolve hostname":          true,
+		"no herdr on the remote host":         true,
 
 		"Connection refused":          false,
 		"Connection timed out":        false,
@@ -3193,5 +3198,43 @@ func TestATerminalIsNeverLeftWithoutAName(t *testing.T) {
 	// A name that survives being made safe is used as it is.
 	if got := d.label(config.Host{Target: "bot"}, herdrcli.Pane{PaneID: "w4A:p2"}, "build"); got != "build@bot" {
 		t.Errorf("an ordinary name came out %q, want build@bot", got)
+	}
+}
+
+func TestAPermissionRefusalIsSshsOwnAndNotTheMachinesOutput(t *testing.T) {
+	// What gets classified is the whole failure text, and that carries whatever
+	// the command on the machine printed. "Permission denied" on its own is a
+	// phrase any Unix prints -- a file mode, a directory somebody cannot read --
+	// and reading one of those as a refused key is the worst mistake available
+	// here: it is settled, so the machine is given up on for good, and the
+	// advice sends somebody to look at an ssh key that was never the problem.
+	//
+	// ssh says it with the methods it tried in brackets, or asks again.
+	for _, ssh := range []string{
+		"deploy@bot: Permission denied (publickey).",
+		"Permission denied (publickey,keyboard-interactive).",
+		"Permission denied, please try again.",
+	} {
+		err := errors.New(ssh)
+		known, ok := classify(err)
+		if !ok || !known.settled {
+			t.Errorf("%q is ssh refusing a key and is not read as one", ssh)
+		}
+		if !planGiveUp(0, err) {
+			t.Errorf("%q would be tried again, and the next attempt fails the same way", ssh)
+		}
+	}
+
+	// Anything else wearing those words is the machine talking, and the machine
+	// talking is not a reason to stop trying it.
+	for _, theirs := range []string{
+		"bot: bash: /opt/herdr/bin/herdr: Permission denied",
+		"bot: herdr: open /home/deploy/.local/state/herdr: Permission denied",
+		"bot: cat: /etc/shadow: Permission denied",
+	} {
+		if planGiveUp(0, errors.New(theirs)) {
+			t.Errorf("%q is the machine reporting a file it cannot read, and this "+
+				"gives up on the machine for good over it", theirs)
+		}
 	}
 }

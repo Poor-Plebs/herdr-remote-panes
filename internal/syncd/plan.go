@@ -374,7 +374,17 @@ type knownFailure struct {
 var knownFailures = []knownFailure{
 	{"REMOTE HOST IDENTIFICATION HAS CHANGED", "host key changed — verify it, then update ~/.ssh/known_hosts", true},
 	{"Host key verification failed", "host key not accepted", true},
-	{"Permission denied", "ssh permission denied — check your key", true},
+	// Matched on ssh's own wording rather than on the words alone. What is
+	// classified here is the whole failure text, and that carries whatever the
+	// command on the machine printed: "bash: /opt/herdr: Permission denied" is
+	// a file mode over there, and reading it as a refused key gave up on the
+	// machine for good and sent somebody to look at their ssh key.
+	//
+	// ssh says it with the methods it tried in brackets, or asks again. Missing
+	// a real one costs a retry and a rawer message; taking somebody else's
+	// costs the machine.
+	{"Permission denied (", "ssh permission denied — check your key", true},
+	{"Permission denied, please try again", "ssh permission denied — check your key", true},
 	{"Connection refused", "connection refused", false},
 	{"Connection timed out", "connection timed out", false},
 	// macOS words the same failure differently, so a timeout there used to
