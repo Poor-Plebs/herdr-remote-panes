@@ -140,6 +140,25 @@ func planLabels(panes []herdrcli.Pane) map[string]string {
 		}
 		labels[pane.TerminalID] = name
 	}
+
+	// Again, against the names just made rather than the ones came in with.
+	//
+	// Adding the pane id to a repeated name can land on a name somebody else
+	// already has: two terminals called "build" become "build p1" and "build
+	// p2", and a third whose own title is "build p1" was left alone, because
+	// nothing it came in with was repeated. Three panes, two of them wearing
+	// one name, which is the thing this function exists to prevent.
+	//
+	// The full pane id this time, which is unique, so one pass settles it.
+	made := map[string]int{}
+	for _, pane := range panes {
+		made[labels[pane.TerminalID]]++
+	}
+	for _, pane := range panes {
+		if made[labels[pane.TerminalID]] > 1 {
+			labels[pane.TerminalID] += " " + pane.PaneID
+		}
+	}
 	return labels
 }
 

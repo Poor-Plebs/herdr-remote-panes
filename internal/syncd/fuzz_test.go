@@ -213,3 +213,66 @@ func FuzzPaneIndexSurvivesRemoval(f *testing.F) {
 		}
 	})
 }
+
+func FuzzPlanLabelsTellsPanesApart(f *testing.F) {
+	for _, seed := range []string{
+		`[{"pane_id":"w1:p1","terminal_id":"t1","terminal_title_stripped":"build"}]`,
+		`[{"pane_id":"w1:p1","terminal_id":"t1","terminal_title_stripped":"build"},
+		  {"pane_id":"w1:p2","terminal_id":"t2","terminal_title_stripped":"build"}]`,
+		// The one that broke it: a title that is what another pane gets
+		// renamed to.
+		`[{"pane_id":"w1:p1","terminal_id":"t1","terminal_title_stripped":"build"},
+		  {"pane_id":"w1:p2","terminal_id":"t2","terminal_title_stripped":"build"},
+		  {"pane_id":"w1:p3","terminal_id":"t3","terminal_title_stripped":"build p1"}]`,
+		// The same short id in two spaces, which is what makes the long form
+		// necessary in the first place.
+		`[{"pane_id":"w1:p1","terminal_id":"t1","terminal_title_stripped":"x"},
+		  {"pane_id":"w2:p1","terminal_id":"t2","terminal_title_stripped":"x"}]`,
+		`[]`,
+	} {
+		f.Add([]byte(seed))
+	}
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		var panes []herdrcli.Pane
+		if err := json.Unmarshal(raw, &panes); err != nil {
+			return
+		}
+		if len(panes) > 24 {
+			return
+		}
+		// One pane one id, one terminal one pane: what Herdr gives, and what
+		// the rest of the daemon keys on.
+		seenPane, seenTerm := map[string]bool{}, map[string]bool{}
+		for _, pane := range panes {
+			if pane.PaneID == "" || pane.TerminalID == "" ||
+				seenPane[pane.PaneID] || seenTerm[pane.TerminalID] {
+				return
+			}
+			seenPane[pane.PaneID] = true
+			seenTerm[pane.TerminalID] = true
+		}
+
+		labels := planLabels(panes)
+
+		// Every terminal gets one. A terminal with no name is a pane with
+		// nothing in the sidebar to pick it out by.
+		if len(labels) != len(panes) {
+			t.Fatalf("%d panes came back with %d names", len(panes), len(labels))
+		}
+		// And no two share one, which is the whole of what this function is
+		// for: names come from titles the far machine chooses, so two panes
+		// wearing one name is something the other end can arrange.
+		byLabel := map[string]string{}
+		for _, pane := range panes {
+			label := labels[pane.TerminalID]
+			if label == "" {
+				t.Fatalf("terminal %q was given no name", pane.TerminalID)
+			}
+			if other, clash := byLabel[label]; clash {
+				t.Fatalf("terminals %q and %q are both called %q", other, pane.TerminalID, label)
+			}
+			byLabel[label] = pane.TerminalID
+		}
+	})
+}
