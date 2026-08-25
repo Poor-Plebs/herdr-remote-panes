@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -27,6 +28,7 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/logfile"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 )
 
 // errResized ends a stream so the next one can negotiate the new pane size.
@@ -179,14 +181,78 @@ func bridge() error {
 
 // shell opens a plain interactive SSH session. Nothing about it needs Herdr on
 // the far side, so it works against any machine you can log in to.
+// tail keeps the last of what is written to it, so a command's own account of
+// why it failed can be put in the record without holding on to everything it
+// ever said.
+//
+// ssh writes its reason to standard error, which is the pane -- so somebody
+// watching sees "Host key verification failed." and somebody reading the log
+// afterwards saw "exit status 255", which is the number for "ssh could not
+// connect" and not a reason at all. The README points at that file for why a
+// terminal would not open, so it had better say.
+type tail struct {
+	max  int
+	seen []byte
+}
+
+func (t *tail) Write(p []byte) (int, error) {
+	t.seen = append(t.seen, p...)
+	if len(t.seen) > t.max {
+		t.seen = t.seen[len(t.seen)-t.max:]
+	}
+	return len(p), nil
+}
+
+// lastLine is the last thing said that was worth saying, made safe to write to
+// a file somebody will read in a terminal.
+//
+// The last rather than the first: ssh announces a changed host key with sixty
+// characters of "@" and a paragraph of explanation, and the sentence that names
+// the problem is at the bottom of it.
+func (t *tail) lastLine() string {
+	for _, line := range reverse(strings.Split(string(t.seen), "\n")) {
+		if clean := text.Truncate(text.Sanitize(line), maxSaidWidth); clean != "" {
+			return clean
+		}
+	}
+	return ""
+}
+
+func reverse(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for i := len(lines) - 1; i >= 0; i-- {
+		out = append(out, lines[i])
+	}
+	return out
+}
+
+// maxSaid bounds what is kept from a command's standard error, and maxSaidWidth
+// how much of one line of it is written down.
+const (
+	maxSaid      = 4 << 10
+	maxSaidWidth = 200
+)
+
+// failed describes a command that would not run, with whatever it said about
+// itself when there is anything worth repeating.
+func failed(err error, argv []string, said *tail) error {
+	if line := said.lastLine(); line != "" {
+		return fmt.Errorf("%w running: %s: %s", err, describeCommand(argv), line)
+	}
+	return fmt.Errorf("%w running: %s", err, describeCommand(argv))
+}
+
 func shell(client *remote.Client) error {
 	argv := client.ShellArgv()
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// Still the pane, so nothing changes for somebody watching it; kept as
+	// well, so the record says why rather than only that.
+	said := &tail{max: maxSaid}
+	cmd.Stderr = io.MultiWriter(os.Stderr, said)
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("%w running: %s", err, describeCommand(argv))
+		return failed(err, argv, said)
 	}
 	stop := watchForStop(cmd.Process)
 	defer stop()
@@ -202,7 +268,7 @@ func shell(client *remote.Client) error {
 		if code := exitStatus(err); code > 0 && code != sshOwnFailure {
 			return nil
 		}
-		return fmt.Errorf("%w running: %s", err, describeCommand(argv))
+		return failed(err, argv, said)
 	}
 	return nil
 }

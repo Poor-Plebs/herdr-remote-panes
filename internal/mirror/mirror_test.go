@@ -3,6 +3,7 @@ package mirror
 import (
 	"bytes"
 	"errors"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -345,4 +346,106 @@ func TestTakeoverEvictsAStaleAttachUnlessTurnedOff(t *testing.T) {
 			t.Error("takeover is still on after being turned off")
 		}
 	})
+}
+
+func TestAFailedTerminalRecordsWhatSSHSaid(t *testing.T) {
+	// mirror.log is what the README points at for why a terminal would not
+	// open, and it used to hold "exit status 255 running: ssh prod" — which is
+	// the number for "ssh could not connect" and not a reason. ssh writes the
+	// reason to standard error, which is the pane: somebody watching saw it and
+	// somebody reading afterwards did not.
+	said := &tail{max: maxSaid}
+	// What ssh actually writes for the commonest of these: sixty characters of
+	// warning, a paragraph, and the sentence that names the problem last.
+	_, _ = said.Write([]byte(strings.Repeat("@", 60) + "\n" +
+		"WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\n" +
+		strings.Repeat("@", 60) + "\n" +
+		"Someone could be eavesdropping on you right now.\n" +
+		"Host key verification failed.\n"))
+
+	err := failed(errors.New("exit status 255"), []string{"ssh", "prod"}, said)
+
+	if !strings.Contains(err.Error(), "Host key verification failed") {
+		t.Errorf("the record does not say why: %q", err)
+	}
+	// The last line rather than the first: the first is a row of "@".
+	if strings.Contains(err.Error(), "@@@@") {
+		t.Errorf("the record kept the warning banner instead of the reason: %q", err)
+	}
+	// And still says what it was doing.
+	if !strings.Contains(err.Error(), "ssh prod") || !strings.Contains(err.Error(), "255") {
+		t.Errorf("the record lost the command or the status: %q", err)
+	}
+}
+
+func TestACommandThatSaidNothingIsRecordedAnyway(t *testing.T) {
+	// Nothing on standard error is ordinary — a connection that simply drops
+	// says nothing at all — and the line has to read properly without it
+	// rather than trailing a colon.
+	said := &tail{max: maxSaid}
+	err := failed(errors.New("exit status 255"), []string{"ssh", "bot"}, said)
+
+	if got := err.Error(); !strings.HasSuffix(got, "ssh bot") {
+		t.Errorf("with nothing said the record reads %q", got)
+	}
+}
+
+func TestWhatAMachineSaysCannotRunAwayWithTheLog(t *testing.T) {
+	// Standard error belongs to the far machine, and it can write as much of
+	// it as it likes for as long as the session lasts. Only the end of it is
+	// kept, and only one line of that goes in the record.
+	said := &tail{max: maxSaid}
+	for i := 0; i < 200; i++ {
+		_, _ = said.Write([]byte(strings.Repeat("x", 500) + "\n"))
+	}
+	_, _ = said.Write([]byte("the last thing it said\n"))
+
+	if len(said.seen) > maxSaid {
+		t.Errorf("kept %d bytes of what the machine said, want at most %d", len(said.seen), maxSaid)
+	}
+	line := said.lastLine()
+	if line != "the last thing it said" {
+		t.Errorf("the last line is %q", line)
+	}
+	// And a single enormous line is cut rather than written whole.
+	long := &tail{max: maxSaid}
+	_, _ = long.Write([]byte(strings.Repeat("y", 2000)))
+	if got := len([]rune(long.lastLine())); got > maxSaidWidth {
+		t.Errorf("one line of %d characters went in the record", got)
+	}
+}
+
+func TestWhatAMachineSaysCannotDrawOnTheTerminal(t *testing.T) {
+	// It is written to a file somebody will read in a terminal, and it is
+	// whatever the far side chose to print.
+	said := &tail{max: maxSaid}
+	_, _ = said.Write([]byte("\x1b[2J\x1b[Hcleared your screen\n"))
+
+	if line := said.lastLine(); strings.Contains(line, "\x1b") {
+		t.Errorf("an escape sequence went into the record: %q", line)
+	}
+}
+
+func TestTheReasonReachesTheRecordFromARealFailure(t *testing.T) {
+	// The tests above are about the wording. This is about the wiring: ssh's
+	// standard error is the pane, and keeping a copy of it is the whole of the
+	// change. If that copy is not actually being taken, every one of them
+	// still passes.
+	dir := t.TempDir()
+	ssh := filepath.Join(dir, "ssh")
+	script := "#!/bin/sh\n" +
+		"echo 'Host key verification failed.' >&2\n" +
+		"exit 255\n"
+	if err := os.WriteFile(ssh, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	err := shell(remote.NewWithBin("prod", "", ""))
+	if err == nil {
+		t.Fatal("an ssh that exited 255 was treated as a session that ended")
+	}
+	if !strings.Contains(err.Error(), "Host key verification failed") {
+		t.Errorf("what ssh said did not reach the record: %q", err)
+	}
 }
