@@ -107,6 +107,26 @@ func TestTheREADMEsExamplesAreConfigThisCanRead(t *testing.T) {
 			if err := ValidTarget(host.Target); err != nil {
 				t.Errorf("the machine in the example is not usable: %v", err)
 			}
+
+			// Read as a config rather than only as a struct. Unmarshalling
+			// ignores a key that is not a field, so an example telling somebody
+			// to set something that is not a per-machine setting parses
+			// perfectly and does nothing -- which is a worse answer than
+			// failing, because they have no reason to doubt it. Loading is what
+			// notices, and it is the same path their file takes.
+			dir := t.TempDir()
+			whole := `{"hosts":[` + example + `]}`
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(whole), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("the README's machine entry does not load: %v", err)
+			}
+			for _, problem := range cfg.Problems() {
+				t.Errorf("the README's machine entry has a problem with it: %s", problem)
+			}
 			// The prose around this one is about turning mirroring on, so the
 			// mode has to be one that does.
 			if host.Mode != "" && !Defaults().Mirrors(host) {

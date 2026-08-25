@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -77,6 +78,41 @@ func TestEverySettingWithADefaultIsInTheTable(t *testing.T) {
 		}
 		if !strings.Contains(string(readme), "| `"+name+"` |") {
 			t.Errorf("the settings table does not mention %q", name)
+		}
+	}
+}
+
+func TestEveryPerMachineSettingIsInTheTableAndNoOthersAre(t *testing.T) {
+	// The settings table is where somebody finds out what may go in a machine
+	// entry, and the two ways it can be wrong are opposite. A field missing
+	// from it is a setting nobody can know about. A row for something that is
+	// not a field is worse: it reads as an instruction, the key is accepted by
+	// the file, and it does nothing -- which is how a global setting written
+	// inside a machine entry looks exactly like it worked.
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fields := jsonNames(reflect.TypeOf(Host{}))
+	if len(fields) == 0 {
+		t.Fatal("no fields found on a machine entry; the reflection has moved")
+	}
+	for name := range fields {
+		if !strings.Contains(string(readme), "| `hosts[]."+name+"` |") {
+			t.Errorf("a machine entry takes %q and the settings table does not mention it", name)
+		}
+	}
+
+	// And the other way: every row claiming to be a per-machine setting is one.
+	rows := regexp.MustCompile(`\| `+"`"+`hosts\[\]\.(\w+)`+"`"+` \|`).FindAllStringSubmatch(string(readme), -1)
+	if len(rows) == 0 {
+		t.Fatal("no per-machine rows found in the README; the table has moved")
+	}
+	for _, row := range rows {
+		if !fields[row[1]] {
+			t.Errorf("the settings table offers hosts[].%s, which a machine entry "+
+				"does not take -- so it is accepted, ignored, and looks like it worked", row[1])
 		}
 	}
 }
