@@ -176,3 +176,41 @@ func TestTheMenuIsDrawnBeforeItIsAskedForAKey(t *testing.T) {
 		}
 	}
 }
+
+func TestTogglingMirroringStaysInTheMenu(t *testing.T) {
+	// m is the one key that changes something and does not leave: the change
+	// and what it did to the machine's line are meant to be visible together.
+	// So the menu is still there afterwards, and still takes keys.
+	got := runMenu(t, threeMachines, "jmq")
+
+	if len(got.modes) != 1 {
+		t.Fatalf("pressing m changed %d machines, want 1: %v", len(got.modes), got.modes)
+	}
+	if got.modes[0][0] != "beta" {
+		t.Errorf("m changed %q, not the machine under the cursor", got.modes[0][0])
+	}
+	// Not mirroring yet, so m turns it on.
+	if got.modes[0][1] != "attach" {
+		t.Errorf("m set mode %q on a machine that was not mirroring, want attach", got.modes[0][1])
+	}
+	// And q after it was still read, which it would not have been if m had
+	// returned out of the loop.
+	if len(got.connected) != 0 {
+		t.Errorf("the menu connected to %v after a toggle", got.connected)
+	}
+}
+
+func TestTheMenuKeepsTakingKeysAfterAToggle(t *testing.T) {
+	// The list is rebuilt after a change, and the cursor has to survive that.
+	// Rebuilding and resetting to the top would move the selection out from
+	// under somebody between one keystroke and the next.
+	got := runMenu(t, threeMachines, "jjm\r")
+
+	if len(got.modes) != 1 || got.modes[0][0] != "gamma" {
+		t.Fatalf("m changed %v, want gamma", got.modes)
+	}
+	if len(got.connected) != 1 || got.connected[0] != "gamma" {
+		t.Errorf("enter after the toggle connected to %v, want gamma: "+
+			"the cursor moved when the list was rebuilt", got.connected)
+	}
+}

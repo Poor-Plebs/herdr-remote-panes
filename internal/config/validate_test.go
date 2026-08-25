@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -1162,5 +1163,62 @@ func TestAByteOrderMarkIsNotAMistakeToReportBackToSomebody(t *testing.T) {
 		t.Fatal("a broken config after a mark was accepted")
 	} else if !strings.Contains(err.Error(), "line 2") {
 		t.Errorf("the line number does not match the file: %v", err)
+	}
+}
+
+func TestASettingsTypeIsNamedTheWayTheFileReads(t *testing.T) {
+	// The decoder's own wording is about Go: "cannot unmarshal string into Go
+	// struct field Config.max_mirrors of type int". Somebody editing a JSON
+	// file is not thinking in Go types, so both halves of "should be X, not Y"
+	// are translated. Every kind the config actually uses is here, and so is
+	// the answer for one it does not.
+	var flag *bool
+	for _, tt := range []struct {
+		what string
+		typ  reflect.Type
+		want string
+	}{
+		{"a string setting", reflect.TypeOf(""), "text"},
+		{"a number", reflect.TypeOf(0), "a number"},
+		{"a wider number", reflect.TypeOf(int64(0)), "a number"},
+		{"a fractional one", reflect.TypeOf(0.5), "a number"},
+		{"a flag", reflect.TypeOf(true), "true or false"},
+		// The flags are pointers so that "false" can be told from "unset", and
+		// the name of the thing pointed at is what somebody wrote.
+		{"a flag as it is actually declared", reflect.TypeOf(flag), "true or false"},
+		{"the list of machines", reflect.TypeOf([]Host{}), "a list"},
+		{"one machine", reflect.TypeOf(Host{}), "a set of settings"},
+		{"a map", reflect.TypeOf(map[string]string{}), "a set of settings"},
+		// Nothing in the config is one of these, but a decoder that reports one
+		// should not produce an empty sentence.
+		{"something with no plain name", reflect.TypeOf(make(chan int)), "chan int"},
+		{"nothing at all", nil, "something else"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			if got := plainType(tt.typ); got != tt.want {
+				t.Errorf("plainType(%v) = %q, want %q", tt.typ, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWhatWasFoundIsNamedTheSameWay(t *testing.T) {
+	// The other half of the sentence. The decoder reports what it found as a
+	// JSON word, and "should be text, not string" would be half translated.
+	for found, want := range map[string]string{
+		"string": "text",
+		"number": "a number",
+		"bool":   "true or false",
+		"array":  "a list",
+		"object": "a set of settings",
+		// Passed through rather than dropped: an empty "not " is worse than an
+		// unfamiliar word.
+		"null":     "null",
+		"":         "",
+		"whatever": "whatever",
+	} {
+		if got := plainValue(found); got != want {
+			t.Errorf("plainValue(%q) = %q, want %q", found, got, want)
+		}
 	}
 }
