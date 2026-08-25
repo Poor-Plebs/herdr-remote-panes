@@ -189,6 +189,21 @@ func TestMove(t *testing.T) {
 	if got := move(2, 2, 6); got != 4 {
 		t.Errorf("paging down = %d, want 4", got)
 	}
+
+	// One step off each end, which is how the end is actually reached: with
+	// the arrow keys, one machine at a time. Paging overshoots by a whole
+	// page and so cannot tell "stop at the last" from "stop one past it" --
+	// and one past the last is an entry that is not there.
+	if got := move(5, 1, 6); got != 5 {
+		t.Errorf("stepping down from the last of 6 = %d, want 5: %d is past the end", got, got)
+	}
+	if got := move(0, -1, 6); got != 0 {
+		t.Errorf("stepping up from the first = %d, want 0", got)
+	}
+	// And a list with one thing in it, where the two ends are the same entry.
+	if got := move(0, 1, 1); got != 0 {
+		t.Errorf("stepping down in a list of one = %d, want 0", got)
+	}
 }
 
 func TestParseKeyReadsDisconnect(t *testing.T) {

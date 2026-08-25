@@ -1007,3 +1007,42 @@ func TestAWindowGivesUpTheRightThingsFirst(t *testing.T) {
 		t.Error("the hints were never given up, however short the popup got")
 	}
 }
+
+func TestAListThatJustFitsIsNotScrolled(t *testing.T) {
+	// The properties beside this one hold for a window that scrolls when it did
+	// not need to: the cursor is still inside it, the range still exists, and
+	// the counter still only appears when something is hidden. What none of
+	// them say is that a list which fits should be shown whole.
+	//
+	// Room for the heading and its blank line, two lines of hints and the blank
+	// line above them, and then a machine per row. Give the popup exactly that
+	// and every machine belongs on screen; one row less and it has to start
+	// hiding some. The difference between those two is one character in a
+	// comparison, and nothing held it.
+	const chrome = 5 // heading, its blank line, a separator, two lines of hints
+
+	for count := 1; count <= 12; count++ {
+		rows := count + chrome
+
+		got := planLayout(count, 0, rows, 0)
+		if got.last-got.first != count {
+			t.Errorf("%d machines in a popup of %d rows shows %d of them, though "+
+				"they all fit: [%d,%d)", count, rows, got.last-got.first, got.first, got.last)
+		}
+		if got.counter {
+			t.Errorf("%d machines in a popup of %d rows counts what it is hiding, "+
+				"and it is hiding nothing", count, rows)
+		}
+		if !got.hints {
+			t.Errorf("%d machines in a popup of %d rows dropped the key hints, "+
+				"which there was room for", count, rows)
+		}
+
+		// One row less has to give something up, so the check above is not
+		// passing for a popup that was roomy all along.
+		if tight := planLayout(count, 0, rows-1, 0); tight.hints && tight.last-tight.first == count {
+			t.Errorf("%d machines, the hints, and the heading all fit in %d rows, "+
+				"which is one row less than they take", count, rows-1)
+		}
+	}
+}
