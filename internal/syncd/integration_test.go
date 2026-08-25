@@ -1789,3 +1789,46 @@ func TestAMachineWithNothingRunningIsStillNoticedGoingAway(t *testing.T) {
 		t.Errorf("nothing says why it is not connected: %+v", hosts[0])
 	}
 }
+
+func TestTerminalsOnOneMachineDoNotShareAName(t *testing.T) {
+	// The names are how you tell one of a machine's terminals from another in
+	// the sidebar, so two carrying the same one is two panes you cannot tell
+	// apart. Picking the name is tested on its own, thoroughly; what was not
+	// tested is the list of names it is told are taken, which is gathered from
+	// the panes this machine already has.
+	//
+	// Gather that wrongly and the picking has nothing to avoid: every terminal
+	// is offered the first free name, and every one of them takes it.
+	held := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	for i := 0; i < 3; i++ {
+		if reply := d.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
+			t.Fatalf("opening terminal %d: %s", i+2, reply.Message)
+		}
+	}
+
+	seen := map[string]int{}
+	for _, pane := range held().Panes {
+		if label, _ := pane["label"].(string); strings.HasSuffix(label, "@bot") {
+			seen[label]++
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatal("no terminals were opened, so this proved nothing")
+	}
+	total := 0
+	for label, n := range seen {
+		total += n
+		if n > 1 {
+			t.Errorf("%d terminals are called %q, which is %d panes nobody can "+
+				"tell apart in the sidebar", n, label, n)
+		}
+	}
+	if total != 4 {
+		t.Errorf("%d terminals on the machine, want 4: %v", total, seen)
+	}
+}
