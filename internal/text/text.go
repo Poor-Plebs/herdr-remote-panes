@@ -30,6 +30,11 @@ func Sanitize(name string) string {
 			// C1 controls, which some terminals also act on.
 			continue
 		case !unicode.IsGraphic(r) && r != ' ':
+			// Which is what actually catches the two cases above: every one of
+			// the sixty-five characters they name is non-graphic as well, so
+			// removing either changes nothing. They stay because they say what
+			// is being kept out and why, and because this line is one
+			// unicode.IsGraphic away from being wrong about all of them.
 			continue
 		default:
 			b.WriteRune(r)

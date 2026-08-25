@@ -264,3 +264,29 @@ func TestTheWidthTableCoversItsRangesExactly(t *testing.T) {
 		}
 	}
 }
+
+func TestNoRuneAtAllComesThroughAsSomethingTheTerminalActsOn(t *testing.T) {
+	// The table above holds the cases somebody thought of. This holds the rest.
+	//
+	// What goes through here is a machine's idea of a terminal title and
+	// whatever is written in ~/.ssh/config, so the input is not a list of
+	// likely characters, it is every character there is. One that came through
+	// as an escape or a newline would move the cursor in a menu that redraws
+	// on every keypress -- which is how one name came to impersonate another.
+	//
+	// Wrapped in ordinary letters because the result is trimmed: a character
+	// that survives at the end of a name would be trimmed away here and the
+	// test would pass for the wrong reason.
+	for r := rune(0); r <= 0x10FFFF; r++ {
+		// Surrogates are not characters; a Go string cannot hold one, and
+		// ranging over one yields the replacement character instead.
+		if r >= 0xD800 && r <= 0xDFFF {
+			continue
+		}
+		for _, out := range Sanitize("a" + string(r) + "b") {
+			if out < 0x20 || out == 0x7f || (out >= 0x80 && out <= 0x9f) {
+				t.Fatalf("a name holding %U comes out holding %U, which the terminal acts on", r, out)
+			}
+		}
+	}
+}
