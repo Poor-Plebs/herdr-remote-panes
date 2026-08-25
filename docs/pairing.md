@@ -36,10 +36,20 @@ knowing because it is also how the feature will behave. Both of you point at the
 same space on the machine and pick opposite modes:
 
 ```json
-{ "target": "deploy@vm", "remote_workspace_format": "pairing", "mode": "attach" }
+{
+  "remote_workspace_format": "pairing",
+  "hosts": [{ "target": "deploy@vm", "mode": "attach" }]
+}
 ```
 
-and, for the other person, the same with `"mode": "observe"`. You both then see
+and, for the other person, the same with `"mode": "observe"`.
+
+Note where the name sits. `remote_workspace_format` is one setting for every
+machine, not a per-machine one -- put it inside a host entry and it is ignored,
+though `status` will say so. So pairing over one machine renames the space this
+plugin makes on *all* of them. That is harmless when the name still reads as
+coming from you, and it is worth knowing before wondering why the other machines
+changed too. You both then see
 the same terminals; one of you can type in them and the other watches live.
 
 The limits are the reason this is a plan and not a recipe. Only one of you can
@@ -107,6 +117,13 @@ plugin cannot read ownership back. Display-only.
 **3. An action to send a command to a terminal you don't drive**, and one to
 take a terminal over. Both are single CLI calls through the connection that is
 already open.
+
+**4. A per-machine name for the shared space.** `remote_workspace_format` is one
+setting for every machine today, which is right for what it was for -- it names
+what *this* machine leaves on the others, and that name should be the same
+everywhere. Pairing wants the opposite: one machine's space named by agreement
+with somebody else, and the rest left alone. Small, and easy to miss, because
+the manual recipe works without it.
 
 ## Sizing
 

@@ -380,6 +380,46 @@ ssh workbox 'command -v herdr || ls ~/.local/bin/herdr /opt/herdr/bin/herdr'
 bot  2 ssh  mirroring off: no herdr found on the machine — set herdr_bin if it is installed elsewhere there
 ```
 
+**A machine says `at the mirror limit`.** One machine may mirror only so many
+terminals, so that a runaway pane count on a remote cannot flood the session
+here. The rest are not mirrored and are not retried: they were never attempted,
+which is what makes this different from the count below. The cap is one setting
+for every machine, not one per machine:
+
+```json
+{
+  "max_mirrors": 64,
+  "hosts": [{ "target": "workbox" }]
+}
+```
+
+**A machine says `n could not be mirrored`.** Those were tried and failed —
+a terminal that went away between being listed and being opened, or a machine
+that stopped answering partway through a pass. Unlike the limit above, trying
+again may work: connect to the machine again from the menu. The daemon's log
+says what each one said.
+
+**A machine says `more than one space has this machine's name`.** Two spaces on
+that machine answer to the name this plugin looks for, so which one you get
+depends on which came back first — and it need not be the same one each time,
+or the same one the other end picked. Nothing fails; you simply cannot see
+what is in the other space, and the count reads lower than what is there.
+
+It happens when two machines share a hub name, or when two people point at one
+machine on purpose. It cannot be prevented from one side, so it is reported
+rather than fixed: rename the spare space on the machine, or give this machine a
+name of its own to look for.
+
+Like the cap above, this names the space on every machine you mirror rather than
+on one of them, so pick something that reads as coming from *here*:
+
+```json
+{
+  "remote_workspace_format": "from my laptop",
+  "hosts": [{ "target": "workbox" }]
+}
+```
+
 **Terminals on a machine keep disappearing.** Two machines answering to the
 same name share one space, and each pass reads the other's terminals as panes
 that wandered in and closes them. Connecting both leaves one of them with

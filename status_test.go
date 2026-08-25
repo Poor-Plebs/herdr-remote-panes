@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -495,4 +496,54 @@ func TestWrappingStartsAsSoonAsThereIsRoomToWrapInto(t *testing.T) {
 	if room > 25 {
 		t.Errorf("wrapping did not begin until there were %d columns to wrap into, so terminals wide enough to wrap were left running off the edge", room)
 	}
+}
+
+func TestEveryStateAMachineCanBeInIsInTheREADME(t *testing.T) {
+	// The status line is where somebody meets these, and the README is where
+	// they look them up. Nothing connects the two, so a state added to one is
+	// not added to the other -- and three of these went in without an entry
+	// between them.
+	//
+	// Matched on a phrase rather than the whole line: the line carries a
+	// machine's name and a count, and the README quotes the part that is the
+	// same for everyone.
+	prose := strings.Join(strings.Fields(readmeText(t)), " ")
+
+	for _, tt := range []struct {
+		host   syncd.HostInfo
+		phrase string
+	}{
+		{syncd.HostInfo{NoHerdr: true}, "no herdr found on the machine"},
+		{syncd.HostInfo{SharedName: true}, "more than one space"},
+		{syncd.HostInfo{AtCapacity: true}, "at the mirror limit"},
+		{syncd.HostInfo{Unmirrored: 2}, "could not be mirrored"},
+		{syncd.HostInfo{GaveUp: true, LastError: "connection refused"}, "unreachable, not retrying"},
+	} {
+		tt.host.Label = "bot"
+		tt.host.Connected = !tt.host.GaveUp
+		line := statusLines([]syncd.HostInfo{tt.host}, 0)[0]
+
+		// The phrase is what the code actually says, not what this hopes it
+		// says: a test naming a phrase neither of them uses would pass the
+		// README check by never looking.
+		if !strings.Contains(line, tt.phrase) {
+			t.Errorf("the status line %q does not contain %q, so this test is "+
+				"holding the README to something nothing says", line, tt.phrase)
+			continue
+		}
+		if !strings.Contains(prose, tt.phrase) {
+			t.Errorf("a machine can say %q and the README never mentions it, "+
+				"which is where somebody goes to find out what it means", tt.phrase)
+		}
+	}
+}
+
+// readmeText is the README, for tests about what it says.
+func readmeText(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }
