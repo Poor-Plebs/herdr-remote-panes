@@ -880,6 +880,17 @@ func TestTheKeysStaySpelledOutHoweverNarrowItGets(t *testing.T) {
 		if !strings.Contains(hints[1], "q") {
 			t.Errorf("at %d columns nothing says how to leave: %q", cols, hints[1])
 		}
+		// And they fit, which is the whole of what choosing between them is
+		// for. Both lines of a pair, not one: the two are different lengths,
+		// so there is a range of widths where the first fits and the second
+		// does not, and taking the pair on the strength of either one leaves
+		// the other running off the side.
+		for i, hint := range hints {
+			if w := text.Width(hint); w > cols-4 {
+				t.Errorf("at %d columns hint %d is %d wide and runs off the side: %q",
+					cols, i, w, hint)
+			}
+		}
 	}
 }
 
@@ -1134,6 +1145,47 @@ func TestFittingAStatusIntoItsColumn(t *testing.T) {
 		if room >= text.Width("unreachable") && !strings.HasPrefix(plainOf(got), "unreachable") {
 			t.Fatalf("with %d columns, room enough for the state, the line reads %q",
 				room, plainOf(got))
+		}
+	}
+}
+
+func TestTheFullerHintsAppearAsSoonAsTheyFit(t *testing.T) {
+	// Three pairs of hints, longest first, and the widest that fits is the one
+	// drawn. "Fits" has to mean fits: giving up a pair that would have sat
+	// exactly inside the popup costs the longer spelling of every key on it,
+	// and does it at whatever width somebody's terminal happens to be.
+	//
+	// Written as the width where each pair first appears rather than against
+	// the strings themselves, so that rewording a hint does not fail this.
+	widest := func(lines []string) int {
+		w := 0
+		for _, l := range lines {
+			if n := text.Width(l); n > w {
+				w = n
+			}
+		}
+		return w
+	}
+
+	seen := map[string]int{}
+	for cols := chromeWidth + 8; cols <= 200; cols++ {
+		hints := hintLines(cols)
+		key := strings.Join(hints, "\n")
+		if _, already := seen[key]; !already {
+			seen[key] = cols
+		}
+	}
+
+	for key, cols := range seen {
+		lines := strings.Split(key, "\n")
+		// The narrowest width at which this pair is drawn. One column less
+		// and something shorter was drawn instead, so this pair must not fit
+		// there -- which means it fits here with nothing to spare.
+		if w := widest(lines); w != cols-4 && cols > chromeWidth+8 {
+			t.Errorf("this pair is %d wide and first appears at %d columns, "+
+				"which leaves %d columns spare -- so at %d it was passed over "+
+				"for something shorter that it did not need to be: %q",
+				w, cols, (cols-4)-w, cols-1, lines[0])
 		}
 	}
 }
