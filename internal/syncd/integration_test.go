@@ -1583,3 +1583,31 @@ func TestAFailureIsNotDescribedTwiceInOneLine(t *testing.T) {
 		t.Errorf("the log does not say what Herdr said: %q", out)
 	}
 }
+
+func TestAListingThatFailedDoesNotPruneAnything(t *testing.T) {
+	// Pruning is handed the panes Herdr says it has, and anything without a
+	// pane loses its mark. That is right when the listing is the truth and
+	// catastrophic when it is not: a Herdr that will not answer would take
+	// every mark with it, and the next pass would read every running mirror as
+	// a husk and replace it — closing panes with work in them.
+	//
+	// What prevents it is the order: a listing that fails returns before
+	// pruning is reached. Nothing said so, and the test that looked like it was
+	// about this was about something else and asserted nothing either way.
+	withFakeHerdr(t)
+	// A mark that must survive a pass that could not see anything.
+	mirror.MarkFailed("w1:p9", "ssh: connect to host bot port 22: Connection refused")
+	if !mirror.Failed("w1:p9") {
+		t.Fatal("the mark was not written, so nothing below is being tested")
+	}
+
+	d := New(machineConfig("bot"))
+	d.hosts["bot"] = newTestHost()
+
+	withBrokenHerdr(t)
+	d.reconcileAll()
+
+	if !mirror.Failed("w1:p9") {
+		t.Error("a pass that could not list panes pruned the marks anyway")
+	}
+}

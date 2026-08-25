@@ -1824,21 +1824,49 @@ func TestFocusDoesNothingUntilThereIsSomewhereToGo(t *testing.T) {
 	// Picking a machine from the menu is a request to go and work on it. If
 	// its space does not exist yet there is nothing to focus, and asking Herdr
 	// to focus an empty id would be a failure logged for no reason.
+	held := withFakeHerdr(t)
+	// A space for the machine that has one, so the call at the end is a real
+	// request rather than one Herdr would refuse.
+	if _, err := herdrcli.Run("workspace", "create", "--label", "somewhere"); err != nil {
+		t.Fatal(err)
+	}
 	d := withConfig(&Daemon{hosts: map[string]*hostSync{
 		"bot":     {host: config.Host{Target: "bot"}},
 		"pending": {host: config.Host{Target: "pending"}, workspaceID: ""},
 	}}, config.Defaults())
 
 	// Neither of these should reach Herdr: one has no space, the other is not
-	// a machine this knows about.
+	// a machine this knows about. That this test said so and checked nothing is
+	// why it is written this way now — it called both and asserted nothing, so
+	// it passed whether or not either reached Herdr at all.
 	d.focusHost("pending")
 	d.focusHost("never-connected")
 
-	// A machine with a space is the case that does, and is checked live rather
-	// than here: it is one call to Herdr and nothing to decide.
+	if n := held().Calls["workspace focus"]; n != 0 {
+		t.Errorf("Herdr was asked to focus %d times for machines with nowhere to go", n)
+	}
+
+	// And the case that does: a machine whose space is known is focused, or
+	// picking it from the menu does nothing at all.
 	d.mu.Lock()
-	d.hosts["bot"].workspaceID = "w1"
+	d.hosts["bot"].workspaceID = firstWorkspace(t, held())
 	d.mu.Unlock()
+	d.focusHost("bot")
+
+	if n := held().Calls["workspace focus"]; n != 1 {
+		t.Errorf("focusing a machine with a space made %d calls, want 1", n)
+	}
+}
+
+// firstWorkspace is a space that exists in the stand-in, so focusing it is a
+// request Herdr can actually answer.
+func firstWorkspace(t *testing.T, held fakeHerdr) string {
+	t.Helper()
+	for id := range held.Workspaces {
+		return id
+	}
+	t.Fatal("the stand-in has no spaces")
+	return ""
 }
 
 func TestDisconnectingClosesEveryKindOfPane(t *testing.T) {

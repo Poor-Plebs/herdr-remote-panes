@@ -170,17 +170,56 @@ func TestPruneRemovesMarksForPanesThatAreGone(t *testing.T) {
 	}
 }
 
-func TestPruneKeepsEverythingWhenNothingIsKnown(t *testing.T) {
-	// Pruning runs off the first pane listing. If that listing were empty for
-	// an unrelated reason, throwing every mark away would lose the record of
-	// which mirrors are running.
+func TestPruningWithNoPanesClearsEverything(t *testing.T) {
+	// This used to be called "keeps everything when nothing is known", after a
+	// hazard its author had in mind: a pane listing that came back empty for
+	// some unrelated reason, taking every mark with it. It never asserted
+	// anything -- the check was a t.Log inside an if, so it passed whichever
+	// way the answer went -- and the answer is the opposite of its name.
+	//
+	// Clearing is right. Prune is handed the panes Herdr says it has, and an
+	// empty listing means Herdr has no panes, which means no mirror is running
+	// and no mark should survive. The hazard is real but it is not here: it is
+	// in never calling this with a listing that failed, which is the caller's
+	// job and has a test of its own beside the caller.
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	t.Setenv("HERDR_SESSION", "hub")
 
 	MarkFailed("w1:p2", "ssh: connect to host bot port 22: Connection refused")
+	clear := markLive("w1:p3", "term_x")
+	defer clear()
+	if !Failed("w1:p2") || !IsLive("w1:p3") {
+		t.Fatal("the marks were not written, so nothing below is being pruned")
+	}
+
 	Prune(map[string]bool{})
+
 	if Failed("w1:p2") {
-		t.Log("marks are cleared when no panes exist, which is consistent")
+		t.Error("a failure mark survived a listing with no panes in it")
+	}
+	if IsLive("w1:p3") {
+		t.Error("a liveness mark survived a listing with no panes in it")
+	}
+}
+
+func TestPruningKeepsTheMarksForPanesThatAreThere(t *testing.T) {
+	// The other half, and the one that matters more: a pane Herdr still has
+	// must keep its mark, or the daemon reads a running mirror as a husk and
+	// replaces it.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	clear := markLive("w1:p3", "term_x")
+	defer clear()
+	MarkFailed("w1:p4", "connection refused")
+
+	Prune(map[string]bool{"w1:p3": true, "w1:p4": true})
+
+	if !IsLive("w1:p3") {
+		t.Error("a live pane's mark was pruned while the pane is still there")
+	}
+	if !Failed("w1:p4") {
+		t.Error("a failure was forgotten while the pane it is about is still there")
 	}
 }
 
