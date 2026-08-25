@@ -116,3 +116,41 @@ func TestEveryPerMachineSettingIsInTheTableAndNoOthersAre(t *testing.T) {
 		}
 	}
 }
+
+func TestTheSidebarPictureIsWhatTheDefaultsDraw(t *testing.T) {
+	// The first thing in the README is a picture of the sidebar, and it is
+	// entirely made of defaults: the glyph beside a machine, the two spaces
+	// after it, and the shape of a terminal's name. Change any of those and the
+	// picture is wrong -- and a format string is not something anybody would
+	// think to check a picture against.
+	//
+	// Built from the defaults rather than compared as text, so that a machine
+	// renamed in the picture, or a line added to it, needs nothing here.
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := Defaults()
+
+	up := d.WorkspaceLabelFor(Host{Target: "workbox"}, true)
+	if !strings.Contains(string(readme), up) {
+		t.Errorf("a machine that can be reached is drawn as %q, and the sidebar "+
+			"picture does not show that", up)
+	}
+	down := d.WorkspaceLabelFor(Host{Target: "ci"}, false)
+	if !strings.Contains(string(readme), down) {
+		t.Errorf("a machine that is not answering is drawn as %q, and the sidebar "+
+			"picture does not show that", down)
+	}
+	// The two must differ, or the picture is showing one thing twice and the
+	// marker says nothing.
+	if up == down {
+		t.Errorf("a reachable machine and an unreachable one are both drawn as %q", up)
+	}
+
+	// And a terminal on one of them, named the way terminals are named.
+	terminal := strings.NewReplacer("{name}", "shell", "{host}", "workbox").Replace(d.LabelFormat)
+	if !strings.Contains(string(readme), terminal) {
+		t.Errorf("a terminal is named %q, and the sidebar picture does not show that", terminal)
+	}
+}
