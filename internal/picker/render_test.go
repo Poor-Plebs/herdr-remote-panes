@@ -1046,3 +1046,94 @@ func TestAListThatJustFitsIsNotScrolled(t *testing.T) {
 		}
 	}
 }
+
+func TestHowAMachineIsNamedInTheMenu(t *testing.T) {
+	// The name in the menu is what somebody picks by, and there was nothing
+	// holding any of it. A label is worth showing exactly when it says
+	// something the target does not: a machine labelled the same as itself
+	// reading "bot (bot)" is noise, and one whose label is the useful half
+	// losing it is worse.
+	for _, tt := range []struct{ target, label, want string }{
+		{"bot", "", "bot"},
+		{"bot", "build", "bot (build)"},
+		// The label repeating the target says nothing twice.
+		{"bot", "bot", "bot"},
+		// A label that differs only in case is still something somebody wrote.
+		{"bot", "Bot", "bot (Bot)"},
+		{"deploy@vm", "", "deploy@vm"},
+	} {
+		if got := displayName(Entry{Target: tt.target, Label: tt.label}); got != tt.want {
+			t.Errorf("a machine %q labelled %q reads as %q, want %q",
+				tt.target, tt.label, got, tt.want)
+		}
+	}
+
+	// Both halves come from files somebody else can write -- the target from
+	// ~/.ssh/config, the label from the plugin's config -- and both are drawn
+	// into a menu that is repainted on every keypress. An escape sequence in
+	// either would steer the terminal rather than name a machine.
+	steered := displayName(Entry{
+		Target: "bot\x1b[31m\n",
+		Label:  "build\x1b[2J",
+	})
+	if strings.ContainsRune(steered, 0x1b) || strings.ContainsAny(steered, "\n\r") {
+		t.Errorf("the menu would draw %q, which moves the cursor rather than naming a machine", steered)
+	}
+}
+
+func TestFittingAStatusIntoItsColumn(t *testing.T) {
+	// The state column gives up its tail until what is left fits: the state
+	// itself is kept whatever happens, and what follows it elaborates. None of
+	// that was held, and it is all boundaries -- a line that exactly fits, a
+	// column with room for one character, a state longer than the whole column.
+	//
+	// Built fresh each time, because fitting truncates the first piece in
+	// place: one caller, one slice per call, so that is safe there and would
+	// quietly corrupt a test that reused one.
+	full := func() []span {
+		return []span{
+			{text: "unreachable"},
+			{text: " · connection refused"},
+			{text: " · press c to retry"},
+		}
+	}
+	width := text.Width(plainOf(full()))
+
+	// Room to spare, and room for exactly what is there: neither gives
+	// anything up. Trimming one character early costs a whole piece of the
+	// line, at whatever width somebody's terminal happens to be.
+	for _, room := range []int{width + 20, width} {
+		got := fitStatus(full(), room)
+		if plainOf(got) != plainOf(full()) {
+			t.Errorf("with %d columns for a line of %d, the line came back as %q",
+				room, width, plainOf(got))
+		}
+	}
+
+	// One column short: the tail goes rather than the state.
+	short := fitStatus(full(), width-1)
+	if !strings.HasPrefix(plainOf(short), "unreachable") {
+		t.Errorf("one column short, the line reads %q; the state is the part to keep", plainOf(short))
+	}
+
+	// Every width from nothing at all to more than enough: what comes back
+	// fits, is never empty, and still starts with the state.
+	for room := -3; room <= width+3; room++ {
+		got := fitStatus(full(), room)
+		if len(got) == 0 {
+			t.Fatalf("with %d columns the whole state was given up, leaving the "+
+				"machine with nothing said about it", room)
+		}
+		if w := text.Width(plainOf(got)); room >= 1 && w > room {
+			t.Fatalf("with %d columns the line came back %d wide, which runs past "+
+				"the column and into the next machine's", room, w)
+		}
+		// Once there is room for the state itself, the state is what is
+		// there. Below that all anyone can be given is a piece of it and an
+		// ellipsis, which is still better than a blank.
+		if room >= text.Width("unreachable") && !strings.HasPrefix(plainOf(got), "unreachable") {
+			t.Fatalf("with %d columns, room enough for the state, the line reads %q",
+				room, plainOf(got))
+		}
+	}
+}

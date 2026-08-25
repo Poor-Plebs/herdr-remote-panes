@@ -272,6 +272,11 @@ func collect() ([]Entry, string) {
 		entries = append(entries, *byTarget[target])
 	}
 	// Configured machines first; they are the ones being worked on.
+	//
+	// They are already in that order, because the config is walked before
+	// ~/.ssh/config is. This says so anyway, so that the order survives the two
+	// being walked the other way round -- which is why changing this comparison
+	// breaks no test: there is nothing here for it to reorder.
 	sort.SliceStable(entries, func(i, j int) bool {
 		return entries[i].Configured && !entries[j].Configured
 	})
