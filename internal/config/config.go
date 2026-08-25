@@ -268,9 +268,39 @@ func describeJSONError(raw []byte, err error) string {
 
 	var syntaxErr *json.SyntaxError
 	if errors.As(err, &syntaxErr) {
-		return fmt.Sprintf("%s%s", syntaxErr, atLine(raw, syntaxErr.Offset))
+		return plainSyntax(raw, syntaxErr)
 	}
 	return err.Error()
+}
+
+// plainSyntax names the two mistakes a hand-edited file usually has.
+//
+// The decoder describes where it stopped rather than what is wrong: a comma
+// before a closing bracket comes back as "invalid character ']' looking for
+// beginning of value", which is accurate and tells somebody nothing about the
+// comma they left behind. Both of these are things nearly every other format
+// allows and JSON does not, which is exactly why they are the ones people write.
+func plainSyntax(raw []byte, err *json.SyntaxError) string {
+	fallback := fmt.Sprintf("%s%s", err, atLine(raw, err.Offset))
+
+	// Offset is how much had been read when the decoder stopped, so the byte it
+	// stopped on is the one before it.
+	at := int(err.Offset) - 1
+	if at < 0 || at >= len(raw) {
+		return fallback
+	}
+	switch raw[at] {
+	case ']', '}':
+		before := bytes.TrimRight(raw[:at], " \t\r\n")
+		if len(before) > 0 && before[len(before)-1] == ',' {
+			return fmt.Sprintf("a comma just before the %c, which JSON does not allow%s",
+				raw[at], atLine(raw, err.Offset))
+		}
+	case '\'':
+		return "single quotes, which JSON does not allow — use double quotes" +
+			atLine(raw, err.Offset)
+	}
+	return fallback
 }
 
 // plainField names the setting at fault, without the position of the machine

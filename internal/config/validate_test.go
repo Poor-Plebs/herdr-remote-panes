@@ -768,9 +768,11 @@ func TestAMistakeInTheConfigIsDescribedInTheFilesTerms(t *testing.T) {
 			want:    []string{"hosts", "should be a list", "line 2"},
 		},
 		{
+			// The comma ends one line and the bracket begins the next, which is
+			// how an indented config is written and where the mistake hides.
 			name:    "a trailing comma",
 			content: "{\n  \"hosts\": [\n    {\"target\": \"bot\"},\n  ]\n}",
-			want:    []string{"invalid character", "line 4"},
+			want:    []string{"a comma just before", "line 4"},
 		},
 	}
 

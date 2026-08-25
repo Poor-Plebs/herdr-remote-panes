@@ -2,6 +2,9 @@ package config
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -411,5 +414,61 @@ func TestTheSettingAtFaultIsNamedWithoutItsPosition(t *testing.T) {
 		if got := plainField(tt.in); got != tt.want {
 			t.Errorf("plainField(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestTheCommonestHandEditingMistakesSayWhatTheyAre(t *testing.T) {
+	// The decoder describes where it stopped, not what is wrong: a comma before
+	// a closing bracket comes back as "invalid character ']' looking for
+	// beginning of value", which is accurate and says nothing about the comma.
+	//
+	// Both of these are allowed by nearly every other format and not by JSON,
+	// which is exactly why they are the two people write into a config by hand.
+	for _, tt := range []struct{ what, body, want string }{
+		{
+			"a comma before a closing brace",
+			`{"hosts":[],}`,
+			"a comma just before the }",
+		},
+
+		{
+			"single quotes",
+			`{'hosts':[]}`,
+			"single quotes",
+		},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("%s was accepted", tt.what)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("%s reads as %q, which does not say %q", tt.what, err, tt.want)
+			}
+		})
+	}
+
+	// Anything else keeps the decoder's own words, which are better than a
+	// guess: a message naming the wrong mistake sends somebody to the wrong
+	// line, and there is no shortage of ways to write JSON wrongly.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
+		[]byte(`{"hosts":[{"target":"bot"}] "extra":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	_, err := Load()
+	if err == nil {
+		t.Fatal("a missing comma was accepted")
+	}
+	if !strings.Contains(err.Error(), "invalid character") {
+		t.Errorf("a mistake with no name of its own reads as %q, and should keep "+
+			"the decoder's words rather than being guessed at", err)
 	}
 }
