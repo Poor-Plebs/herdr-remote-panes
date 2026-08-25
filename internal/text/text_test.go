@@ -57,8 +57,18 @@ func TestSanitizeName(t *testing.T) {
 func TestDisplayWidth(t *testing.T) {
 	// Padding by rune count misaligns every column after a wide character.
 	for in, want := range map[string]int{
-		"":           0,
-		"workbox":    7,
+		"":        0,
+		"workbox": 7,
+
+		// Characters that take no cell of their own. A width counted one too
+		// high for any of these pads a column that is already full, so the
+		// state beside it starts a column late on that row alone -- which is
+		// how a table stops looking like one.
+		"\x00":   0, // NUL, which a terminal draws nothing for
+		"a\x00b": 2,
+		"\u200b": 0, // a zero-width space
+		"\ufeff": 0, // a byte-order mark, which arrives in pasted text
+
 		"构建":         4, // two cells each
 		"构建server":   10,
 		"\U0001F680": 2, // an emoji takes two cells
