@@ -1904,3 +1904,103 @@ func TestAMachinesOwnSpacesAreNotClaimed(t *testing.T) {
 		t.Errorf("the machine's own space holds %d panes, want the one it had", theirs)
 	}
 }
+
+func TestEditingAMachinesSessionTakesEffectWithoutDisconnectingIt(t *testing.T) {
+	// A machine's connection is kept and reused. When the settings behind it
+	// change, the connection has to be replaced, or it goes on addressing the
+	// session it was built for while the config says another.
+	//
+	// This is reachable without touching the machine at all: toggling mirroring
+	// from the menu rereads the whole config file, so an edit to any other
+	// machine's session lands then. Pick that machine afterwards and it is
+	// connected already — nothing disconnects it, so nothing would rebuild its
+	// connection unless this does.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.Hosts[0].Session = "before"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	said := func() string { return strings.Join(asked(t), "\n") }
+	if !strings.Contains(said(), "HERDR_SESSION=before") {
+		t.Fatalf("the machine was never addressed with the session it was configured for:\n%s", said())
+	}
+
+	// The config moves on, the way it does when the file is reread.
+	changed := machineConfig("bot")
+	changed.Hosts[0].Mode = "attach"
+	changed.Hosts[0].Session = "after"
+	d.setConfig(changed)
+
+	// Picked from the menu: already connected, so nothing is torn down.
+	before := len(asked(t))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("reconnect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	since := strings.Join(asked(t)[before:], "\n")
+	if !strings.Contains(since, "HERDR_SESSION=after") {
+		t.Errorf("after the session changed the machine is still being addressed with the old one:\n%s", since)
+	}
+	if strings.Contains(since, "HERDR_SESSION=before") {
+		t.Errorf("the connection built for the old session is still being used:\n%s", since)
+	}
+}
+
+func TestEditingWhereHerdrLivesTakesEffectTheSameWay(t *testing.T) {
+	// The other half of what a kept connection is compared against. A machine's
+	// herdr_bin can be edited exactly as its session can, and a connection
+	// built for the old path would go on running herdr where it used to be.
+	//
+	// Real paths, both: a connection told to run herdr somewhere it is not
+	// cannot be used at all, which is a different failure.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	dir := t.TempDir()
+	before := filepath.Join(dir, "herdr-before")
+	after := filepath.Join(dir, "herdr-after")
+	for _, name := range []string{before, after} {
+		if err := os.Symlink(fakeHerdrBin, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.Hosts[0].HerdrBin = before
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+	if !strings.Contains(strings.Join(asked(t), "\n"), before) {
+		t.Fatalf("the machine was never asked to run herdr at %q", before)
+	}
+
+	changed := machineConfig("bot")
+	changed.Hosts[0].Mode = "attach"
+	changed.Hosts[0].HerdrBin = after
+	d.setConfig(changed)
+
+	was := len(asked(t))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("reconnect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	since := strings.Join(asked(t)[was:], "\n")
+	if !strings.Contains(since, after) {
+		t.Errorf("after herdr_bin changed the machine is not being asked to run it at %q:\n%s", after, since)
+	}
+	if strings.Contains(since, before) {
+		t.Errorf("the connection built for the old path is still being used:\n%s", since)
+	}
+}
