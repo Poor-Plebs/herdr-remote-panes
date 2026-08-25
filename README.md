@@ -522,10 +522,16 @@ SURVIVED  internal/syncd/daemon.go:1420:52  < -> <=
 ```
 
 Most survivors are equivalent or unreachable, which is worth knowing too; the
-ones that are neither are where the bugs have been. Error branches are counted
-apart at the end, because they survive until something makes that call fail —
-a question about fault injection rather than about the decision on that line,
-and on the packages that talk to Herdr for a living they are most of the list.
+ones that are neither are where the bugs have been. Two kinds are counted apart
+at the end and marked on the line, so the list can be read from the top rather
+than sorted by hand each time. Error branches survive until something makes that
+call fail — a question about fault injection rather than about the decision on
+that line, and on the packages that talk to Herdr for a living they are most of
+the list. Bounds held to themselves, `if width < 8 { width = 8 }`, survive
+because at the boundary the branch assigns the value already there: both
+spellings agree, and no test could tell them apart. On anything that lays out a
+screen they are most of the rest.
+
 Only covered lines are tried, since a change to a line nothing runs survives by
 definition.
 
@@ -546,6 +552,21 @@ several thousand calls to Herdr each time. It is skipped without that variable
 because it is minutes rather than seconds. Worth running under `GOMAXPROCS=1`
 and `2` as well: a lock bug that hides at one scheduling shows up at another,
 and the last one found here did.
+
+Anything that reads what another machine said has a fuzz target, because the
+input is not this plugin's to predict: a terminal's own title, a machine's
+`~/.ssh/config`, the base64 frames of an observe stream, whatever Herdr printed
+beside its JSON.
+
+```bash
+go test -run XXX -fuzz FuzzDecodeFrame -fuzztime 60s ./internal/mirror/
+```
+
+They hold contracts rather than outputs — a name comes back drawable and on one
+line, a frame is refused or usable and never half of each, reading the same
+bytes twice gives the same answer — so they keep working when the wording of
+something changes. `go test ./...` runs their seed corpus; the fuzzing itself is
+opt-in, like the two above.
 
 ## Trust
 

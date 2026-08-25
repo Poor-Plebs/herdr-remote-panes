@@ -3,6 +3,7 @@ package text
 import (
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -27,10 +28,14 @@ func FuzzSanitize(f *testing.F) {
 		if strings.ContainsAny(got, "\n\r") {
 			t.Fatalf("Sanitize(%q) = %q, which spans lines", in, got)
 		}
-		// Nothing that steers the terminal: these end up in a pane's name and
-		// in a workspace's, both drawn straight into the sidebar.
+		// Nothing that steers the terminal, and nothing a terminal will not
+		// draw: these end up in a pane's name and in a workspace's, both drawn
+		// straight into the sidebar. Wider than "not a control character" on
+		// purpose -- U+202E turns what follows it round, and U+200B takes no
+		// room at all, so a name using either can be made to read as another
+		// machine's while being a different string.
 		for _, r := range got {
-			if r == 0x1b || (r < 0x20 && r != ' ') || r == 0x7f {
+			if !unicode.IsGraphic(r) {
 				t.Fatalf("Sanitize(%q) = %q, which still holds %U", in, got, r)
 			}
 		}
