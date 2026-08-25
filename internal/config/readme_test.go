@@ -250,3 +250,61 @@ func TestEveryBadgeNamesThisRepository(t *testing.T) {
 		t.Fatalf("found %d badges, want the four this README has", badges)
 	}
 }
+
+// docPages is every page in the repository that might show a config example.
+func docPages(t *testing.T) []string {
+	t.Helper()
+	pages, err := filepath.Glob("../../docs/*.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(pages, "../../README.md")
+}
+
+func TestEveryConfigExampleInEveryPageIsOneThisCanRead(t *testing.T) {
+	// The README's examples were checked; the pages beside it were not, and a
+	// config example is a config example wherever it is written. The one in the
+	// pairing notes was wrong for two days -- a setting that is not a
+	// per-machine setting, put inside a machine entry, where the file accepts
+	// it and does nothing with it.
+	//
+	// Loaded rather than unmarshalled, because loading is the path a real
+	// config takes and the only one that notices a key that is not a setting.
+	found := 0
+	for _, page := range docPages(t) {
+		raw, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		blocks := regexp.MustCompile("(?s)```json\n(.*?)\n```").FindAllStringSubmatch(string(raw), -1)
+		for _, block := range blocks {
+			example := block[1]
+			found++
+			t.Run(filepath.Base(page)+": "+strings.Join(strings.Fields(example), " "), func(t *testing.T) {
+				whole := example
+				if !strings.Contains(example, `"hosts"`) {
+					whole = `{"hosts":[` + example + `]}`
+				}
+				dir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(whole), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+
+				cfg, err := Load()
+				if err != nil {
+					t.Fatalf("this example does not load: %v", err)
+				}
+				if len(cfg.Hosts) == 0 {
+					t.Error("this example has no machines in it once read")
+				}
+				for _, problem := range cfg.Problems() {
+					t.Errorf("this example has a problem with it: %s", problem)
+				}
+			})
+		}
+	}
+	if found < 3 {
+		t.Fatalf("found %d config examples across the docs, which is fewer than there are", found)
+	}
+}
