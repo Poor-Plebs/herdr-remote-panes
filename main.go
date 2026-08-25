@@ -43,6 +43,24 @@ func main() {
 	}
 }
 
+// hostFor picks which machine a command names: the argument if one was given,
+// otherwise HRP_HOST, which Herdr sets for an action invoked on a pane.
+//
+// Whether a machine was named at all is the second half of the answer, and it
+// is not the same question as whether the name is empty. An empty argument was
+// still an argument -- somebody's keybinding passing nothing through -- and
+// treating it as "none given" sends the command somewhere of its own choosing
+// instead of failing where it was aimed.
+func hostFor(args []string) (host string, named bool) {
+	if len(args) > 0 {
+		return args[0], true
+	}
+	if env := strings.TrimSpace(os.Getenv("HRP_HOST")); env != "" {
+		return env, true
+	}
+	return "", false
+}
+
 func run(command string, args []string) error {
 	switch command {
 	case "daemon":
@@ -95,12 +113,8 @@ func run(command string, args []string) error {
 
 	case "connect":
 		// A host is optional: with none, every configured host reconnects.
-		host := ""
-		if len(args) > 0 {
-			host = args[0]
-		} else if env := strings.TrimSpace(os.Getenv("HRP_HOST")); env != "" {
-			host = env
-		} else {
+		host, named := hostFor(args)
+		if !named {
 			host = selectedText()
 		}
 		return call(syncd.Command{Cmd: "connect", Host: host})
@@ -114,13 +128,11 @@ func run(command string, args []string) error {
 
 	case "open", "open-tab":
 		// A host is optional here: with none, the workspace the action was
-		// invoked from decides which machine the terminal opens on.
-		host := ""
-		if len(args) > 0 {
-			host = args[0]
-		} else if env := strings.TrimSpace(os.Getenv("HRP_HOST")); env != "" {
-			host = env
-		}
+		// invoked from decides which machine the terminal opens on. No falling
+		// back to what is selected, unlike connect above: this opens something
+		// new, and opening it on whatever the cursor happens to be over is a
+		// surprise where reconnecting to it is what was meant.
+		host, _ := hostFor(args)
 		placement := ""
 		if command == "open-tab" {
 			placement = "tab"

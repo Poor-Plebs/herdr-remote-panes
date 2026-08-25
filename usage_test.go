@@ -320,3 +320,40 @@ func TestVersionDoesNotWarnAboutADaemonThatIsNotRunning(t *testing.T) {
 		t.Errorf("warned about a daemon that is not running: %q", warn.String())
 	}
 }
+
+func TestWhichMachineACommandIsAimedAt(t *testing.T) {
+	// Three places a machine's name can come from and an order between them:
+	// what was typed, then HRP_HOST -- which Herdr sets for an action bound to
+	// a pane -- and then, for connect alone, whatever the cursor is over.
+	//
+	// Getting the order wrong connects to the wrong machine, which is the one
+	// mistake here nobody would call a small one.
+	for _, tt := range []struct {
+		what      string
+		args      []string
+		env       string
+		want      string
+		wantNamed bool
+	}{
+		{"an argument", []string{"bot"}, "", "bot", true},
+		{"an argument beats the environment", []string{"bot"}, "ci", "bot", true},
+		{"the environment when nothing was typed", nil, "ci", "ci", true},
+		// Herdr passes these through as it finds them.
+		{"the environment, trimmed", nil, "  ci\n", "ci", true},
+		{"an environment of only spaces is no machine", nil, "   ", "", false},
+		{"nothing at all", nil, "", "", false},
+		// An empty argument is still an argument: a keybinding passing nothing
+		// through aimed this command somewhere, and answering "none given"
+		// sends it off to pick a machine of its own instead.
+		{"an empty argument is still an argument", []string{""}, "ci", "", true},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			t.Setenv("HRP_HOST", tt.env)
+			host, named := hostFor(tt.args)
+			if host != tt.want || named != tt.wantNamed {
+				t.Errorf("hostFor(%q) with HRP_HOST=%q = (%q, %v), want (%q, %v)",
+					tt.args, tt.env, host, named, tt.want, tt.wantNamed)
+			}
+		})
+	}
+}
