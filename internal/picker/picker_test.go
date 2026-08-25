@@ -684,3 +684,28 @@ func TestWhichMachinesDCanDoSomethingTo(t *testing.T) {
 		}
 	}
 }
+
+func TestTwoWarningsShareTheOneLine(t *testing.T) {
+	// The menu has one line for warnings and two things that can want it: the
+	// daemon not answering, and an installed copy newer than the one running.
+	// Both are worth saying, and the second is worth saying precisely when
+	// somebody is confused -- an update that has not taken effect looks exactly
+	// like a fix that did not work.
+	const daemon = "The daemon is not running"
+	const stale = "A newer version is installed than the one running"
+
+	if got := bothWarnings(daemon, stale); got != daemon+" · "+stale {
+		t.Errorf("two warnings came out as %q", got)
+	}
+	if got := bothWarnings(daemon, ""); got != daemon {
+		t.Errorf("one warning came out as %q, which ends in a separator with "+
+			"nothing after it -- read as a message cut off", got)
+	}
+	if got := bothWarnings("", stale); got != stale {
+		t.Errorf("a warning with nothing before it came out as %q", got)
+	}
+	if got := bothWarnings("", ""); got != "" {
+		t.Errorf("no warnings at all came out as %q, which draws a line "+
+			"reserving room for nothing", got)
+	}
+}

@@ -149,6 +149,25 @@ func planDigitChoice(pressed key, count int) (int, bool) {
 	return index, true
 }
 
+// bothWarnings puts two warnings on the one line the menu has for them.
+//
+// Either can be absent, and the separator belongs between them rather than
+// after whichever came first: a line ending in a dangling " · " reads as a
+// message that was cut off, which is worse than the message that is missing.
+//
+// Its own function so that it can be read. It was four lines inside collect,
+// reachable only with a daemon answering and an installed copy newer than the
+// running one, so nothing about it was ever exercised.
+func bothWarnings(first, second string) string {
+	switch {
+	case first == "":
+		return second
+	case second == "":
+		return first
+	}
+	return first + " · " + second
+}
+
 // worthDisconnecting reports whether d has anything to do to a machine.
 //
 // A machine that has never been connected to has no panes here to close, so
@@ -261,15 +280,9 @@ func collect() ([]Entry, string) {
 	}
 
 	hosts, stale := status()
-	if stale != "" {
-		// Worth saying where machines are picked: an update that has not taken
-		// effect looks exactly like a fix that did not work.
-		if warning == "" {
-			warning = stale
-		} else {
-			warning += " · " + stale
-		}
-	}
+	// Worth saying where machines are picked: an update that has not taken
+	// effect looks exactly like a fix that did not work.
+	warning = bothWarnings(warning, stale)
 	for _, info := range hosts {
 		if entry, ok := byTarget[info.Target]; ok {
 			entry.Connected = info.Connected
