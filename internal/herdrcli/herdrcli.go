@@ -430,16 +430,31 @@ func Notify(message string) {
 // the sidebar. The remote Herdr has already done the detection, so the result
 // is reported here instead.
 func ReportAgent(paneID, source, agent, state string) error {
-	_, err := Run("pane", "report-agent", paneID,
-		"--source", source, "--agent", agent, "--state", state)
+	_, err := Run(reportAgentArgs(paneID, source, agent, state)...)
 	return err
+}
+
+// reportAgentArgs is kept separate for the same reason openPaneArgs is: Herdr
+// ignores a flag name it does not know, so getting one wrong is a feature that
+// silently stops working rather than an error. Verified against Herdr 0.8.2,
+// which takes --source, --agent, --state, --message, --seq and the
+// agent-session pair.
+func reportAgentArgs(paneID, source, agent, state string) []string {
+	return []string{"pane", "report-agent", paneID,
+		"--source", source, "--agent", agent, "--state", state}
 }
 
 // ReleaseAgent gives up agent authority for a pane, for when the remote pane
 // stops running an agent.
 func ReleaseAgent(paneID, source, agent string) error {
-	_, err := Run("pane", "release-agent", paneID, "--source", source, "--agent", agent)
+	_, err := Run(releaseAgentArgs(paneID, source, agent)...)
 	return ignoreNotFound(err)
+}
+
+// releaseAgentArgs, kept separate as above. Herdr 0.8.2 takes --source, --agent
+// and --seq here; there is no --state, which is the difference from reporting.
+func releaseAgentArgs(paneID, source, agent string) []string {
+	return []string{"pane", "release-agent", paneID, "--source", source, "--agent", agent}
 }
 
 // AgentState maps a remote pane's agent status onto the states pane
@@ -499,8 +514,16 @@ func WorkspaceLabel(workspaceID string) string {
 
 // SplitPane opens an ordinary local pane next to the focused one.
 func SplitPane(direction string) error {
-	_, err := Run("pane", "split", "--direction", direction, "--focus")
+	_, err := Run(splitPaneArgs(direction)...)
 	return err
+}
+
+// splitPaneArgs, kept separate as above. This is the local pane somebody gets
+// when they ask for a terminal somewhere that is not a machine's space, so a
+// flag going unrecognised here is the one case where nothing remote is involved
+// to make the failure obvious.
+func splitPaneArgs(direction string) []string {
+	return []string{"pane", "split", "--direction", direction, "--focus"}
 }
 
 // ReportWorkspaceToken attaches display-only metadata to a workspace. Whether

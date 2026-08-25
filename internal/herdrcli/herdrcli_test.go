@@ -546,3 +546,50 @@ func TestEveryOpenOptionIsRenderedAsItsFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestTheFlagNamesHerdrWouldIgnoreIfTheyWereWrong(t *testing.T) {
+	// Herdr ignores a flag it does not recognise. That makes a misspelt one a
+	// feature that quietly stops working: the agent never appears in the
+	// sidebar, the pane never splits, and there is no error anywhere to say so.
+	//
+	// These names were checked against Herdr 0.8.2 by asking it what each
+	// command takes. That cannot be done from a test — CI has no Herdr — so
+	// what a test can do is stop them drifting afterwards.
+	for _, tt := range []struct {
+		what string
+		got  []string
+		want []string
+	}{
+		{
+			"reporting an agent",
+			reportAgentArgs("w1:p2", "poorplebs.remote-panes", "claude", "working"),
+			[]string{"pane", "report-agent", "w1:p2",
+				"--source", "poorplebs.remote-panes", "--agent", "claude", "--state", "working"},
+		},
+		{
+			// No --state here, which is the difference from reporting one.
+			"releasing one",
+			releaseAgentArgs("w1:p2", "poorplebs.remote-panes", "claude"),
+			[]string{"pane", "release-agent", "w1:p2",
+				"--source", "poorplebs.remote-panes", "--agent", "claude"},
+		},
+		{
+			// The local pane somebody gets when they ask for a terminal
+			// somewhere that is not a machine's space.
+			"splitting a pane here",
+			splitPaneArgs("right"),
+			[]string{"pane", "split", "--direction", "right", "--focus"},
+		},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			if len(tt.got) != len(tt.want) {
+				t.Fatalf("sends %v, want %v", tt.got, tt.want)
+			}
+			for i := range tt.want {
+				if tt.got[i] != tt.want[i] {
+					t.Errorf("argument %d is %q, want %q\n  sends %v", i, tt.got[i], tt.want[i], tt.got)
+				}
+			}
+		})
+	}
+}
