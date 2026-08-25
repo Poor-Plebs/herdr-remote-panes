@@ -190,3 +190,30 @@ func TestABoundHeldToItselfIsRecognised(t *testing.T) {
 		}
 	}
 }
+
+func TestASurvivorSaysWhyItIsLikelyToBeOne(t *testing.T) {
+	// The listing and the summary under it are read together: the summary says
+	// how many are error branches and how many are bounds, and without a mark
+	// on each line the reader still has to work out which is which for every
+	// one of them. That is the whole of what the counting was meant to save.
+	//
+	// One function behind both, so a line and the number above it cannot
+	// disagree about the same mutation.
+	for _, tt := range []struct {
+		what string
+		m    mutation
+		want string
+	}{
+		{"an error branch", mutation{source: "if err != nil {"}, classErrorBranch},
+		{"a bound", mutation{source: "if width < 8 {", clamp: true}, classBound},
+		{"a decision", mutation{source: "if entry.Connected {"}, ""},
+		// An error branch that is also a bound is called an error branch:
+		// nothing here fails the tests until a call fails, whatever shape the
+		// line has, and that is the more useful thing to say.
+		{"both at once", mutation{source: "if err != nil {", clamp: true}, classErrorBranch},
+	} {
+		if got := survivorClass(tt.m); got != tt.want {
+			t.Errorf("%s: survivorClass = %q, want %q", tt.what, got, tt.want)
+		}
+	}
+}

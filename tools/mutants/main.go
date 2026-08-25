@@ -109,8 +109,12 @@ func main() {
 		switch outcome {
 		case "survived":
 			survived = append(survived, m)
-			fmt.Printf("SURVIVED  %s:%d:%d  %s -> %s\n%s\n",
-				m.file, m.line, m.column, m.old, m.new, pointAt(m))
+			why := ""
+			if class := survivorClass(m); class != "" {
+				why = "  -- " + class
+			}
+			fmt.Printf("SURVIVED  %s:%d:%d  %s -> %s%s\n%s\n",
+				m.file, m.line, m.column, m.old, m.new, why, pointAt(m))
 		case "caught":
 			caught++
 		default:
@@ -137,10 +141,10 @@ func main() {
 	// is the difference between a report worth reading and a wall.
 	onErrors, onClamps := 0, 0
 	for _, m := range survived {
-		switch {
-		case isErrorBranch(m.source):
+		switch survivorClass(m) {
+		case classErrorBranch:
 			onErrors++
-		case m.clamp:
+		case classBound:
 			onClamps++
 		}
 	}
@@ -440,6 +444,27 @@ func survivorNote(onErrors, onClamps, rest int) string {
 		return ""
 	}
 	return strings.Join(clauses, ";\n") + "."
+}
+
+// The reasons a survivor is likely to be one without anything being wrong. Both
+// are named rather than spelled out twice, because the listing and the count
+// below it are read together and a listing that disagrees with its own summary
+// is worse than one that says nothing.
+const (
+	classErrorBranch = "an error branch"
+	classBound       = "a bound held to itself"
+)
+
+// survivorClass says why a survivor is likely to be one, or "" for a decision
+// with nothing holding it -- which is the only kind worth reading closely.
+func survivorClass(m mutation) string {
+	switch {
+	case isErrorBranch(m.source):
+		return classErrorBranch
+	case m.clamp:
+		return classBound
+	}
+	return ""
 }
 
 // isClamp reports whether an if-statement holds a value to a bound, in the shape

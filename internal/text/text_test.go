@@ -3,6 +3,7 @@ package text
 import (
 	"strings"
 	"testing"
+	"unicode"
 )
 
 func TestSanitizeName(t *testing.T) {
@@ -284,8 +285,15 @@ func TestNoRuneAtAllComesThroughAsSomethingTheTerminalActsOn(t *testing.T) {
 			continue
 		}
 		for _, out := range Sanitize("a" + string(r) + "b") {
-			if out < 0x20 || out == 0x7f || (out >= 0x80 && out <= 0x9f) {
-				t.Fatalf("a name holding %U comes out holding %U, which the terminal acts on", r, out)
+			// Graphic is the whole contract, and it is wider than "not a
+			// control character". U+202E turns the text after it round, U+200B
+			// and U+FEFF take no space at all, and a name using either can be
+			// made to read as another machine's while being a different string
+			// -- which is the same impersonation a newline used to manage, by
+			// quieter means.
+			if !unicode.IsGraphic(out) {
+				t.Fatalf("a name holding %U comes out holding %U, which is not "+
+					"something a terminal draws", r, out)
 			}
 		}
 	}
