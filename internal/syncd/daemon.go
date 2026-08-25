@@ -1258,7 +1258,9 @@ func (d *Daemon) liveTerminalCountLocked(target string) int {
 	// and a stale count is what makes a machine impossible to reopen.
 	local, err := herdrcli.PaneList()
 	if err != nil {
-		log.Printf("local pane list: %v", err)
+		// The error already names the command it was: "herdr pane list: ...".
+		// What is worth adding is what it cost, not saying "pane list" twice.
+		log.Printf("cannot count %s's terminals: %v", target, err)
 		return 0
 	}
 	alive := make(map[string]bool, len(local))
@@ -1515,7 +1517,7 @@ func (d *Daemon) reconcileOnce() {
 
 	local, err := herdrcli.PaneList()
 	if err != nil {
-		log.Printf("local pane list: %v", err)
+		log.Printf("skipping this pass: %v", err)
 		return
 	}
 	index := newPaneIndex(local)

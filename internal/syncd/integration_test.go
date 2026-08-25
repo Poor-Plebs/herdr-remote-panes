@@ -3,6 +3,7 @@ package syncd
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1530,4 +1531,55 @@ func TestConnectingToASlowMachineDoesNotFreezeTheMenu(t *testing.T) {
 			"the menu is waiting for ssh", took.Round(time.Millisecond))
 	}
 	<-connecting
+}
+
+// withBrokenHerdr replaces the Herdr CLI with one that refuses everything the
+// way Herdr does when its server is going away.
+func withBrokenHerdr(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "herdr")
+	script := "#!/bin/sh\n" +
+		"echo '{\"error\":{\"code\":\"server_unavailable\"," +
+		"\"message\":\"server is shutting down\"},\"id\":\"cli:fake\"}'\n" +
+		"exit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_BIN_PATH", bin)
+}
+
+func TestAFailureIsNotDescribedTwiceInOneLine(t *testing.T) {
+	// Every error out of the Herdr CLI already names the command it was:
+	// "herdr pane list: server_unavailable: server is shutting down". A caller
+	// that puts "local pane list:" in front of that says pane list twice and
+	// adds nothing, which is how a log line grows to a paragraph while saying
+	// one thing.
+	//
+	// What a caller is for is the part the error cannot know: what it cost.
+	withFakeHerdr(t)
+	withBrokenHerdr(t)
+
+	var logged strings.Builder
+	saved := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(saved) })
+
+	d := New(machineConfig("bot"))
+	d.hosts["bot"] = newTestHost()
+	d.reconcileAll()
+
+	out := logged.String()
+	if out == "" {
+		t.Fatal("a Herdr that refuses everything was not worth a word")
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.Count(line, "pane list") > 1 {
+			t.Errorf("the line names the same command twice: %q", line)
+		}
+	}
+	// And it still says what actually went wrong.
+	if !strings.Contains(out, "shutting down") {
+		t.Errorf("the log does not say what Herdr said: %q", out)
+	}
 }
