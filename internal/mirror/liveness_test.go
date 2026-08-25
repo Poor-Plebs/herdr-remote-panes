@@ -85,6 +85,16 @@ func TestAMarkNeedsAPaneToBelongTo(t *testing.T) {
 	if got := livenessPath("w1:p1"); got == "" {
 		t.Error("a pane with an id was given no mark file at all")
 	}
+
+	// The same for the mark that says a mirror failed, which is a second
+	// function with the same guard: a shared ".failed" would have every pane
+	// without an id inheriting the last one's failure.
+	if got := failurePath(""); got != "" {
+		t.Errorf("a pane with no id was given the failure file %q", got)
+	}
+	if got := failurePath("w1:p1"); got == "" {
+		t.Error("a pane with an id was given no failure file at all")
+	}
 }
 
 func TestClearLive(t *testing.T) {

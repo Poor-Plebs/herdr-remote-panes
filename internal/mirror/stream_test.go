@@ -31,7 +31,14 @@ func TestDecodeFrame(t *testing.T) {
 		"a frame with no payload":    `{"bytes":""}`,
 		"a different message":        `{"type":"resize","cols":80}`,
 		"payload that is not base64": `{"bytes":"not!valid!base64!"}`,
-		"an empty payload":           `{"bytes":"` + base64.StdEncoding.EncodeToString(nil) + `"}`,
+		// These two decode to something before they fail: base64 gives back
+		// what it managed before the error, so a truncated frame yields the
+		// first few characters of one. Writing those is worse than dropping
+		// them -- half a frame is half an escape sequence, and the terminal
+		// acts on what it is given.
+		"payload cut short":             `{"bytes":"aGVsbG8"}`,
+		"payload with rubbish after it": `{"bytes":"aGVsbG8=!!!"}`,
+		"an empty payload":              `{"bytes":"` + base64.StdEncoding.EncodeToString(nil) + `"}`,
 	}
 	for name, line := range skipped {
 		t.Run(name+" is skipped", func(t *testing.T) {
