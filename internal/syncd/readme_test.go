@@ -9,6 +9,28 @@ import (
 	"testing"
 )
 
+// readmeProse is the README with the line breaks taken out, so a test looking
+// for a sentence finds it wherever the text happens to wrap.
+//
+// Matching the file as it is written means a test can fail for a paragraph
+// being reflowed while the sentence it is about is still there and still true.
+// That is a complaint about typography wearing the clothes of one about
+// meaning, and it cost a red commit on main: rewrapping a paragraph split
+// "Only a mirrored machine is polled" across a newline, and the test that
+// pinned it could no longer see it.
+//
+// Tests about the shape of the page -- the sidebar picture, a quoted line of
+// output -- still read it as written, because for those the line breaks are
+// the thing being checked.
+func readmeProse(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(strings.Fields(string(raw)), " ")
+}
+
 // TestTheREADMESortsFailuresTheWayTheCodeDoes holds a claim in prose to the
 // table it is about.
 //
@@ -17,11 +39,7 @@ import (
 // noticing: nothing about editing a row makes a sentence in another file wrong
 // in a way a compiler can see.
 func TestTheREADMESortsFailuresTheWayTheCodeDoes(t *testing.T) {
-	readme, err := os.ReadFile("../../README.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(readme)
+	text := readmeProse(t)
 
 	// The phrases the README uses, and the ssh message each one is about.
 	cases := []struct {
@@ -74,11 +92,7 @@ func TestTheREADMESortsFailuresTheWayTheCodeDoes(t *testing.T) {
 // daemon at all. The paragraph directly under it said so, which is how the
 // mistake survived -- each half read as a qualification of the other.
 func TestTheREADMEDoesNotClaimPlainSSHMachinesArePolled(t *testing.T) {
-	readme, err := os.ReadFile("../../README.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(readme)
+	text := readmeProse(t)
 
 	if strings.Contains(text, "polls each connected machine") {
 		t.Error("the README says every connected machine is polled; a plain SSH one is not")
@@ -165,11 +179,7 @@ func TestTheREADMEsSidebarIsNamedTheWayThisNamesThings(t *testing.T) {
 // each of the three moves independently of it: the Go floor was raised once
 // already, which is exactly the change that would have stranded it.
 func TestTheREADMERequiresWhatTheProjectRequires(t *testing.T) {
-	readme, err := os.ReadFile("../../README.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(readme)
+	text := readmeProse(t)
 
 	t.Run("the Go version go.mod asks for", func(t *testing.T) {
 		mod, err := os.ReadFile("../../go.mod")
