@@ -52,7 +52,10 @@ func status() error {
 		fmt.Fprintf(os.Stderr, "warning: %s\n", stale)
 	}
 	if len(reply.Hosts) == 0 {
-		report("no hosts connected")
+		// The same words the notification uses, from the same place. Said
+		// twice, the two drifted: this printed "hosts", which is what the
+		// config file calls them and not what anything else here calls them.
+		report(statusSummary(reply.Hosts))
 		return nil
 	}
 	for _, line := range statusLines(reply.Hosts, outputWidth()) {
@@ -233,7 +236,9 @@ func outputWidth() int {
 // from when mirroring was the only thing this did.
 func statusSummary(hosts []syncd.HostInfo) string {
 	if len(hosts) == 0 {
-		return "no machines connected"
+		// Where somebody is most likely to be reading this: they have just
+		// installed the thing and asked it what it is doing.
+		return "no machines connected — open the menu to pick one"
 	}
 	parts := make([]string, 0, len(hosts))
 	for _, h := range hosts {

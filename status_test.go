@@ -573,3 +573,35 @@ func TestTheREADMEQuotesAStatusLineTheCodeWouldPrint(t *testing.T) {
 		t.Errorf("status prints\n%q\nand the README shows\n%q", got, want)
 	}
 }
+
+func TestWithNoMachinesTheAnswerSaysWhatToDo(t *testing.T) {
+	// The state somebody meets first: the plugin is installed, nothing is
+	// connected yet, and they have asked it what it is doing. An answer that
+	// only restates the question leaves them looking for the next step.
+	summary := statusSummary(nil)
+
+	if !strings.Contains(summary, "menu") {
+		t.Errorf("with nothing connected the answer is %q, which does not say "+
+			"where to go next", summary)
+	}
+	// "hosts" is what the config file calls them. Everything somebody reads
+	// calls them machines, and this said the other thing on its own.
+	if strings.Contains(summary, "host") {
+		t.Errorf("the answer is %q; user-facing text says machines, not hosts", summary)
+	}
+
+	// And with machines, it is about them rather than about the menu.
+	busy := statusSummary([]syncd.HostInfo{
+		{Label: "bot", Connected: true, Mirrors: 2},
+		{Label: "prod", GaveUp: true},
+	})
+	for _, want := range []string{"bot", "prod"} {
+		if !strings.Contains(busy, want) {
+			t.Errorf("the summary %q does not mention %s", busy, want)
+		}
+	}
+	if strings.Contains(busy, "open the menu") {
+		t.Errorf("the summary %q tells somebody to go and connect something "+
+			"while listing what is already connected", busy)
+	}
+}
