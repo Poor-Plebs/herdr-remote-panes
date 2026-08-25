@@ -1204,3 +1204,50 @@ func TestTheFullerHintsAppearAsSoonAsTheyFit(t *testing.T) {
 		}
 	}
 }
+
+func TestATallerPopupNeverShowsFewerMachines(t *testing.T) {
+	// The menu used to show fewer machines as the popup grew. At six rows the
+	// key hints did not fit at all, so they were given up and three machines
+	// drawn; at seven they just fitted, so they were kept and one machine drawn
+	// beside them. Growing the window took two machines off the screen, and did
+	// it again a few rows later.
+	//
+	// Nobody reports that. It reads as the menu being arbitrary, and the only
+	// way to see it is to resize the terminal slowly while watching a list that
+	// is longer than the popup.
+	for _, count := range []int{1, 3, 5, 12, 40} {
+		for _, selected := range []int{0, count / 2, count - 1} {
+			previous := 0
+			for rows := 1; rows <= 40; rows++ {
+				frame := planLayout(count, selected, rows, 0)
+				shown := frame.last - frame.first
+				if shown < previous {
+					t.Errorf("with %d machines and the cursor on %d, a popup of %d rows "+
+						"shows %d of them where %d rows showed %d",
+						count, selected, rows, shown, rows-1, previous)
+				}
+				previous = shown
+			}
+		}
+	}
+}
+
+func TestTheWarningSurvivesAPopupWorthReadingItIn(t *testing.T) {
+	// Machines beat the key hints. They do not beat the warning: that line is
+	// what says the daemon is not answering or the config cannot be read, and a
+	// menu that hides it to fit two more machines in is one that looks fine
+	// while nothing in it works.
+	//
+	// The first version of this fix had exactly that. With twenty machines the
+	// warning was gone at nine rows, at fourteen and at eighteen -- every
+	// ordinary popup size -- because dropping it always bought more machines.
+	for _, rows := range []int{9, 14, 18, 24, 30} {
+		frame := planLayout(20, 0, rows, 2)
+		if frame.warning == 0 {
+			t.Errorf("a popup of %d rows drew no warning at all, and there was one to draw", rows)
+		}
+		if shown := frame.last - frame.first; shown == 0 {
+			t.Errorf("a popup of %d rows drew the warning and no machines", rows)
+		}
+	}
+}

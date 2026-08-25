@@ -101,16 +101,21 @@ func TestPlanLayout(t *testing.T) {
 			// Writing more lines than the popup has scrolls the top away,
 			// taking the first machine and the heading with it. This is what
 			// made the menu appear to start at "2.".
+			//
+			// Eight rows holds the heading, its blank line and six machines
+			// exactly, so all six are drawn: the key hints are what gives way,
+			// since a reminder of which key moves the cursor is worth less than
+			// the machines it would cover.
 			name:  "a short popup shows a window, not an overflowing list",
-			count: 6, selected: 0, rows: 8, wantFirst: 0, wantLast: 2,
+			count: 6, selected: 0, rows: 8, wantFirst: 0, wantLast: 6,
 		},
 		{
 			name:  "the window follows the selection",
-			count: 10, selected: 8, rows: 8, wantFirst: 7, wantLast: 9,
+			count: 10, selected: 8, rows: 8, wantFirst: 5, wantLast: 10,
 		},
 		{
 			name:  "the window never runs past the end",
-			count: 10, selected: 9, rows: 8, wantFirst: 8, wantLast: 10,
+			count: 10, selected: 9, rows: 8, wantFirst: 5, wantLast: 10,
 		},
 		{
 			// Even absurdly small popups must show the selected machine
@@ -130,6 +135,24 @@ func TestPlanLayout(t *testing.T) {
 			}
 			if tt.selected < tt.count && (tt.selected < first || tt.selected >= last) {
 				t.Errorf("selected %d is outside the window %d..%d", tt.selected, first, last)
+			}
+			// What the case above is really about, asserted rather than
+			// implied by a pair of numbers: the frame has to fit the popup.
+			// Written out from the parts, so a frame that grows for a good
+			// reason is checked against the popup rather than against what it
+			// used to be.
+			used := 2 + (last - first) // the heading and its blank line
+			if frame.hints {
+				used += 3
+			}
+			if frame.warning > 0 {
+				used += frame.warning + 1
+			}
+			if frame.counter {
+				used++
+			}
+			if used > tt.rows && tt.rows > 2 {
+				t.Errorf("the frame draws %d lines into a popup of %d", used, tt.rows)
 			}
 		})
 	}

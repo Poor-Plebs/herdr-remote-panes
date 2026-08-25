@@ -183,6 +183,64 @@ func worthDisconnecting(entry Entry) bool {
 	return entry.Connected || entry.GaveUp
 }
 
+// widestWindow picks whichever of these shapes shows the most machines, and
+// reports whether any of them showed one at all.
+//
+// Ties go to the earlier shape, which is the one keeping more of the hints and
+// the warning: giving either up buys nothing when the same number of machines
+// is drawn either way.
+func widestWindow(options []struct {
+	hints   bool
+	warning int
+}, count, selected, rows, heading int) (layout, bool) {
+	best := 0
+	var chosen layout
+
+	for _, opt := range options {
+		chrome := heading
+		if opt.hints {
+			chrome += 3 // a blank separator and two lines of hints
+		}
+		if opt.warning > 0 {
+			chrome += opt.warning + 1 // the warning and the blank line under it
+		}
+
+		if visible := rows - chrome; visible >= 1 && visible >= count {
+			if count > best {
+				best = count
+				chosen = layout{first: 0, last: count, hints: opt.hints, warning: opt.warning}
+			}
+			continue
+		}
+		visible := rows - chrome - 1 // the range counter needs a row too
+		// The second half of that condition changes nothing today: the shapes
+		// are offered widest-chrome first, so each one after it has room for at
+		// least as many machines. It is there for when that ordering is not
+		// true any more -- checked by taking it out, which leaves every layout
+		// at every size identical.
+		if visible < 1 || visible <= best {
+			continue
+		}
+
+		first := selected - visible/2
+		if first < 0 {
+			first = 0
+		}
+		if first+visible > count {
+			first = count - visible
+		}
+		if first < 0 {
+			first = 0
+		}
+		best = visible
+		chosen = layout{
+			first: first, last: first + visible,
+			counter: true, hints: opt.hints, warning: opt.warning,
+		}
+	}
+	return chosen, best > 0
+}
+
 // planSelectionAfterChange keeps the cursor on the list after it changes.
 //
 // Disconnecting a machine can take it out of the list, and a cursor left past
@@ -707,36 +765,30 @@ func planLayout(count, selected, rows, warnLines int) layout {
 		}{false, lines})
 	}
 
-	for _, opt := range options {
-		chrome := heading
-		if opt.hints {
-			chrome += 3 // a blank separator and two lines of hints
-		}
-		if opt.warning > 0 {
-			chrome += opt.warning + 1 // the warning and the blank line under it
-		}
-
-		if visible := rows - chrome; visible >= 1 && visible >= count {
-			return layout{first: 0, last: count, hints: opt.hints, warning: opt.warning}
-		}
-		visible := rows - chrome - 1 // the range counter needs a row too
-		if visible < 1 {
-			continue
-		}
-
-		first := selected - visible/2
-		if first < 0 {
-			first = 0
-		}
-		if first+visible > count {
-			first = count - visible
-		}
-		if first < 0 {
-			first = 0
-		}
-		return layout{
-			first: first, last: first + visible,
-			counter: true, hints: opt.hints, warning: opt.warning,
+	// Whichever of these shows the most machines, rather than the first that can
+	// show any.
+	//
+	// Taking the first left a taller popup showing fewer machines than a
+	// shorter one: at six rows the hints did not fit at all, so they were given
+	// up and three machines drawn; at seven they just fitted, so they were kept
+	// and one machine drawn beside them. Growing the window took machines off
+	// the screen, at two different heights, which is not something anybody
+	// would think to report.
+	//
+	// The two passes are what stops that fix going too far. Machines beat the
+	// key hints -- a reminder of which key moves the cursor is worth less than
+	// the machines it is covering. They do not beat the warning: that is the
+	// line saying the daemon is not answering or the config cannot be read, and
+	// a menu that hides it to fit two more machines in is a menu that looks
+	// fine while nothing in it works. So the whole warning is offered first,
+	// and the trimmed-down ones only when keeping it would leave no room for a
+	// single machine.
+	for _, opts := range [][]struct {
+		hints   bool
+		warning int
+	}{options[:2], options[2:]} {
+		if frame, ok := widestWindow(opts, count, selected, rows, heading); ok {
+			return frame
 		}
 	}
 
