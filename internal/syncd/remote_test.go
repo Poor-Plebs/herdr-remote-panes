@@ -2687,3 +2687,64 @@ func TestReconnectingEverythingMirrorsTheSameAsNamingOneMachine(t *testing.T) {
 			lookups, wantLookups)
 	}
 }
+
+func TestTheOldConnectionIsTornDownWhenSettingsChange(t *testing.T) {
+	// Editing a machine's session or Herdr path builds a new connection to it.
+	// The tests beside this one check the new one is used and the old one is
+	// not, which is the visible half. The other half is that the old one is
+	// closed.
+	//
+	// A connection here is an SSH ControlMaster: a process holding a socket,
+	// which lives until it is told to exit. One left behind is not wrong in any
+	// way somebody would notice -- nothing uses it, nothing fails -- it is a
+	// process and a socket per settings edit, for as long as the session lasts.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	// Tearing one down is the one call that names the machine and asks it to
+	// run nothing: "ssh -O exit -- bot". Every other call has a command after
+	// the target.
+	teardowns := func() int {
+		n := 0
+		for _, line := range asked(t) {
+			if strings.HasSuffix(strings.TrimSpace(line), "| bot") {
+				n++
+			}
+		}
+		return n
+	}
+	before := teardowns()
+
+	cfg.Session = "somewhere-else"
+	d.setConfig(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("reconnect after the edit: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	if got := teardowns() - before; got != 1 {
+		t.Errorf("changing the session tore down %d connections, want 1: the old one "+
+			"is a process and a socket that nothing will close now", got)
+	}
+
+	// And an edit that changes nothing keeps the connection it has: rebuilding
+	// one costs a round trip and drops whatever it was multiplexing.
+	before = teardowns()
+	d.setConfig(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("reconnect without an edit: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	if got := teardowns() - before; got != 0 {
+		t.Errorf("connecting again with the same settings tore down %d connections, want none", got)
+	}
+}
