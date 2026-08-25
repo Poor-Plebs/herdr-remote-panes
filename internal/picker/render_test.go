@@ -930,3 +930,80 @@ func TestOneEnormousNameDoesNotShoveTheStateColumnAway(t *testing.T) {
 		t.Errorf("the state column moves from %d to %d when a name gets longer", a, b)
 	}
 }
+
+func TestTheWindowAlwaysHoldsTheCursorAndNothingElseIsOutOfBounds(t *testing.T) {
+	// The list is windowed when it is longer than the popup, and the whole of
+	// what that has to get right is: show a run of machines that exists, and
+	// have the selected one inside it. A window that leaves the cursor outside
+	// means moving the selection changes nothing on screen, which reads as the
+	// arrow keys not working.
+	//
+	// Written as properties over every shape rather than as a handful of cases,
+	// because the mistakes here are all at boundaries — an empty list, a single
+	// machine, a popup one row shorter than it needs — and those are exactly
+	// the shapes nobody thinks to write down.
+	for count := 0; count <= 12; count++ {
+		for selected := 0; selected < count || (count == 0 && selected == 0); selected++ {
+			for rows := 1; rows <= 16; rows++ {
+				for warnLines := 0; warnLines <= 2; warnLines++ {
+					got := planLayout(count, selected, rows, warnLines)
+
+					if got.first < 0 || got.last < got.first || got.last > count {
+						t.Fatalf("count=%d selected=%d rows=%d warn=%d gives [%d,%d), which is not a run of %d machines",
+							count, selected, rows, warnLines, got.first, got.last, count)
+					}
+					// A count line saying "showing 1-8 of 8" is noise: it is
+					// there to say that something is hidden.
+					if got.counter && got.last-got.first == count {
+						t.Fatalf("count=%d rows=%d warn=%d shows every machine and still counts them",
+							count, rows, warnLines)
+					}
+					if count == 0 {
+						continue
+					}
+					if selected < got.first || selected >= got.last {
+						t.Fatalf("count=%d selected=%d rows=%d warn=%d shows [%d,%d), leaving the cursor off screen",
+							count, selected, rows, warnLines, got.first, got.last)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestAWindowGivesUpTheRightThingsFirst(t *testing.T) {
+	// What goes when there is not room is a decision: the machines are what the
+	// menu is for, a warning is worth more than a reminder of which keys move
+	// the cursor, and half a warning is worth more than none.
+	const count, selected, warn = 8, 0, 2
+
+	// With plenty of room, everything is shown.
+	roomy := planLayout(count, selected, 20, warn)
+	if !roomy.hints || roomy.warning != warn || roomy.last != count {
+		t.Fatalf("with twenty rows the menu dropped something: %+v", roomy)
+	}
+
+	// Taking rows away, the hints go before any of the warning does, and the
+	// warning is given up a line at a time rather than all at once.
+	var lostHints, lostWarningLine bool
+	for rows := 19; rows >= 4; rows-- {
+		got := planLayout(count, selected, rows, warn)
+		if !got.hints && !lostHints {
+			lostHints = true
+		}
+		if got.warning < warn && !lostWarningLine {
+			lostWarningLine = true
+			if !lostHints {
+				t.Errorf("at %d rows the warning was cut while the key hints were still shown", rows)
+			}
+		}
+		if got.warning > 0 && got.warning < warn {
+			// A warning cut down rather than dropped: this is the case worth
+			// having, and it must actually happen at some width.
+			lostWarningLine = true
+		}
+	}
+	if !lostHints {
+		t.Error("the hints were never given up, however short the popup got")
+	}
+}
