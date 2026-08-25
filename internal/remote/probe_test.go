@@ -203,3 +203,29 @@ func TestAnSSHThatLeavesSomethingBehindStillGivesUp(t *testing.T) {
 		t.Fatal("the call was not given up on, so the timeout bounds nothing")
 	}
 }
+
+func TestTheProbeLooksWhereHerdrIsActuallyInstalled(t *testing.T) {
+	// `ssh host <command>` does not run a login shell, so an install under
+	// ~/.local/bin — where Herdr's own installer puts it for a non-root user —
+	// is invisible to `command -v`. The probe not stopping there is the whole
+	// reason a machine with a hand-installed Herdr mirrors at all.
+	//
+	// Written down because I got this wrong from the outside: `command -v` on a
+	// machine came back empty and I concluded mirroring would need herdr_bin
+	// set. It did not, because of these lines.
+	for _, where := range []string{
+		"$HOME/.local/bin/herdr",
+		"/usr/local/bin/herdr",
+		"/opt/homebrew/bin/herdr",
+		"$HOME/.nix-profile/bin/herdr",
+		"$HOME/.local/share/mise/shims/herdr",
+	} {
+		if !strings.Contains(probeScript, where) {
+			t.Errorf("the probe no longer looks in %s", where)
+		}
+	}
+	// And PATH first, since that is right when it works.
+	if !strings.HasPrefix(probeScript, "command -v herdr") {
+		t.Errorf("the probe no longer tries the PATH first: %q", probeScript)
+	}
+}

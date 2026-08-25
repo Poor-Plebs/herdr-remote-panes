@@ -330,24 +330,27 @@ before it takes the daemon, so the menu stays usable while you connect to
 something that is not answering.
 
 **A machine says `ssh` when you asked it to mirror.** Mirroring needs Herdr on
-the machine, and the probe looks for it on the PATH an SSH session gets — which
-is not the PATH you get when you log in and use it. Installed by hand, it is
-usually somewhere that PATH does not reach, and the machine then reads as one
-without Herdr at all. Falling back to a plain SSH terminal is deliberate: the
-machine still works. `status` says so, and says what would fix it:
+the machine, and it was not found. Usually it is simply not installed there;
+`ssh` is the fallback rather than a refusal, so the machine still works.
 
-```
-bot  2 ssh  mirroring off: no herdr found on the machine — set herdr_bin if it is installed elsewhere there
-```
-
-Find it, and name it for that machine:
+Being off the PATH is *not* usually the cause. `ssh host <command>` does not run
+a login shell, so an install under `~/.local/bin` is invisible to `command -v` —
+which is why the search does not stop there. It also looks in `~/.local/bin`,
+`/usr/local/bin`, Homebrew, Nix and mise. Somewhere other than those is what
+`herdr_bin` is for:
 
 ```bash
-ssh workbox 'command -v herdr || ls ~/.local/bin/herdr'
+ssh workbox 'command -v herdr || ls ~/.local/bin/herdr /opt/herdr/bin/herdr'
 ```
 
 ```json
-{ "target": "workbox", "mode": "attach", "herdr_bin": "/home/you/.local/bin/herdr" }
+{ "target": "workbox", "mode": "attach", "herdr_bin": "/opt/herdr/bin/herdr" }
+```
+
+`status` says which machine, and that the setting exists:
+
+```
+bot  2 ssh  mirroring off: no herdr found on the machine — set herdr_bin if it is installed elsewhere there
 ```
 
 **Terminals on a machine keep disappearing.** Two machines answering to the
