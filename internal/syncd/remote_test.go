@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/mirror"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1709,6 +1710,64 @@ func TestTurningTakeoverOffReachesThePane(t *testing.T) {
 			}
 			if got := envOf(mirrors[0])["HRP_TAKEOVER"]; got != tt.want {
 				t.Errorf("the pane was told HRP_TAKEOVER=%q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWhereHerdrLivesOnAMachineReachesThePane(t *testing.T) {
+	// herdr_bin is two rows in the settings table — one for all machines and
+	// one for a particular machine — and what it does is put a path in front
+	// of the pane, which then runs herdr there. Nothing held either.
+	//
+	// It exists for machines where herdr is not on the PATH the SSH session
+	// gets, which is most machines where it was installed by hand. Set it,
+	// have it not arrive, and the pane looks for herdr where it is not.
+	// Real paths, both of them: a machine told to run herdr somewhere it is not
+	// simply cannot be reached, which is a different test and a slow one. Two
+	// names for the same stand-in, so which one arrived is the answer.
+	dir := t.TempDir()
+	everywhere := filepath.Join(dir, "herdr-for-all")
+	justThisOne := filepath.Join(dir, "herdr-for-bot")
+	for _, name := range []string{everywhere, justThisOne} {
+		if err := os.Symlink(fakeHerdrBin, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, tt := range []struct {
+		what   string
+		global string
+		host   string
+		want   string
+	}{
+		{"nothing set says nothing", "", "", ""},
+		{"the setting for all machines", everywhere, "", everywhere},
+		{"a machine's own", "", justThisOne, justThisOne},
+		// The per-machine row exists to override the general one, or it is the
+		// same row written twice.
+		{"a machine's own wins", everywhere, justThisOne, justThisOne},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			here := withFakeHerdr(t)
+			there, _ := withRemoteHerdr(t)
+
+			cfg := machineConfig("bot")
+			cfg.Hosts[0].Mode = "attach"
+			cfg.HerdrBin = tt.global
+			cfg.Hosts[0].HerdrBin = tt.host
+			d := New(cfg)
+			if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+				t.Fatalf("connect: %s", reply.Message)
+			}
+			settle(t, d, here, 3, there)
+
+			mirrors := mirrorsHere(here(), "bot")
+			if len(mirrors) == 0 {
+				t.Fatal("no mirror was opened, so nothing was told anything")
+			}
+			if got := envOf(mirrors[0])[mirror.EnvBin]; got != tt.want {
+				t.Errorf("the pane was told herdr lives at %q, want %q", got, tt.want)
 			}
 		})
 	}
