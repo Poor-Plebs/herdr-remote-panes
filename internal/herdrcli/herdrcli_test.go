@@ -253,6 +253,10 @@ func TestLooksLikeShellTitle(t *testing.T) {
 		"L14:~",
 		"L14:/var/log",
 		"L14: ~/work",
+		// A prompt sitting at the root of nothing, and one whose user part is
+		// missing: still the host-and-path shape, so still a banner.
+		"user@host:",
+		"@host:/path",
 	}
 	for _, title := range banners {
 		if !looksLikeShellTitle(title) {
@@ -273,6 +277,26 @@ func TestLooksLikeShellTitle(t *testing.T) {
 		"tail -f /var/log/syslog",
 		"make: *** [all] Error 1",
 		"",
+
+		// Shapes that come close to a banner and are not one. Each of these
+		// is one character in the matching away from being thrown away in
+		// favour of the directory the pane happens to be in.
+		//
+		// A colon with no host in front of it is not a prompt, whatever
+		// follows it.
+		":/var/log",
+		":~",
+		// Something after the host that is not a path. A prompt puts a colon
+		// there; a command line puts a space, and what follows is the rest of
+		// the command rather than a directory.
+		"user@host make test",
+		"user@ x",
+		// An "@" with no user in front of it. "user@host" is a banner because
+		// somebody is logged in somewhere; this is a mention of a host, or a
+		// handle, and throwing the title away for it would leave the pane
+		// named after a directory nobody asked about.
+		"@host",
+		"@",
 	}
 	for _, title := range titles {
 		if looksLikeShellTitle(title) {
