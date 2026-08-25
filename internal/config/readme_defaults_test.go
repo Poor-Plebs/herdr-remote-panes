@@ -154,3 +154,23 @@ func TestTheSidebarPictureIsWhatTheDefaultsDraw(t *testing.T) {
 		t.Errorf("a terminal is named %q, and the sidebar picture does not show that", terminal)
 	}
 }
+
+func TestTheREADMESaysHowSoonAMachineStops(t *testing.T) {
+	// The troubleshooting entry says how long a machine gets before it is left
+	// alone, in seconds, because that is the question somebody has when their
+	// machines have all stopped after a laptop woke up. The number is the poll
+	// interval, and a poll interval changed here would leave the page saying
+	// something that used to be true.
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	poll := Defaults().PollInterval
+	if poll == "" {
+		t.Fatal("there is no default poll interval")
+	}
+	if !strings.Contains(string(readme), "which is `"+poll+"` later by default") {
+		t.Errorf("the README does not say the second attempt comes %s later, "+
+			"which is what the poll interval makes it", poll)
+	}
+}
