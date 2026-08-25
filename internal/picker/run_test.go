@@ -346,3 +346,46 @@ func TestTheToggleAsksForTheOppositeOfWhatAMachineIs(t *testing.T) {
 		t.Errorf("pressing m on a machine that is not mirrored asked for %q, want attach", mode)
 	}
 }
+
+func TestWithNoMachinesTheMenuSaysWhereToPutSome(t *testing.T) {
+	// The first thing somebody sees, and the one state where there is no menu
+	// to draw: nothing in ~/.ssh/config and nothing in the plugin's config.
+	// An empty list with no explanation is indistinguishable from a menu that
+	// failed to load, and the way out of it is a file they have not written
+	// yet.
+	got := runMenu(t, "", "")
+	if got.err != nil {
+		t.Fatalf("the menu returned %v", got.err)
+	}
+	if len(got.connected) != 0 {
+		t.Errorf("with no machines it connected to %v", got.connected)
+	}
+	if !strings.Contains(got.drawn, "No machines found") {
+		t.Errorf("nothing says the list is empty:\n%s", got.drawn)
+	}
+	// Both files, because either one is a place to put a machine and somebody
+	// who has neither has no reason to prefer one.
+	for _, where := range []string{"~/.ssh/config", "config.json"} {
+		if !strings.Contains(got.drawn, where) {
+			t.Errorf("nothing points at %s:\n%s", where, got.drawn)
+		}
+	}
+}
+
+func TestWithNoMachinesAndABrokenConfigItSaysBoth(t *testing.T) {
+	// The empty list has two causes and they need telling apart. One is having
+	// written nothing yet. The other is having written something the plugin
+	// cannot read -- in which case the machines in it are missing precisely
+	// because of the fault, and saying only "add some" sends somebody to write
+	// what they have already written.
+	got := runMenuConfigured(t, "", "{not json", "")
+	if got.err != nil {
+		t.Fatalf("the menu returned %v", got.err)
+	}
+	if !strings.Contains(got.drawn, "No machines found") {
+		t.Errorf("nothing says the list is empty:\n%s", got.drawn)
+	}
+	if !strings.Contains(got.drawn, "Could not read the plugin config") {
+		t.Errorf("the config could not be read and the menu does not say so:\n%s", got.drawn)
+	}
+}
