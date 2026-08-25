@@ -95,25 +95,34 @@ func statusLines(hosts []syncd.HostInfo, width int) []string {
 		if h.SSHOnly {
 			open, r.kind = h.Terminals, "ssh"
 		}
-		// Terminals the machine has that this could not mirror. Left out, the
-		// count simply reads lower than what is on the machine, with nothing
-		// to say why. Only when there is nothing worse to report: a machine
-		// that cannot be reached at all has a better answer than this one.
+		// What follows is everything the machine is quietly not doing. Each is
+		// reported only when there is nothing worse to say, because a machine
+		// that cannot be reached at all has a better answer than any of them,
+		// and they run most-wrong first: the ones that mean no mirroring at all
+		// before the ones that mean some of it.
+
 		// Asked to mirror and could not. The machine works, so this is not a
 		// failure — but the settings say one thing and the machine is doing
 		// another, and without this only the daemon's log knew.
 		if h.NoHerdr && r.state == "ok" {
 			r.state = "mirroring off: no herdr found on the machine — set herdr_bin if it is installed elsewhere there"
 		}
-		// More terminals than the limit allows. Different from the count below:
-		// those were tried and failed, and trying again may work; these were
-		// never tried, and will not be until the number is changed.
+		// Two spaces on the machine answer to its name, so which of them you
+		// are looking at comes down to which was found first. Nothing fails and
+		// nobody is wrong; you simply cannot see what is in the other one, and
+		// the only hint without this is a count that reads too low.
 		if h.SharedName && r.state == "ok" {
 			r.state = "more than one space on the machine has this machine's name — rename the others, or set remote_workspace_format"
 		}
+		// More terminals than the limit allows. Different from the count below:
+		// those were tried and failed, and trying again may work; these were
+		// never tried, and will not be until the number is changed.
 		if h.AtCapacity && r.state == "ok" {
 			r.state = "at the mirror limit — raise max_mirrors to mirror the rest"
 		}
+		// Terminals the machine has that this could not mirror. Left out, the
+		// count simply reads lower than what is on the machine, with nothing
+		// at all to say why.
 		if h.Unmirrored > 0 && r.state == "ok" {
 			r.state = fmt.Sprintf("%d could not be mirrored — connect again to retry", h.Unmirrored)
 		}

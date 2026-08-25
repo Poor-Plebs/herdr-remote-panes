@@ -383,3 +383,66 @@ func TestAMachineWithTwoSpacesOfOneNameSaysSo(t *testing.T) {
 		t.Errorf("an ordinary machine was told its name is ambiguous: %q", plain)
 	}
 }
+
+func TestTheWorstQuietFailureIsTheOneReported(t *testing.T) {
+	// Four different ways a machine can be quietly doing less than it was told
+	// to, and one column to say it in. They can hold at once -- a machine over
+	// its mirror limit can also have terminals that failed to mirror, and a
+	// machine whose name is ambiguous can be either -- so which one wins is a
+	// real decision, and it was made only by the order the code happens to be
+	// written in.
+	//
+	// The order is most-wrong first: the ones that mean no mirroring at all
+	// before the ones that mean some of it. Nothing is lost by picking one, as
+	// the daemon's log still holds them all; but the line is what people read.
+	says := map[string]string{
+		"no herdr":     "no herdr found",
+		"shared name":  "more than one space",
+		"at the limit": "at the mirror limit",
+		"unmirrored":   "could not be mirrored",
+	}
+
+	for _, c := range []struct {
+		name   string
+		host   syncd.HostInfo
+		expect string
+	}{
+		{
+			"all four at once",
+			syncd.HostInfo{NoHerdr: true, SharedName: true, AtCapacity: true, Unmirrored: 3},
+			"no herdr",
+		},
+		{
+			"an ambiguous name outranks a limit",
+			syncd.HostInfo{SharedName: true, AtCapacity: true, Unmirrored: 3},
+			"shared name",
+		},
+		{
+			"a limit outranks what failed under it",
+			syncd.HostInfo{AtCapacity: true, Unmirrored: 3},
+			"at the limit",
+		},
+		{
+			"and on its own, what failed",
+			syncd.HostInfo{Unmirrored: 3},
+			"unmirrored",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			c.host.Label = "bot"
+			c.host.Connected = true
+			line := statusLines([]syncd.HostInfo{c.host}, 0)[0]
+
+			if !strings.Contains(line, says[c.expect]) {
+				t.Errorf("%q does not report %s, which is the worst of what is wrong", line, c.expect)
+			}
+			// One state, not four run together. The column is a phrase wide,
+			// and a line carrying every complaint at once says none of them.
+			for name, phrase := range says {
+				if name != c.expect && strings.Contains(line, phrase) {
+					t.Errorf("%q reports %s as well as %s", line, name, c.expect)
+				}
+			}
+		})
+	}
+}
