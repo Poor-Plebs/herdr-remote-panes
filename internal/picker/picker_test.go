@@ -760,3 +760,47 @@ func TestEveryKeyCanSayItsOwnName(t *testing.T) {
 		t.Errorf("an ordinary key reads as %s, want '3'", got)
 	}
 }
+
+func TestTheMenuOnlyWarnsAboutTheConfigWhenThereIsSomethingToSay(t *testing.T) {
+	// A setting that reads fine and means nothing is worth saying once, where
+	// the machines are chosen. Saying it when there is nothing to say is worse
+	// than not saying it: the warning takes two of the popup's rows from the
+	// machines, and "Check the plugin config:" with nothing after it reads as a
+	// message that was cut off rather than as a menu with nothing wrong.
+	withConfig := func(t *testing.T, body string) string {
+		t.Helper()
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host bot\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		dir := t.TempDir()
+		t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, warning := collect()
+		return warning
+	}
+
+	// A config with nothing wrong with it says nothing.
+	if got := withConfig(t, `{"hosts":[{"target":"bot"}]}`); strings.Contains(got, "Check the plugin config") {
+		t.Errorf("a config with nothing wrong produced %q", got)
+	}
+
+	// One with a setting that is not a setting says which.
+	got := withConfig(t, `{"hosts":[{"target":"bot","remote_workspace_format":"mine"}]}`)
+	if !strings.Contains(got, "Check the plugin config") {
+		t.Errorf("a config with a setting that means nothing produced %q", got)
+	}
+	if !strings.Contains(got, "remote_workspace_format") {
+		t.Errorf("the warning is %q, which does not say which setting", got)
+	}
+	// And it says something after the colon, which is the whole of its job.
+	if _, after, _ := strings.Cut(got, "Check the plugin config: "); strings.TrimSpace(after) == "" {
+		t.Errorf("the warning is %q, which stops at the colon", got)
+	}
+}
