@@ -59,6 +59,18 @@ func TestShellQuote(t *testing.T) {
 		"it's":        `'it'\''s'`,
 		"a;rm -rf /":  "'a;rm -rf /'",
 		"$(whoami)":   "'$(whoami)'",
+
+		// The ends of every range the safe set is written as, so that what
+		// counts as safe is pinned rather than sampled from the middle. Every
+		// one of these left out is a character that would be quoted when it
+		// need not be -- harmless on its own, and the same slip made the other
+		// way is how a set stops being safe.
+		"azAZ09":      "azAZ09",
+		"-_./:=":      "-_./:=",
+		"a`b":         "'a`b'",
+		"a\\b":        `'a\b'`,
+		"{brace}":     "'{brace}'",
+		"back\\slash": `'back\slash'`,
 	}
 	for in, want := range tests {
 		if got := shellQuote(in); got != want {
