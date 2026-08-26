@@ -167,6 +167,26 @@ other spaces.
 
 ## Things worth knowing
 
+**Closing a mirrored tab closes the terminal on the machine.** Mirroring is
+two-way, and closing is part of it: the tab goes here and the terminal goes
+there, with whatever was running in it. That is `close_propagates`, and it is
+on by default — the alternative surprises people the other way, leaving work
+running on a machine with nothing here to show it.
+
+Disconnecting is the one that does not. `d` in the menu, or the disconnect
+action, closes a machine's panes here and leaves everything on the machine
+alone, which is why `enter` brings it straight back with the work still in it.
+So: `d` to put a machine away, and closing tabs to finish with what is in them.
+
+If you would rather closing a tab left the machine alone:
+
+```json
+{
+  "close_propagates": false,
+  "hosts": [{ "target": "workbox", "mode": "attach" }]
+}
+```
+
 **A dropped connection comes back; one you closed does not.** A terminal whose
 SSH link fails is reopened. One you deliberately closed stays closed, and is
 still closed after a restart — including one you ended by typing `exit` after
