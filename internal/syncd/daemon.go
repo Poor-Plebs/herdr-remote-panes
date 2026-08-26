@@ -957,6 +957,14 @@ func (d *Daemon) configWarning() string {
 		return fmt.Sprintf("the plugin config could not be read, so no machines are configured: %v", d.configErr)
 	}
 	if problems := d.config().Problems(); len(problems) > 0 {
+		// The count first, because this is drawn in a menu that has machines
+		// to show as well: the warning is wrapped to two lines and the rest
+		// becomes an ellipsis, so somebody with three problems reads one of
+		// them and cannot tell there are others. `status` prints the lot.
+		if len(problems) > 1 {
+			return fmt.Sprintf("check the plugin config, %d problems (`status` lists them): %s",
+				len(problems), strings.Join(problems, "; "))
+		}
 		return "check the plugin config: " + strings.Join(problems, "; ")
 	}
 	return ""

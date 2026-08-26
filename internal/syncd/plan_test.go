@@ -1211,6 +1211,29 @@ func TestConfigWarningSaysWhichProblemItIs(t *testing.T) {
 	if got := (withConfig(&Daemon{}, config.Defaults())).configWarning(); got != "" {
 		t.Errorf("a good config warned: %q", got)
 	}
+
+	// Several at once. The menu wraps this to two lines and turns the rest
+	// into an ellipsis, so without a count somebody reads one problem and
+	// cannot tell there are others waiting behind it.
+	// From the defaults rather than a bare literal, which would leave every
+	// other setting empty and complaining about that instead.
+	cfg := config.Defaults()
+	cfg.Mode = "shh"
+	cfg.PollInterval = "30"
+	cfg.Hosts = []config.Host{{Target: "bot", Placement: "sideways"}}
+	several := withConfig(&Daemon{}, cfg)
+	got = several.configWarning()
+	if !strings.Contains(got, "3 problems") {
+		t.Errorf("warning = %q, want it to say how many there are", got)
+	}
+	if !strings.Contains(got, "status") {
+		t.Errorf("warning = %q, want it to say where the rest can be read", got)
+	}
+	// The first one is still there in full: a count with nothing to act on is
+	// worse than the one problem it replaced.
+	if !strings.Contains(got, "shh") {
+		t.Errorf("warning = %q, want the first problem still spelled out", got)
+	}
 }
 
 // withConfig sets a daemon's configuration. It is held atomically rather than
