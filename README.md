@@ -88,7 +88,13 @@ it: the ones you have configured come first, then everything else in your
 on, it is also how you say "try again now". `d` closes a machine's panes here,
 leaving the work on the machine running, so `enter` brings it straight back.
 `m` turns [mirroring](#mirroring-experimental) on or off for the machine under
-the cursor. The list scrolls, so a long SSH config is fine.
+the cursor, and asks first if that would close terminals you have open on it.
+The list scrolls, so a long SSH config is fine.
+
+`m` is also the one key here that writes to your config: the mode has to be
+remembered somewhere, so a machine that was only in `~/.ssh/config` is added to
+`config.json` when you toggle it. It then counts as configured — it sorts to the
+top of the menu, and reconnecting everything reconnects it too.
 
 ## Everyday use
 
