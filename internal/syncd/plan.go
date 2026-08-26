@@ -198,9 +198,13 @@ func planStrayPlacement(panesInSameTab int) string {
 //
 // With scope "shared" only this machine's own space on the remote is mirrored,
 // so both ends show exactly the same terminals: the machine's other work stays
-// where it is. Panes are ordered by the tab order on the remote, so the first
-// tab here is the first tab there. Herdr does not promise an order in a pane
+// where it is. Panes are ordered by the tab order on the remote, so what came
+// first there comes first here. Herdr does not promise an order in a pane
 // listing, and without sorting the two sides drift apart as panes come and go.
+//
+// The order, not the shape. Where each mirror is put is `placement`, which
+// defaults to splitting -- so a machine with three tabs is three panes in one
+// tab here, in the order its tabs are in there.
 func planSharedPanes(panes []herdrcli.Pane, sharedWorkspace string, tabOrder map[string]int, sharedOnly bool) []herdrcli.Pane {
 	selected := make([]herdrcli.Pane, 0, len(panes))
 	for _, pane := range panes {

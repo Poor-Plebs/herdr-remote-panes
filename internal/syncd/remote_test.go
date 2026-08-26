@@ -3055,3 +3055,73 @@ func TestTogglingMirroringOffLeavesOneTerminalWhateverYouHad(t *testing.T) {
 			"panes here, not the work there", got)
 	}
 }
+
+// tabsFor is which local tabs a machine's terminals are spread across.
+func tabsFor(held fakeHerdr, target string) []string {
+	seen := map[string]bool{}
+	for _, pane := range held.Panes {
+		if label, _ := pane["label"].(string); !strings.HasSuffix(label, "@"+target) {
+			continue
+		}
+		tab, _ := pane["tab_id"].(string)
+		seen[tab] = true
+	}
+	var out []string
+	for tab := range seen {
+		out = append(out, tab)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestHowAMachinesTerminalsAreLaidOutHere(t *testing.T) {
+	// A machine with three tabs open on it does not arrive as three tabs. The
+	// mirrors are placed by `placement`, which defaults to splitting, so the
+	// first opens a tab and the rest split it -- and because each one splits
+	// in as it appears, it looks like something gradually rearranged them.
+	//
+	// Both settings are held here because the difference between them is the
+	// whole of what somebody is asking about when they say their tabs turned
+	// into one tab, and neither is written down anywhere the code would notice
+	// if it changed.
+	for _, tt := range []struct {
+		placement string
+		wantTabs  int
+		what      string
+	}{
+		{"", 1, "the default splits them into one tab"},
+		{"split", 1, "and so does asking for that"},
+		{"tab", 3, "a tab each"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			here := withFakeHerdr(t)
+			there, statePath := withRemoteHerdr(t)
+
+			cfg := machineConfig("bot")
+			cfg.Hosts[0].Mode = "attach"
+			cfg.Hosts[0].Placement = tt.placement
+			d := New(cfg)
+			if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+				t.Fatalf("connect: %s", reply.Message)
+			}
+			settle(t, d, here, 3, there)
+
+			// Two more started on the machine, in the space the two ends share.
+			var shared string
+			for id := range there().Workspaces {
+				shared = id
+			}
+			addPaneOn(t, statePath, shared, "vim")
+			addPaneOn(t, statePath, shared, "top")
+			settle(t, d, here, 5, there)
+
+			if got := panesFor(here(), "bot"); got != 3 {
+				t.Fatalf("%d panes here, want the machine's 3 mirrored", got)
+			}
+			if got := tabsFor(here(), "bot"); len(got) != tt.wantTabs {
+				t.Errorf("three terminals on the machine are in %d tabs here (%v), want %d",
+					len(got), got, tt.wantTabs)
+			}
+		})
+	}
+}

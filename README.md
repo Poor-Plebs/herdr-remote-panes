@@ -167,6 +167,26 @@ other spaces.
 
 ## Things worth knowing
 
+**A machine's tabs are not tabs here.** Mirrored terminals are placed by
+`placement`, which defaults to `split`: the first opens a tab in the machine's
+space and every one after it splits that tab. So a machine you have three tabs
+open on arrives as one tab here with three panes in it, and it looks like it
+happened gradually because it does — each terminal splits in as it appears.
+
+The order is kept even though the shape is not: what is first there is first
+here. For a tab each instead:
+
+```json
+{
+  "placement": "tab",
+  "hosts": [{ "target": "workbox", "mode": "attach" }]
+}
+```
+
+`zoomed` gives a tab each as well, with the newest filling the space. Either can
+be set per machine with `hosts[].placement`, which is worth doing when only one
+of your machines has enough open on it to matter.
+
 **Closing a mirrored tab closes the terminal on the machine.** Mirroring is
 two-way, and closing is part of it: the tab goes here and the terminal goes
 there, with whatever was running in it. That is `close_propagates`, and it is
