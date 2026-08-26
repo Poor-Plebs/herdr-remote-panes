@@ -465,7 +465,10 @@ daemon             427e2ad
 ```
 
 The second line is the one that matters: that is the build reconciling your
-panes. It reads `not running` when nothing answers, which is itself an answer.
+panes. It reads `not running` when nothing answers, which is itself an answer,
+and `unknown` when a daemon answers but has no commit to name — what `go run`
+and a test binary look like. That is not the same as an old daemon, and the
+warning under it says so rather than guessing which of the two it is.
 
 **A keybinding does nothing.** First check the config itself is being read:
 
