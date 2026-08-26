@@ -2,6 +2,7 @@ package remote
 
 import (
 	"errors"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -227,5 +228,98 @@ func TestTheProbeLooksWhereHerdrIsActuallyInstalled(t *testing.T) {
 	// And PATH first, since that is right when it works.
 	if !strings.HasPrefix(probeScript, "command -v herdr") {
 		t.Errorf("the probe no longer tries the PATH first: %q", probeScript)
+	}
+}
+
+// The tests below go through Run rather than around it. The refusal case has
+// been held since it was fixed, but by building what Run builds -- if Run
+// stopped naming the machine, or stopped reading the envelope at all, that
+// test would have gone on passing. These make a machine answer instead.
+
+func TestARemoteRefusalArrivesWithItsCode(t *testing.T) {
+	// Herdr on the machine refuses the way it does here: non-zero, with the
+	// error envelope on stdout. "That pane is already gone" has to stay
+	// tellable from "that went wrong at the far end".
+	fakeSSH(t, `printf '%s\n' '{"error":{"code":"pane_not_found","message":"pane w1:p2 not found"}}'
+exit 1`)
+
+	_, err := NewWithBin("bot", "agents", "herdr").Run("pane", "close", "w1:p2")
+	if err == nil {
+		t.Fatal("a refusal from the machine came back as success")
+	}
+	if !herdrcli.IsNotFound(err) {
+		t.Errorf("the code did not survive the trip: %v", err)
+	}
+	if !strings.Contains(err.Error(), "bot") {
+		t.Errorf("the error does not name the machine it came from: %v", err)
+	}
+}
+
+func TestAFailureWithNoEnvelopeStillSaysWhatHappened(t *testing.T) {
+	// Not every failure is Herdr refusing. ssh itself fails this way, and what
+	// it printed is the only account of why.
+	fakeSSH(t, `echo "Permission denied (publickey)." >&2
+exit 255`)
+
+	_, err := NewWithBin("bot", "agents", "herdr").Run("pane", "list")
+	if err == nil {
+		t.Fatal("ssh failing came back as success")
+	}
+	if !strings.Contains(err.Error(), "Permission denied") {
+		t.Errorf("what ssh said was dropped: %v", err)
+	}
+	if !strings.Contains(err.Error(), "bot") {
+		t.Errorf("the error does not name the machine: %v", err)
+	}
+}
+
+func TestPaneListReadsWhatTheMachineAnswered(t *testing.T) {
+	fakeSSH(t, `printf '%s\n' '{"result":{"panes":[`+
+		`{"pane_id":"w1:p1","tab_id":"w1:t1","terminal_id":"term-1"},`+
+		`{"pane_id":"w1:p2","tab_id":"w1:t1","terminal_id":"term-2"}]}}'`)
+
+	panes, err := NewWithBin("bot", "agents", "herdr").PaneList()
+	if err != nil {
+		t.Fatalf("pane list: %v", err)
+	}
+	if len(panes) != 2 {
+		t.Fatalf("got %d panes, want 2: %+v", len(panes), panes)
+	}
+	if panes[0].PaneID != "w1:p1" || panes[1].TerminalID != "term-2" {
+		t.Errorf("the panes did not come through as sent: %+v", panes)
+	}
+}
+
+func TestTabOrderReadsTheNumbersTheMachineGave(t *testing.T) {
+	// Panes are mirrored in the order they appear on the machine, so these
+	// numbers decide the order of the panes on this side.
+	fakeSSH(t, `printf '%s\n' '{"result":{"tabs":[`+
+		`{"tab_id":"w1:t1","number":1},{"tab_id":"w1:t2","number":2}]}}'`)
+
+	order, err := NewWithBin("bot", "agents", "herdr").TabOrder()
+	if err != nil {
+		t.Fatalf("tab order: %v", err)
+	}
+	if order["w1:t1"] != 1 || order["w1:t2"] != 2 {
+		t.Errorf("the tab numbers did not come through: %v", order)
+	}
+}
+
+func TestPingFailsWhenTheSessionIsNotAnswering(t *testing.T) {
+	// Ping is a pane list that throws away the panes: reachable over ssh is
+	// not the same as having a Herdr session that answers.
+	fakeSSH(t, `printf '%s\n' '{"error":{"code":"no_session","message":"no session named agents"}}'
+exit 1`)
+
+	if err := NewWithBin("bot", "agents", "herdr").Ping(); err == nil {
+		t.Error("a machine whose session is not answering pinged clean")
+	}
+}
+
+func TestPingIsHappyWhenThePaneListComesBack(t *testing.T) {
+	fakeSSH(t, `printf '%s\n' '{"result":{"panes":[]}}'`)
+
+	if err := NewWithBin("bot", "agents", "herdr").Ping(); err != nil {
+		t.Errorf("a machine that answered failed its ping: %v", err)
 	}
 }
