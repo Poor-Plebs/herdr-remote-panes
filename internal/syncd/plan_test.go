@@ -1234,6 +1234,22 @@ func TestConfigWarningSaysWhichProblemItIs(t *testing.T) {
 	if !strings.Contains(got, "shh") {
 		t.Errorf("warning = %q, want the first problem still spelled out", got)
 	}
+
+	// And one problem is not counted at all. "1 problems" is wrong twice over
+	// -- it does not read, and there is nothing to go and list.
+	one := config.Defaults()
+	one.Mode = "shh"
+	one.Hosts = []config.Host{{Target: "bot"}}
+	got = withConfig(&Daemon{}, one).configWarning()
+	if !strings.Contains(got, "shh") {
+		t.Fatalf("warning = %q, want the one problem named", got)
+	}
+	if strings.Contains(got, "problems") {
+		t.Errorf("warning = %q, which counts a single problem", got)
+	}
+	if strings.Contains(got, "status") {
+		t.Errorf("warning = %q, which offers to list one problem", got)
+	}
 }
 
 // withConfig sets a daemon's configuration. It is held atomically rather than
