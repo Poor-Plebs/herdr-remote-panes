@@ -3175,3 +3175,55 @@ func TestAMirrorThatOpensForgetsWhatItTook(t *testing.T) {
 		t.Error("a mirror that opened is still being waited on before the next try")
 	}
 }
+
+func TestAnAgentIsReleasedOnceAndNotOnEveryPassAfter(t *testing.T) {
+	// An agent that finishes on the machine has to be taken off the sidebar
+	// here, and the pane is remembered as no longer having one so that it is
+	// not taken off again. Forget to remember it and the release is repeated
+	// for as long as the pane lives: a call to Herdr per pane per poll, for a
+	// pane whose agent went hours ago.
+	//
+	// The failure is the other way round and matters more: if a release that
+	// did not work were remembered as done, an agent that has finished would
+	// sit in the sidebar for ever, and the record here is the only thing that
+	// would try again.
+	here := withFakeHerdr(t)
+	there, machineState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.Scope = "all"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	paneThere := addAgentPaneOn(t, machineState, "w-theirs", "shell", "claude", "working")
+	settle(t, d, here, 3, there)
+	if name, _ := agentHere(t, here()); name != "claude" {
+		t.Fatalf("the agent shows here as %q, want claude", name)
+	}
+
+	clearAgentOn(t, machineState, paneThere)
+	settle(t, d, here, 3, there)
+
+	if name, _ := agentHere(t, here()); name != "" {
+		t.Errorf("the agent finished on the machine and still shows here as %q", name)
+	}
+	released := held(here(), "pane release-agent")
+	if released == 0 {
+		t.Fatal("the agent was never released, so this checks nothing")
+	}
+
+	settle(t, d, here, 4, there)
+	if got := held(here(), "pane release-agent"); got != released {
+		t.Errorf("releasing was repeated %d more times over four passes; once it is "+
+			"done it is done", got-released)
+	}
+}
+
+// held is how many times Herdr was asked to do something.
+func held(state fakeHerdr, call string) int {
+	return state.Calls[call]
+}
