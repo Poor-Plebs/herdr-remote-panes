@@ -504,3 +504,56 @@ func TestEverySSHCommandPutsTheDestinationAfterADash(t *testing.T) {
 		}
 	}
 }
+
+func TestClosingUsesTheConnectionItIsClosing(t *testing.T) {
+	// Closing a shared connection is `ssh -O exit` against the control socket
+	// it was made on. Point it at a different path and ssh has nothing to
+	// close: it reports no such socket, the error is discarded -- there is
+	// nothing useful to do with it -- and the connection stays up until
+	// ControlPersist runs out, holding a session open on a machine somebody
+	// has disconnected from.
+	//
+	// So what matters is not that Close runs, but that it names the same
+	// socket every other call to that machine uses.
+	dir := t.TempDir()
+	log := filepath.Join(dir, "argv")
+	script := "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done >> " + log + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := NewWithBin("deploy@vm", "agents", "herdr")
+	client.Close()
+
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("Close ran no ssh at all: %v", err)
+	}
+	got := strings.Split(strings.TrimSpace(string(raw)), "\n")
+
+	// The control socket every other call to this machine uses.
+	want := ""
+	for i, arg := range client.SSHArgs(false) {
+		if arg == "-o" && i+1 < len(client.SSHArgs(false)) {
+			if path, found := strings.CutPrefix(client.SSHArgs(false)[i+1], "ControlPath="); found {
+				want = path
+			}
+		}
+	}
+	if want == "" {
+		t.Fatal("SSHArgs no longer names a ControlPath; this test is checking nothing")
+	}
+
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "ControlPath="+want) {
+		t.Errorf("Close is closing %q and the connection is on %q", joined, want)
+	}
+	if !strings.Contains(joined, "-O exit") {
+		t.Errorf("Close does not ask ssh to close anything: %v", got)
+	}
+	// And the destination is still an argument rather than an option.
+	if at := strings.Index(joined, "--"); at < 0 || !strings.Contains(joined[at:], "deploy@vm") {
+		t.Errorf("the machine is not passed after the separator: %v", got)
+	}
+}
