@@ -212,8 +212,41 @@ func TestASurvivorSaysWhyItIsLikelyToBeOne(t *testing.T) {
 		// line has, and that is the more useful thing to say.
 		{"both at once", mutation{source: "if err != nil {", clamp: true}, classErrorBranch},
 	} {
-		if got := survivorClass(tt.m); got != tt.want {
+		if got := survivorClass(tt.m, nil); got != tt.want {
 			t.Errorf("%s: survivorClass = %q, want %q", tt.what, got, tt.want)
 		}
+	}
+}
+
+func TestASurvivorReadBeforeIsNotRaisedAgain(t *testing.T) {
+	// Every sweep of a package this size turns up the same dozen equivalents.
+	// Reading them again costs more than the sweep does, and a judgement kept
+	// only in a commit message is one nobody finds.
+	m := mutation{file: "internal/syncd/plan.go", old: "<", new: "<=", source: "\t\treturn na < nb"}
+	read := map[string]bool{triageKey(m): true}
+
+	if got := survivorClass(m, read); got != classRead {
+		t.Errorf("a survivor already read came back as %q, want %q", got, classRead)
+	}
+	// Being in the record says nothing about the others.
+	other := mutation{file: "internal/syncd/plan.go", old: "<", new: "<=", source: "\t\treturn a.PaneID < b.PaneID"}
+	if got := survivorClass(other, read); got != "" {
+		t.Errorf("a survivor not in the record came back as %q, want a decision", got)
+	}
+
+	// The line as written is part of what was judged. Edit it and the
+	// judgement no longer applies, because it was about the line that was
+	// there -- which is the whole reason this is not keyed by line number.
+	edited := m
+	edited.source = "\t\treturn na <= nb // reordered"
+	if got := survivorClass(edited, read); got != "" {
+		t.Errorf("an edited line kept its old judgement (%q)", got)
+	}
+	// Whitespace is not an edit, though: gofmt moves it and nobody decided
+	// anything different.
+	spaced := m
+	spaced.source = "    return na < nb   "
+	if got := survivorClass(spaced, read); got != classRead {
+		t.Errorf("the same line differently indented came back as %q, want %q", got, classRead)
 	}
 }

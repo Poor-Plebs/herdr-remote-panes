@@ -1,0 +1,48 @@
+# Survivors already read and left, and why.
+#
+# A mutation nothing catches is not necessarily a gap: it can be equivalent,
+# or on a line nothing can reach. Those judgements were costing an afternoon
+# each time a sweep was run, and living only in commit messages.
+#
+# file<TAB>change<TAB>the line as written. Not the line number, which moves.
+# Edit the line and the entry stops matching, which is right: what was
+# judged was the line that was there.
+
+# the guard on the line above excludes equality, so both spellings agree
+internal/syncd/plan.go	< -> <=	return na < nb
+
+# pane ids are unique, so two panes are never equal here
+internal/syncd/plan.go	< -> <=	return a.PaneID < b.PaneID
+
+# checked against every layout from 0-30 machines by 1-40 rows: identical
+internal/picker/picker.go	|| -> &&	if visible < 1 || visible <= best {
+
+# checked against every layout from 0-30 machines by 1-40 rows: identical
+internal/picker/picker.go	<= -> <	if visible < 1 || visible <= best {
+
+# at the boundary the branch assigns the value already there
+internal/picker/picker.go	> -> >=	if first+visible > count {
+
+# the list is built configured-first, so there is nothing here to reorder
+internal/picker/picker.go	! ->	return entries[i].Configured && !entries[j].Configured
+
+# Truncate returns the string unchanged when it fits, so this only adds a no-op call
+internal/picker/picker.go	> -> >=	if len(spans) == 1 && text.Width(spans[0].text) > room {
+
+# at the boundary both spellings return the same width
+internal/picker/picker.go	< -> <=	if widest+gutter < limit {
+
+# one byte either side of a bound on runaway input; nothing downstream can tell
+internal/picker/picker.go	< -> <=	for i := 0; i < maxPasteBytes; i++ {
+
+# one parameter either side of a bound on a sequence that is already malformed
+internal/picker/picker.go	>= -> >	if i >= maxEscapeParams {
+# at the boundary the slice is the whole string, so both spellings agree
+internal/mirror/liveness.go	> -> >=	if len(reason) > maxFailureReason {
+
+# at the boundary the slice is the whole buffer, so both spellings agree
+internal/mirror/mirror.go	> -> >=	if len(t.seen) > t.max {
+
+# unreachable: Wait returns nil on a zero exit, so the code here is never 0
+internal/mirror/mirror.go	> -> >=	if code := exitStatus(err); code > 0 && code != sshOwnFailure {
+

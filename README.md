@@ -544,6 +544,14 @@ screen they are most of the rest.
 Only covered lines are tried, since a change to a line nothing runs survives by
 definition.
 
+Survivors already read and decided against are recorded in
+`tools/mutants/read.tsv`, with a line each saying why, and marked in the report
+rather than raised again. A sweep of a package this size turns up the same dozen
+equivalents every time, and reading them again costs more than the sweep does.
+They are keyed by the line as written rather than by its number: edit the line
+and the entry stops matching, which is right, because what was judged was the
+line that was there.
+
 It works on a copy under the temp directory, so an interrupted run cannot leave
 a mutation in your tree, and it is not part of `make check`: it runs the tests
 once per mutation, so it is minutes rather than seconds.

@@ -83,6 +83,10 @@ func main() {
 	defer os.RemoveAll(work)
 	check(copyTree(root, work))
 
+	// Beside the tool rather than beside the package: one record for the whole
+	// tree, since a survivor is identified by its file anyway.
+	read := readSurvivors(filepath.Join(root, "tools", "mutants", "read.tsv"))
+
 	covered, err := coveredLines(work, pkg)
 	check(err)
 
@@ -110,7 +114,7 @@ func main() {
 		case "survived":
 			survived = append(survived, m)
 			why := ""
-			if class := survivorClass(m); class != "" {
+			if class := survivorClass(m, read); class != "" {
 				why = "  -- " + class
 			}
 			fmt.Printf("SURVIVED  %s:%d:%d  %s -> %s%s\n%s\n",
@@ -139,17 +143,22 @@ func main() {
 	// about the decision on that line -- and on a package that talks to
 	// something else for a living they are most of the list. Separating them
 	// is the difference between a report worth reading and a wall.
-	onErrors, onClamps := 0, 0
+	onErrors, onClamps, onRead := 0, 0, 0
 	for _, m := range survived {
-		switch survivorClass(m) {
+		switch survivorClass(m, read) {
 		case classErrorBranch:
 			onErrors++
 		case classBound:
 			onClamps++
+		case classRead:
+			onRead++
 		}
 	}
-	if note := survivorNote(onErrors, onClamps, len(survived)-onErrors-onClamps); note != "" {
+	if note := survivorNote(onErrors, onClamps, len(survived)-onErrors-onClamps-onRead); note != "" {
 		fmt.Println(note)
+	}
+	if onRead > 0 {
+		fmt.Printf("%d were read before and left; tools/mutants/read.tsv says why.\n", onRead)
 	}
 	fmt.Println("\nA survivor is a change nothing would have failed on. Read each one and" +
 		"\ndecide which it is: equivalent, unreachable, or untested.")
@@ -446,25 +455,63 @@ func survivorNote(onErrors, onClamps, rest int) string {
 	return strings.Join(clauses, ";\n") + "."
 }
 
-// The reasons a survivor is likely to be one without anything being wrong. Both
+// The reasons a survivor is likely to be one without anything being wrong. They
 // are named rather than spelled out twice, because the listing and the count
 // below it are read together and a listing that disagrees with its own summary
 // is worse than one that says nothing.
 const (
 	classErrorBranch = "an error branch"
 	classBound       = "a bound held to itself"
+	classRead        = "read before and left"
 )
 
 // survivorClass says why a survivor is likely to be one, or "" for a decision
 // with nothing holding it -- which is the only kind worth reading closely.
-func survivorClass(m mutation) string {
+func survivorClass(m mutation, read map[string]bool) string {
 	switch {
+	case read[triageKey(m)]:
+		return classRead
 	case isErrorBranch(m.source):
 		return classErrorBranch
 	case m.clamp:
 		return classBound
 	}
 	return ""
+}
+
+// triageKey identifies a survivor across runs.
+//
+// Not by line number, which moves whenever anything above it does. By the file,
+// the change, and the line as written: if the line is edited the key stops
+// matching, which is right -- the judgement was about the line that was there.
+func triageKey(m mutation) string {
+	return strings.Join([]string{m.file, m.old + " -> " + m.new, strings.TrimSpace(m.source)}, "\t")
+}
+
+// readSurvivors loads the survivors somebody has already read and decided to
+// leave, so a sweep says what is new rather than repeating a list that was
+// worked through weeks ago.
+//
+// Every sweep of a package this size turns up the same dozen equivalents, and
+// reading them again costs more than the sweep does. A judgement kept only in a
+// commit message is one nobody finds.
+func readSurvivors(path string) map[string]bool {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	read := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) != 3 {
+			continue
+		}
+		read[strings.Join([]string{parts[0], parts[1], strings.TrimSpace(parts[2])}, "\t")] = true
+	}
+	return read
 }
 
 // isClamp reports whether an if-statement holds a value to a bound, in the shape
