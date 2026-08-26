@@ -337,6 +337,29 @@ func TestPlanLostPane(t *testing.T) {
 	}
 }
 
+func TestPlanShellsToRestore(t *testing.T) {
+	// What a machine is left with when the way it is reached changes under it
+	// -- pressing m on a connected machine, most of the time. Its mirrors
+	// cannot be kept up in SSH mode and have just been closed, so without this
+	// its space is emptied and the machine looks disconnected.
+	for _, tt := range []struct {
+		what     string
+		hadPanes bool
+		saved    int
+		want     int
+	}{
+		{"a machine whose panes were just closed gets one back", true, 0, 1},
+		{"a count saved before a restart is what it had", true, 3, 3},
+		{"a machine with nothing open gains nothing", false, 0, 0},
+		{"and a saved count survives with no panes to close", false, 2, 2},
+	} {
+		if got := planShellsToRestore(tt.hadPanes, tt.saved); got != tt.want {
+			t.Errorf("%s: had panes %v with %d saved gives %d, want %d",
+				tt.what, tt.hadPanes, tt.saved, got, tt.want)
+		}
+	}
+}
+
 func TestPlanRestoreShell(t *testing.T) {
 	// A plain SSH machine has nothing to discover, so after a Herdr restart it
 	// was simply missing from the sidebar with no way back but reconnecting.

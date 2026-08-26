@@ -1822,9 +1822,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 			}
 			// A machine that had panes should not vanish because the way it is
 			// reached changed; give it a terminal in the new style instead.
-			if hadPanes && state.restoreShells == 0 {
-				state.restoreShells = 1
-			}
+			state.restoreShells = planShellsToRestore(hadPanes, state.restoreShells)
 
 			if state.restoreShells > 0 {
 				workspaceID, wsErr := d.ensureWorkspace(state, index)

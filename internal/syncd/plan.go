@@ -292,6 +292,27 @@ func planLostPaneAction(consecutiveFailures int, reason string) lostPaneAction {
 	return reopenPane
 }
 
+// planShellsToRestore is how many plain SSH terminals a machine should end up
+// with when the way it is reached has just changed.
+//
+// A machine that had panes should not vanish because it stopped being
+// mirrored: one terminal in the new style, so its space still has something in
+// it. A count already saved from before a restart is what the machine actually
+// had, and is kept -- coming back with one terminal where three were open is
+// the same disappearance in smaller print, which is the bug planRestoreShell
+// below was written for.
+//
+// Here rather than inline in the reconcile loop, because inline it could be
+// turned inside out -- giving nothing to a machine whose panes had just been
+// closed, or cutting a saved count of three down to one -- with nothing in the
+// suite minding either.
+func planShellsToRestore(hadPanes bool, saved int) int {
+	if hadPanes && saved == 0 {
+		return 1
+	}
+	return saved
+}
+
 // planRestoreShell decides whether another plain SSH terminal should be opened
 // to bring a machine back to what it had before a restart.
 //
