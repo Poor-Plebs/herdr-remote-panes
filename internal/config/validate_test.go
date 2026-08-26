@@ -1224,3 +1224,47 @@ func TestWhatWasFoundIsNamedTheSameWay(t *testing.T) {
 		}
 	}
 }
+
+func TestACapThatIsNotACapSaysSo(t *testing.T) {
+	// Zero or less is not a cap, so the default goes back in its place. Done
+	// in silence, somebody who wrote 0 meaning "no limit" meets "at the mirror
+	// limit — raise max_mirrors" with a file in front of them that says 0.
+	for _, tt := range []struct {
+		what, body string
+		wantSaid   bool
+	}{
+		{"zero", `{"max_mirrors":0,"hosts":[{"target":"bot"}]}`, true},
+		{"negative", `{"max_mirrors":-1,"hosts":[{"target":"bot"}]}`, true},
+		// Not written at all is not a mistake, and is the usual case: an
+		// absent setting and one written as 0 are the same zero in the struct,
+		// which is why this is read from the file.
+		{"absent", `{"hosts":[{"target":"bot"}]}`, false},
+		{"a real cap", `{"max_mirrors":4,"hosts":[{"target":"bot"}]}`, false},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			said := false
+			for _, problem := range cfg.Problems() {
+				if strings.Contains(problem, "max_mirrors") {
+					said = true
+				}
+			}
+			if said != tt.wantSaid {
+				t.Errorf("%s: said %v, want %v; problems were %v", tt.what, said, tt.wantSaid, cfg.Problems())
+			}
+			// Whatever was written, the cap in force is a usable one.
+			if cfg.MaxMirrors <= 0 {
+				t.Errorf("the cap in force is %d", cfg.MaxMirrors)
+			}
+		})
+	}
+}

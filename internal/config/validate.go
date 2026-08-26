@@ -39,6 +39,7 @@ func (c Config) Problems() []string {
 			"workspace_format %q has no {host}, so every machine will share one space", c.WorkspaceFormat))
 	}
 
+	problems = append(problems, c.ignored...)
 	for _, name := range c.unknown {
 		problems = append(problems, fmt.Sprintf(
 			"%q is not a setting and is being ignored", name))

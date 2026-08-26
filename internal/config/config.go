@@ -87,6 +87,11 @@ func (h Host) DisplayLabel() string {
 
 // Config is the whole plugin configuration.
 type Config struct {
+	// ignored holds settings written with a value that cannot be used, and so
+	// was replaced by the default. Kept for the same reason as unknown below:
+	// silently substituting a value leaves the file saying one thing and the
+	// plugin doing another, with nothing to look at.
+	ignored []string
 	// unknown holds settings read from the file that mean nothing here. Not a
 	// setting itself, so it is neither read from nor written back to JSON.
 	unknown []string
@@ -222,6 +227,7 @@ func Load() (Config, error) {
 	}
 	cfg = cfg.normalized()
 	cfg.unknown = unknownKeys(raw)
+	cfg.ignored = ignoredValues(raw)
 	return cfg, nil
 }
 
@@ -379,6 +385,34 @@ func plainValue(found string) string {
 	}
 }
 
+// ignoredValues lists settings written with a value this cannot use.
+//
+// A cap of zero or less is not a cap, so normalizing puts the default back --
+// and somebody who wrote 0 meaning "no limit" then meets "at the mirror limit,
+// raise max_mirrors" with a file in front of them that already says 0. The
+// substitution is right; doing it in silence is not.
+//
+// Read from the raw file because by the time anything can ask, the value has
+// already been replaced: an absent setting and one written as 0 are the same
+// zero in the struct.
+func ignoredValues(raw []byte) []string {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return nil
+	}
+	written, ok := top["max_mirrors"]
+	if !ok {
+		return nil
+	}
+	var cap int
+	if json.Unmarshal(written, &cap) != nil || cap > 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"max_mirrors is %d, which is not a cap on anything; mirroring stays capped at %d",
+		cap, Defaults().MaxMirrors)}
+}
+
 // unknownKeys lists settings in the file that mean nothing here.
 //
 // Anything not recognised is dropped in silence by the decoder, so a setting
@@ -484,6 +518,7 @@ func loadRaw() (Config, error) {
 	// and the warning about them vanished until Herdr was restarted -- with the
 	// file unchanged and still wrong.
 	cfg.unknown = unknownKeys(raw)
+	cfg.ignored = ignoredValues(raw)
 	return cfg, nil
 }
 

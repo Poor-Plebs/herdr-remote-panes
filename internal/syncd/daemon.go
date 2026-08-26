@@ -781,8 +781,12 @@ func (d *Daemon) findRemoteWorkspace(state *hostSync) (bool, error) {
 	for _, ws := range workspaces {
 		if ws.Label == label || sameWorkspace(ws.Label, config.HubName()) {
 			if duplicates > 1 && !state.duplicateSpaces {
+				// Not "give this machine its own": remote_workspace_format is
+				// one setting for every machine, so advice to set it per
+				// machine sends somebody looking for a key that is not there.
 				log.Printf("%s: %d spaces there are called %q; using %s. "+
-					"Rename the others, or give this machine its own remote_workspace_format",
+					"Rename the others there, or change remote_workspace_format, "+
+					"which names this space on every machine you connect to",
 					state.host.Target, duplicates, label, ws.WorkspaceID)
 			}
 			state.duplicateSpaces = duplicates > 1
