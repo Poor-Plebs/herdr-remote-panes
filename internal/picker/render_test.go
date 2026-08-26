@@ -1521,3 +1521,60 @@ func TestSayingWhatIsLeftOutCostsNoNameColumn(t *testing.T) {
 		t.Errorf("the name column at 80 columns is %d, want 33", got)
 	}
 }
+
+func TestWhenTurningMirroringOnAsksFirst(t *testing.T) {
+	// The two directions are not alike. Turning it off drops the panes here
+	// and leaves the work on the machine; turning it on closes plain SSH
+	// terminals, and a plain SSH terminal's shell goes when its pane does,
+	// with whatever was running in it.
+	//
+	// So it asks only where there is something to lose. Asking every time
+	// would put a keypress in front of the harmless direction as well, and a
+	// question people answer without reading is not a safeguard.
+	for _, tt := range []struct {
+		what  string
+		entry Entry
+		mode  string
+		asks  bool
+	}{
+		{"turning it on with terminals open", Entry{Target: "bot", Connected: true, Terminals: 3}, "attach", true},
+		{"and with one", Entry{Target: "bot", Connected: true, Terminals: 1}, "attach", true},
+
+		// Nothing to lose in any of these.
+		{"turning it on with nothing open", Entry{Target: "bot", Connected: true}, "attach", false},
+		{"turning it off", Entry{Target: "bot", Connected: true, Mirroring: true, Mirrors: 3}, "ssh", false},
+		{"a machine not connected", Entry{Target: "bot", Configured: true}, "attach", false},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			if got := worthAskingBeforeToggle(tt.entry, tt.mode); got != tt.asks {
+				t.Errorf("asks = %v, want %v", got, tt.asks)
+			}
+			// And the ones that cost nothing go straight through, rather than
+			// waiting on a key there is no terminal to press.
+			if !tt.asks && !confirmToggle(tt.entry, tt.mode) {
+				t.Error("refused a toggle that costs nothing")
+			}
+		})
+	}
+}
+
+func TestWhatTheToggleQuestionSays(t *testing.T) {
+	// It has to say what will happen and what it will cost, or it is a
+	// keypress people learn to dismiss.
+	drawn := visible(renderNotice(76, "Turn mirroring on for bot?",
+		"Mirroring works differently, so its 3 terminals here are closed and the "+
+			"machine is connected again. They are plain SSH sessions, so whatever is "+
+			"running in them goes with them.",
+		"m to go ahead, any other key to leave it alone."))
+
+	for _, want := range []string{"3 terminals", "closed", "running in them", "m to go ahead"} {
+		if !strings.Contains(drawn, want) {
+			t.Errorf("the question does not say %q:\n%s", want, drawn)
+		}
+	}
+	for _, line := range strings.Split(drawn, "\r\n") {
+		if w := text.Width(line); w > 76 {
+			t.Errorf("a line is %d columns wide: %q", w, line)
+		}
+	}
+}

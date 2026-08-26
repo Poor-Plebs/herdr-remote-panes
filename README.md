@@ -227,6 +227,10 @@ rather than in the pane, so it is still running and the mirror simply finds it
 again.
 
 **Turning mirroring on or off leaves you with one terminal, whatever you had.**
+The menu asks first when that costs something — turning it *on* closes plain
+SSH terminals, and a plain SSH terminal's shell goes when its pane does. Turning
+it off costs nothing to check, because the work is on the machine.
+
 The two modes are nothing alike underneath, so the machine's panes here are
 dropped and it is connected again in the new way — and connecting to a machine
 opens a terminal, the same as picking it from the menu does. What that costs

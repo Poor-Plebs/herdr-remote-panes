@@ -118,6 +118,9 @@ func Run(connect Connect, setMode SetMode, disconnect Disconnect) error {
 			if entry.Mirroring {
 				mode = "ssh"
 			}
+			if !confirmToggle(entry, mode) {
+				break
+			}
 			if _, err := setMode(entry.Target, mode); err != nil {
 				notice("Could not change "+entry.Target,
 					err.Error(), "Press any key.")
@@ -251,6 +254,42 @@ func planSelectionAfterChange(selected, count int) int {
 		return 0
 	}
 	return selected
+}
+
+// worthAskingBeforeToggle reports whether this toggle costs anything.
+//
+// Apart from the asking so that it can be asked without a terminal to answer
+// on. Only turning mirroring on costs: it closes plain SSH terminals, whose
+// shells go when their panes do.
+func worthAskingBeforeToggle(entry Entry, mode string) bool {
+	return mode == "attach" && entry.Terminals > 0
+}
+
+// confirmToggle asks before a toggle that costs somebody their work.
+//
+// The two directions are not alike. Turning mirroring off drops the panes here
+// and leaves everything on the machine, so there is nothing to ask about.
+// Turning it on closes plain SSH terminals -- and a plain SSH terminal's shell
+// goes when its pane does, with whatever was running in it.
+//
+// So it asks only when there is something to lose, and with the same key, so
+// that meaning it costs one more press and not meaning it costs nothing. "m"
+// sits beside "d", which closes a machine's panes and leaves the work running:
+// the two keys are one apart and their consequences are not.
+func confirmToggle(entry Entry, mode string) bool {
+	if !worthAskingBeforeToggle(entry, mode) {
+		return true
+	}
+	terminals := fmt.Sprintf("%d terminals", entry.Terminals)
+	if entry.Terminals == 1 {
+		terminals = "1 terminal"
+	}
+	notice("Turn mirroring on for "+text.Sanitize(displayName(entry))+"?",
+		"Mirroring works differently, so its "+terminals+" here are closed and the "+
+			"machine is connected again. They are plain SSH sessions, so whatever is "+
+			"running in them goes with them.",
+		"m to go ahead, any other key to leave it alone.")
+	return readKey() == keyToggle
 }
 
 // noMachinesNotice is what a fresh installation draws: nothing in the plugin's
