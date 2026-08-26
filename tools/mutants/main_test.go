@@ -337,9 +337,30 @@ func TestEveryTriagedLineIsStillInTheTree(t *testing.T) {
 			}
 			sources[file] = string(body)
 		}
-		if source := strings.TrimSpace(parts[2]); source != "" && !strings.Contains(sources[file], source) {
-			t.Errorf("read.tsv:%d was decided about a line %s no longer has:\n  %s",
-				n+1, file, source)
+		source := strings.TrimSpace(parts[2])
+		if source == "" {
+			continue
+		}
+		// Exactly one, not merely at least one. A survivor is keyed by the
+		// line as written, so two identical lines in a file share a key and
+		// one judgement silences both -- and they are not always the same
+		// decision. "if state.restoreShells > 0" appears twice in daemon.go:
+		// on one of them a count of zero means there is nothing to do, and on
+		// the other it means creating a workspace and closing husks for a
+		// machine that needs neither. Recording either would hide the other.
+		matches := 0
+		for _, line := range strings.Split(sources[file], "\n") {
+			if strings.TrimSpace(line) == source {
+				matches++
+			}
+		}
+		switch matches {
+		case 1:
+		case 0:
+			t.Errorf("read.tsv:%d was decided about a line %s no longer has:\n  %s", n+1, file, source)
+		default:
+			t.Errorf("read.tsv:%d matches %d lines in %s, so it settles more than it was written about:\n  %s",
+				n+1, matches, file, source)
 		}
 	}
 }
