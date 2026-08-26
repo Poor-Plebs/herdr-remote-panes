@@ -5,6 +5,7 @@ import (
 
 	"fmt"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -1380,5 +1381,102 @@ func TestAConfigProblemIsSaidEvenWithNoMachinesToSayItAbout(t *testing.T) {
 	}
 	if !strings.Contains(joined, "any key") {
 		t.Errorf("the way out went missing once there was a warning: %q", joined)
+	}
+}
+
+// withStty puts an stty on PATH that records how it was called and succeeds or
+// fails as asked. It hands back what has been asked of it so far.
+func withStty(t *testing.T, works bool) func() []string {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "asked")
+	status := 0
+	if !works {
+		status = 1
+	}
+	script := fmt.Sprintf("#!/bin/sh\necho \"$@\" >> %s\nexit %d\n", log, status)
+	if err := os.WriteFile(filepath.Join(dir, "stty"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	return func() []string {
+		raw, err := os.ReadFile(log)
+		if err != nil {
+			return nil
+		}
+		return strings.Split(strings.TrimSpace(string(raw)), "\n")
+	}
+}
+
+// captureStdout runs something that prints to the process's own stdout and
+// hands back what it wrote. The menu's terminal control is written there
+// directly, which is the only place it could be written.
+func captureStdout(t *testing.T, run func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := os.Stdout
+	os.Stdout = w
+	run()
+	os.Stdout = real
+	w.Close()
+	printed, _ := io.ReadAll(r)
+	return string(printed)
+}
+
+func TestTheTerminalIsPutBackWhenTheMenuCloses(t *testing.T) {
+	// The menu puts the terminal into raw mode to read single keys, and has to
+	// put it back: left raw, the shell underneath echoes nothing and reads
+	// nothing line by line, so what somebody is left with after picking a
+	// machine is a terminal that appears to have stopped working.
+	asked := withStty(t, true)
+
+	var restore func()
+	printed := captureStdout(t, func() { restore = rawMode() })
+
+	if got := asked(); len(got) != 1 || !strings.Contains(got[0], "raw") {
+		t.Errorf("stty was asked %v, want raw mode once", got)
+	}
+	// Pastes arrive wrapped in markers so they can be told from typing --
+	// without which pasting "prod" presses p, r, o and d, and d disconnects
+	// the machine under the cursor.
+	if !strings.Contains(printed, "[?2004h") {
+		t.Errorf("bracketed paste was not turned on: %q", printed)
+	}
+
+	printed = captureStdout(t, restore)
+
+	if got := asked(); len(got) != 2 || !strings.Contains(got[1], "sane") {
+		t.Errorf("stty was asked %v, want the terminal put back", got)
+	}
+	if !strings.Contains(printed, "[?2004l") {
+		t.Errorf("bracketed paste was left on: %q", printed)
+	}
+}
+
+func TestATerminalThatWillNotGoRawIsLeftAlone(t *testing.T) {
+	// stty failing means this is not a terminal that can be driven -- output
+	// redirected, or no tty at all. Turning bracketed paste on anyway would
+	// leave whatever is reading this with paste markers in its input and
+	// nothing to turn them off, since there is no working restore to do it.
+	asked := withStty(t, false)
+
+	var restore func()
+	printed := captureStdout(t, func() { restore = rawMode() })
+
+	if strings.Contains(printed, "[?2004") {
+		t.Errorf("a terminal that would not go raw was sent paste markers: %q", printed)
+	}
+	printed = captureStdout(t, restore)
+	if printed != "" {
+		t.Errorf("restoring a terminal that was never changed wrote %q", printed)
+	}
+	for _, line := range asked() {
+		if strings.Contains(line, "sane") {
+			t.Errorf("stty was asked to put back a terminal it never changed: %v", asked())
+		}
 	}
 }
