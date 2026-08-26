@@ -123,6 +123,15 @@ func statusLines(hosts []syncd.HostInfo, width int) []string {
 		if h.AtCapacity && r.state == "ok" {
 			r.state = "at the mirror limit — raise max_mirrors to mirror the rest"
 		}
+		// Terminals in the machine's own spaces, which the default scope does
+		// not mirror. Not a failure — it is the setting doing what it says —
+		// but from here it looks the same as one: you turn mirroring on, you
+		// had four terminals there, and one arrives.
+		if h.OutsideShared > 0 && r.state == "ok" {
+			r.state = fmt.Sprintf(
+				"%d more in other spaces on the machine — set scope to \"all\" to mirror those too",
+				h.OutsideShared)
+		}
 		// Terminals the machine has that this could not mirror. Left out, the
 		// count simply reads lower than what is on the machine, with nothing
 		// at all to say why.

@@ -2868,3 +2868,77 @@ func TestASteadyPassAsksAMachineTwoThings(t *testing.T) {
 		}
 	}
 }
+
+func TestTerminalsAlreadyOpenOnAMachineAreCounted(t *testing.T) {
+	// Turning mirroring on for a machine somebody already works on: their
+	// terminals are in spaces of their own there, and the default scope
+	// mirrors only the space this plugin made. So one arrives and three do
+	// not, which is the setting doing what it says and looks exactly like
+	// three that failed.
+	//
+	// Nothing is mirrored differently by this. What changes is that the
+	// machine can say how many it is leaving alone, and which setting decides.
+	here := withFakeHerdr(t)
+	there, statePath := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+
+	addPaneOn(t, statePath, "their-work", "vim")
+	addPaneOn(t, statePath, "their-work", "top")
+	addPaneOn(t, statePath, "another", "tail -f")
+	settle(t, d, here, 4, there)
+
+	status := d.status()
+	if len(status) != 1 {
+		t.Fatalf("want one machine, got %d", len(status))
+	}
+	if status[0].OutsideShared != 3 {
+		t.Errorf("the machine has three terminals of its own and reports %d outside the shared space",
+			status[0].OutsideShared)
+	}
+	// Still mirroring what it was mirroring: this counts, it does not collect.
+	if status[0].Mirrors != 1 {
+		t.Errorf("%d mirrors, want the one in the shared space", status[0].Mirrors)
+	}
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Errorf("%d panes here, want 1: counting what is left out must not mirror it", got)
+	}
+}
+
+func TestWithScopeAllNothingIsLeftOut(t *testing.T) {
+	// The other setting: everything on the machine is mirrored, so there is
+	// nothing outside the scope to report and saying so on every machine
+	// forever would be noise.
+	here := withFakeHerdr(t)
+	there, statePath := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.Scope = config.ScopeAll
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+
+	addPaneOn(t, statePath, "their-work", "vim")
+	settle(t, d, here, 4, there)
+
+	status := d.status()
+	if len(status) != 1 {
+		t.Fatalf("want one machine, got %d", len(status))
+	}
+	if status[0].OutsideShared != 0 {
+		t.Errorf("scope all left %d terminals out, and it leaves none out",
+			status[0].OutsideShared)
+	}
+	if status[0].Mirrors < 2 {
+		t.Errorf("scope all mirrors %d, want the machine's own terminal as well", status[0].Mirrors)
+	}
+}

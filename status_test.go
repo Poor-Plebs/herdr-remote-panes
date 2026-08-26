@@ -516,6 +516,7 @@ func TestEveryStateAMachineCanBeInIsInTheREADME(t *testing.T) {
 		{syncd.HostInfo{NoHerdr: true}, "no herdr found on the machine"},
 		{syncd.HostInfo{SharedName: true}, "more than one space"},
 		{syncd.HostInfo{AtCapacity: true}, "at the mirror limit"},
+		{syncd.HostInfo{OutsideShared: 3}, "other spaces on the machine"},
 		{syncd.HostInfo{Unmirrored: 2}, "could not be mirrored"},
 		{syncd.HostInfo{GaveUp: true, LastError: "connection refused"}, "unreachable, not retrying"},
 	} {
@@ -603,5 +604,44 @@ func TestWithNoMachinesTheAnswerSaysWhatToDo(t *testing.T) {
 	if strings.Contains(busy, "open the menu") {
 		t.Errorf("the summary %q tells somebody to go and connect something "+
 			"while listing what is already connected", busy)
+	}
+}
+
+func TestStatusSaysWhatTheScopeIsLeavingOut(t *testing.T) {
+	// The default scope mirrors the space this plugin made on the machine and
+	// nothing else. Somebody who already had terminals open there turns
+	// mirroring on and gets one — the setting doing exactly what it says, and
+	// from here indistinguishable from terminals that failed to arrive.
+	lines := statusLines([]syncd.HostInfo{
+		{Target: "bot", Label: "bot", Connected: true, Mirrors: 1, OutsideShared: 3},
+	}, 0)
+	if len(lines) != 1 {
+		t.Fatalf("want one line, got %d: %v", len(lines), lines)
+	}
+	for _, want := range []string{"3 more", "other spaces", "scope"} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("the line does not mention %q: %q", want, lines[0])
+		}
+	}
+	// It is not a failure and must not read as one: the machine is working,
+	// and connecting again would change nothing.
+	for _, wrong := range []string{"error", "unreachable", "could not"} {
+		if strings.Contains(lines[0], wrong) {
+			t.Errorf("a machine doing what it was told reads as broken: %q", lines[0])
+		}
+	}
+}
+
+func TestAMachineWithNothingLeftOutSaysNothing(t *testing.T) {
+	// Scope "all", or a machine whose terminals are all in the shared space.
+	// A line about none of them would appear on every machine forever.
+	lines := statusLines([]syncd.HostInfo{
+		{Target: "bot", Label: "bot", Connected: true, Mirrors: 4},
+	}, 0)
+	if len(lines) != 1 {
+		t.Fatalf("want one line, got %d: %v", len(lines), lines)
+	}
+	if strings.Contains(lines[0], "scope") {
+		t.Errorf("a machine with nothing left out mentions scope: %q", lines[0])
 	}
 }

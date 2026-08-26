@@ -149,6 +149,11 @@ type hostSync struct {
 	// machine with fewer terminals than it has -- and the number is a setting,
 	// so somebody can do something about it if they are told.
 	atCapacity bool
+	// outsideShared is how many terminals the machine has in spaces of its own,
+	// which the default scope does not mirror. Not a failure -- it is the
+	// setting doing what it says -- but indistinguishable from one without
+	// being told.
+	outsideShared int
 	// duplicateSpaces is more than one space on the machine answering to the
 	// name this machine's terminals live under.
 	duplicateSpaces bool
@@ -1482,18 +1487,19 @@ func (d *Daemon) status() []HostInfo {
 	out := make([]HostInfo, 0, len(d.hosts))
 	for _, state := range d.orderedHosts() {
 		info := HostInfo{
-			Target:     state.host.Target,
-			Label:      state.host.DisplayLabel(),
-			Connected:  state.lastErr == nil,
-			Mirrors:    len(state.mirrors),
-			SSHOnly:    state.sshOnly,
-			NoHerdr:    state.noHerdr,
-			AtCapacity: state.atCapacity,
-			SharedName: state.duplicateSpaces,
-			Terminals:  len(state.shellPanes),
-			Mirroring:  d.config().Mirrors(state.host),
-			GaveUp:     state.gaveUp,
-			Unmirrored: len(state.abandoned),
+			Target:        state.host.Target,
+			Label:         state.host.DisplayLabel(),
+			Connected:     state.lastErr == nil,
+			Mirrors:       len(state.mirrors),
+			SSHOnly:       state.sshOnly,
+			NoHerdr:       state.noHerdr,
+			AtCapacity:    state.atCapacity,
+			OutsideShared: state.outsideShared,
+			SharedName:    state.duplicateSpaces,
+			Terminals:     len(state.shellPanes),
+			Mirroring:     d.config().Mirrors(state.host),
+			GaveUp:        state.gaveUp,
+			Unmirrored:    len(state.abandoned),
 		}
 		if state.lastErr != nil {
 			info.LastError = summarizeError(state.lastErr)
@@ -2016,7 +2022,14 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	if err != nil {
 		return err
 	}
-	remotePanes = planSharedPanes(remotePanes, sharedWorkspace, tabOrder, d.config().SharedOnly())
+	// What the scope leaves out, counted before it is dropped. With the
+	// default scope this mirrors the space it made on the machine and nothing
+	// else, so somebody who already had terminals open there turns mirroring
+	// on and sees one -- working exactly as designed, and looking exactly like
+	// a machine whose other terminals failed to arrive.
+	shared := planSharedPanes(remotePanes, sharedWorkspace, tabOrder, d.config().SharedOnly())
+	state.outsideShared = len(remotePanes) - len(shared)
+	remotePanes = shared
 
 	// Closing a mirrored tab closes the terminal on the machine too. Without
 	// this, mirroring is two-way for everything except closing: the tab goes

@@ -120,6 +120,9 @@ type HostInfo struct {
 	NoHerdr bool `json:"no_herdr,omitempty"`
 	// AtCapacity is a machine with more terminals than max_mirrors allows.
 	AtCapacity bool `json:"at_capacity,omitempty"`
+	// OutsideShared is how many terminals the machine has in spaces of its
+	// own, which the default scope of "shared" does not mirror.
+	OutsideShared int `json:"outside_shared,omitempty"`
 	// SharedName is more than one space on the machine answering to the name
 	// this machine's terminals live under, so which one is being used is a
 	// matter of what came back first.

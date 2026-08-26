@@ -432,6 +432,27 @@ says so if it finds one of the other two.
   bot  2 ssh  mirroring off: no herdr found on the machine — set herdr_bin if it is installed elsewhere there
 ```
 
+**A machine says `n more in other spaces on the machine`.** You turned mirroring
+on for a machine you already work on, and one terminal arrived instead of the
+four that are open there. Nothing failed: `scope` decides which of a machine's
+terminals are mirrored, and it defaults to `shared` — the space this plugin
+made on the machine, and nothing else. Your own terminals live in spaces of
+their own there, so they are left alone.
+
+That default is what keeps the two ends identical: the same tabs in the same
+order, on both sides. Mirroring everything instead means the two sides differ,
+because the machine has work on it that this one does not:
+
+```json
+{
+  "scope": "all",
+  "hosts": [{ "target": "workbox", "mode": "attach" }]
+}
+```
+
+Like the cap below, `scope` is one setting for every machine rather than one
+per machine.
+
 **A machine says `at the mirror limit`.** One machine may mirror only so many
 terminals, so that a runaway pane count on a remote cannot flood the session
 here. The rest are not mirrored and are not retried: they were never attempted,
