@@ -459,8 +459,8 @@ func TestTheREADMEShowsTheVersionOutputThatIsPrinted(t *testing.T) {
 	}
 }
 
-// answerAs stands a daemon up on the control socket and has it answer one
-// status command with the reply given. Every test here used to run with
+// answerAs stands a daemon up on the control socket and has it answer every
+// command with the reply given, until the test ends. Every test here used to run with
 // nothing listening, which exercises exactly one of the three answers
 // reportVersion can give -- and the switch it picks with was invisible to the
 // mutation sweep until case expressions were included in it. `status` had no
@@ -485,16 +485,17 @@ func answerAs(t *testing.T, reply syncd.Reply) {
 	served := make(chan struct{})
 	go func() {
 		defer close(served)
-		conn, err := listener.Accept()
-		if err != nil {
-			return
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			var cmd syncd.Command
+			if err := json.NewDecoder(conn).Decode(&cmd); err == nil {
+				_ = json.NewEncoder(conn).Encode(reply)
+			}
+			conn.Close()
 		}
-		defer conn.Close()
-		var cmd syncd.Command
-		if err := json.NewDecoder(conn).Decode(&cmd); err != nil {
-			return
-		}
-		_ = json.NewEncoder(conn).Encode(reply)
 	}()
 	t.Cleanup(func() {
 		listener.Close()
@@ -641,5 +642,48 @@ func TestStatusPassesOnWhatTheDaemonIsWarningAbout(t *testing.T) {
 	}
 	if strings.Contains(printed, "has no target") {
 		t.Errorf("the warning went to stdout, where it would be parsed as a machine:\n%s", printed)
+	}
+}
+
+func TestADaemonThatRefusesIsAnError(t *testing.T) {
+	// Both ways of sending a command turn a refusal into an error, so that
+	// whatever is calling has one thing to check rather than two. Neither had
+	// a test: a reply carrying OK false and a reason could be read as success,
+	// and the reason -- the only thing saying what went wrong -- dropped.
+	answerAs(t, syncd.Reply{Message: `no machine called "vm" is configured`})
+
+	if _, err := ask(syncd.Command{Cmd: "connect", Host: "vm"}); err == nil {
+		t.Error("ask read a refusal as success")
+	} else if !strings.Contains(err.Error(), "no machine called") {
+		t.Errorf("ask lost the reason it was refused: %v", err)
+	}
+
+	if err := call(syncd.Command{Cmd: "connect", Host: "vm"}); err == nil {
+		t.Error("call read a refusal as success")
+	} else if !strings.Contains(err.Error(), "no machine called") {
+		t.Errorf("call lost the reason it was refused: %v", err)
+	}
+}
+
+func TestACommandThatWorkedSaysSo(t *testing.T) {
+	// Action stdout only reaches the plugin log, so a result nobody printed is
+	// a command that looks like it did nothing.
+	answerAs(t, syncd.Reply{OK: true, Message: "connected to vm"})
+
+	printed, warned := captureOutput(t, func() error {
+		return call(syncd.Command{Cmd: "connect", Host: "vm"})
+	})
+
+	if !strings.Contains(printed, "connected to vm") {
+		t.Errorf("the daemon said what happened and nothing printed it: %q", printed)
+	}
+	if warned != "" {
+		t.Errorf("a command that worked warned about something: %q", warned)
+	}
+
+	if got, err := ask(syncd.Command{Cmd: "connect", Host: "vm"}); err != nil {
+		t.Errorf("ask failed on a reply that said OK: %v", err)
+	} else if got != "connected to vm" {
+		t.Errorf("ask handed back %q, not what the daemon said", got)
 	}
 }
