@@ -361,3 +361,30 @@ func TestARestartWithNothingRememberedBringsNothingBack(t *testing.T) {
 		t.Errorf("a first run wants to connect to %v", got)
 	}
 }
+
+func TestATabCountNeverGoesNegative(t *testing.T) {
+	// The count of panes in a tab decides how a stray pane is placed: one or
+	// fewer opens a tab of its own, more than one splits the tab it belongs
+	// to. Nothing in this type can drive the count below zero -- remove only
+	// decrements a pane it still holds a tab for, and takes that entry with it
+	// -- so the guard is defence against a way of getting here that does not
+	// exist yet, and no test could reach it by asking the type nicely.
+	//
+	// It matters once the tab fills up again. A count sitting at -1 reads as 0
+	// and then 1 while two panes are really there, and the next stray pane
+	// opens as a tab beside them instead of splitting in.
+	index := newPaneIndex([]herdrcli.Pane{{PaneID: "w1:p1", TabID: "w1:t1"}})
+
+	// The state the guard is for, which is why it is written rather than
+	// arrived at: a pane that still names its tab, and a tab that has lost
+	// count of it.
+	index.panesPerTab["w1:t1"] = 0
+	index.remove("w1:p1")
+
+	if got := index.panesPerTab["w1:t1"]; got < 0 {
+		t.Errorf("the tab holds %d panes, and a tab cannot hold fewer than none", got)
+	}
+	if got := planStrayPlacement(index.panesPerTab["w1:t1"]); got != placementTab {
+		t.Errorf("a stray pane beside an empty tab is placed as %q, want %q", got, placementTab)
+	}
+}
