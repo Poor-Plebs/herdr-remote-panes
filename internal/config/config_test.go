@@ -505,3 +505,40 @@ func TestTheCommonestHandEditingMistakesSayWhatTheyAre(t *testing.T) {
 			"the decoder's words rather than being guessed at", err)
 	}
 }
+
+func TestAFirstRunThatCannotWriteItsConfigSaysSo(t *testing.T) {
+	// With no config file, Load writes the defaults so there is something to
+	// edit. That can fail -- a read-only home, a directory somebody else owns
+	// -- and both halves of what happens then matter.
+	//
+	// The plugin has to keep working: the defaults are perfectly usable, and
+	// refusing to start because a file could not be created would take the
+	// menu and every action with it. And it has to say so, because otherwise
+	// the config somebody then writes is one nothing ever reads back.
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	// Put it back, or the temporary directory cannot be cleaned up.
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+
+	cfg, err := Load()
+
+	if err == nil {
+		t.Fatal("a first run that could not write its config reported success")
+	}
+	// Named as the config, and as a write. What comes back from replacing a
+	// file names the temporary beside it, which is a file nobody has seen.
+	if !strings.Contains(err.Error(), "config.json:") {
+		t.Errorf("the error does not name the config file: %v", err)
+	}
+	if !strings.Contains(err.Error(), "write") {
+		t.Errorf("the error does not say what it was doing: %v", err)
+	}
+
+	// And what came back is usable, so the daemon can run on it.
+	if cfg.Interval() <= 0 || cfg.MaxMirrors <= 0 || cfg.Mode == "" {
+		t.Errorf("the defaults handed back are not usable: %+v", cfg)
+	}
+}

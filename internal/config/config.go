@@ -491,7 +491,14 @@ func saveRaw(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomically(path, append(raw, '\n'))
+	if err := writeFileAtomically(path, append(raw, '\n')); err != nil {
+		// Named, and said as a write. The file is replaced rather than written
+		// through, so what comes back names the temporary alongside it --
+		// "config.json.139785810: permission denied" -- which is a file the
+		// person reading it has never seen and cannot look for.
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
 }
 
 // loadRaw reads the file as written, without filling in defaults.
