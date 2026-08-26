@@ -183,6 +183,20 @@ func TestABoundHeldToItselfIsRecognised(t *testing.T) {
 		{"equality, where no boundary maps to itself", "a, b := 1, 2\nif a == b {\na = b\n}\n_ = a", false},
 		{"a declaration rather than an assignment", "a, b := 1, 2\nif a < b {\nc := b\n_ = c\n}\n_ = a", false},
 		{"arithmetic on the compared side", "f, v, c := 1, 2, 3\nif f+v > c {\nf = c - v\n}\n_ = f", false},
+
+		// A slice held to a maximum length. At the boundary the slice
+		// expression is the whole slice, so the branch assigns what is
+		// already there -- the same argument as a clamp, one step along.
+		{"truncated to a maximum", "s, n := \"ab\", 1\nif len(s) > n {\ns = s[:n]\n}\n_ = s", true},
+		{"kept to its last n", "s, n := \"ab\", 1\nif len(s) > n {\ns = s[len(s)-n:]\n}\n_ = s", true},
+		{"the bound written the other way round", "s, n := \"ab\", 1\nif n < len(s) {\ns = s[:n]\n}\n_ = s", true},
+
+		// Not that. Each keeps a different amount at the boundary, which is
+		// exactly what the two spellings of the comparison disagree about.
+		{"truncated to one short of the bound", "s, n := \"ab\", 2\nif len(s) > n {\ns = s[:n-1]\n}\n_ = s", false},
+		{"the front dropped rather than the end", "s, n := \"ab\", 1\nif len(s) > n {\ns = s[n:]\n}\n_ = s", false},
+		{"a different bound in the slice", "s, n, m := \"ab\", 1, 2\nif len(s) > n {\ns = s[:m]\n}\n_ = s", false},
+		{"another slice truncated", "s, o, n := \"ab\", \"cd\", 1\nif len(s) > n {\no = o[:n]\n}\n_ = o", false},
 	} {
 		got := clampsIn(t, tt.body)
 		if len(got) != 1 {
@@ -327,5 +341,28 @@ func TestEveryTriagedLineIsStillInTheTree(t *testing.T) {
 			t.Errorf("read.tsv:%d was decided about a line %s no longer has:\n  %s",
 				n+1, file, source)
 		}
+	}
+}
+
+func TestATriagedDeletionMatchesItsEntry(t *testing.T) {
+	// A mutation can delete an operator rather than replace one, and the
+	// change then reads "! -> " with nothing after it. A hand-edited file
+	// cannot be relied on to carry that trailing space -- an editor that
+	// strips them is enough -- so both sides trim.
+	//
+	// Without it every entry for a deletion matched nothing at all: the
+	// judgement stayed in the file, the survivor came back unlabelled on every
+	// sweep, and nothing said the two had stopped meeting.
+	path := filepath.Join(t.TempDir(), "read.tsv")
+	if err := os.WriteFile(path, []byte("picker.go\t! ->\treturn a && !b\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := mutation{file: "picker.go", old: "!", new: "", source: "\treturn a && !b"}
+	if got := survivorClass(m, readSurvivors(path)); got != classRead {
+		t.Errorf("a deletion that was read and left classified as %q, want %q", got, classRead)
+	}
+	if stale := staleTriage(path, []mutation{m}, []mutation{m}); len(stale) != 0 {
+		t.Errorf("an entry that matches was called stale: %v", stale)
 	}
 }

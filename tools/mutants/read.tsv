@@ -34,12 +34,6 @@ internal/picker/picker.go	< -> <=	for i := 0; i < maxPasteBytes; i++ {
 
 # one parameter either side of a bound on a sequence that is already malformed
 internal/picker/picker.go	>= -> >	if i >= maxEscapeParams {
-# at the boundary the slice is the whole string, so both spellings agree
-internal/mirror/liveness.go	> -> >=	if len(reason) > maxFailureReason {
-
-# at the boundary the slice is the whole buffer, so both spellings agree
-internal/mirror/mirror.go	> -> >=	if len(t.seen) > t.max {
-
 # unreachable: Wait returns nil on a zero exit, so the code here is never 0
 internal/mirror/mirror.go	> -> >=	if code := exitStatus(err); code > 0 && code != sshOwnFailure {
 
@@ -68,3 +62,9 @@ internal/mirror/liveness.go	|| -> &&	if err != nil || pid <= 0 {
 
 # Same: pid 0 gets past the guard, and /proc/0/comm is what stops it here.
 internal/mirror/liveness.go	<= -> <	if err != nil || pid <= 0 {
+
+# ReadBuildInfo cannot fail inside a test binary, so both branches answer
+# "unknown": the mutated one directly, the original through shortRevision("").
+# What that decides is out of a test's reach, which is why shortRevision exists
+# separately and has one.
+internal/version/version.go	! ->	if !ok {

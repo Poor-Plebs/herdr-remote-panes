@@ -110,6 +110,7 @@ func main() {
 	var survived []mutation
 	caught, unusable := 0, 0
 	started := time.Now()
+	lastReport := started
 
 	for i, m := range muts {
 		outcome, err := try(work, pkg, m)
@@ -128,7 +129,12 @@ func main() {
 		default:
 			unusable++
 		}
-		if n := i + 1; n%25 == 0 {
+		// Every 25, or every minute, whichever comes first. On a package whose
+		// tests take twenty seconds a run, 25 is ten minutes of silence from
+		// something that is working -- long enough to go and check it is not
+		// stuck, which is the thing the progress line exists to save.
+		if n := i + 1; n%25 == 0 || time.Since(lastReport) >= time.Minute {
+			lastReport = time.Now()
 			left := time.Duration(float64(time.Since(started)) / float64(n) * float64(len(muts)-n))
 			fmt.Printf("... %d/%d, %d survived, about %s left\n",
 				n, len(muts), len(survived), left.Round(time.Second))
@@ -547,7 +553,15 @@ func survivorClass(m mutation, read map[string]bool) string {
 // the change, and the line as written: if the line is edited the key stops
 // matching, which is right -- the judgement was about the line that was there.
 func triageKey(m mutation) string {
-	return strings.Join([]string{m.file, m.old + " -> " + m.new, strings.TrimSpace(m.source)}, "\t")
+	// The change is trimmed because a mutation can delete an operator rather
+	// than replace one -- removing a "!" leaves "! -> " with nothing after it,
+	// and a trailing space is not something a line of a hand-edited file can
+	// be relied on to carry. Entries for those silently matched nothing.
+	return strings.Join([]string{
+		m.file,
+		strings.TrimSpace(m.old + " -> " + m.new),
+		strings.TrimSpace(m.source),
+	}, "\t")
 }
 
 // readSurvivors loads the survivors somebody has already read and decided to
@@ -571,7 +585,11 @@ func readSurvivors(path string) map[string]bool {
 		if len(parts) != 3 {
 			continue
 		}
-		read[strings.Join([]string{parts[0], parts[1], strings.TrimSpace(parts[2])}, "\t")] = true
+		read[strings.Join([]string{
+			parts[0],
+			strings.TrimSpace(parts[1]),
+			strings.TrimSpace(parts[2]),
+		}, "\t")] = true
 	}
 	return read
 }
@@ -609,14 +627,53 @@ func staleTriage(path string, muts, survived []mutation) []string {
 		if len(parts) != 3 {
 			continue
 		}
-		source := strings.TrimSpace(parts[2])
-		key := strings.Join([]string{parts[0], parts[1], source}, "\t")
+		change, source := strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+		key := strings.Join([]string{parts[0], change, source}, "\t")
 		if !swept[parts[0]] || alive[key] {
 			continue
 		}
-		stale = append(stale, parts[0]+"  "+parts[1]+"  "+source)
+		stale = append(stale, parts[0]+"  "+change+"  "+source)
 	}
 	return stale
+}
+
+// heldToLength reports whether an if-statement holds a slice to a maximum
+// length, given the two sides of its comparison and of its assignment:
+//
+//	if len(reason) > maxReason { reason = reason[:maxReason] }
+//	if len(seen) > max         { seen = seen[len(seen)-max:] }
+//
+// The first keeps the front, the second the end. Either way, at the boundary
+// the slice expression covers the whole slice, so the branch assigns what is
+// already there and both spellings of the comparison agree.
+//
+// The bound in the slice must be the bound in the comparison. "x = x[:n-1]"
+// looks the same and is not: at len(x) == n one spelling keeps n and the other
+// keeps n-1, which is a difference a test can see.
+//
+// Matched on source text, like the rest of isClamp. The tree is gofmt'd, so
+// the spelling of an expression is settled.
+func heldToLength(x, y, lhs, rhs string) bool {
+	for _, side := range [][2]string{{x, y}, {y, x}} {
+		measured, bound := side[0], side[1]
+		name, ok := strings.CutPrefix(measured, "len(")
+		if !ok {
+			continue
+		}
+		name, ok = strings.CutSuffix(name, ")")
+		if !ok || name != lhs {
+			continue
+		}
+		if rhs == name+"["+bound+":]" {
+			// Dropping the front: x = x[n:] shortens by n rather than to n,
+			// so the boundary does not map to itself. Read it.
+			continue
+		}
+		if rhs == name+"[:"+bound+"]" || rhs == name+"[len("+name+")-"+bound+":]" {
+			return true
+		}
+	}
+	return false
 }
 
 // isClamp reports whether an if-statement holds a value to a bound, in the shape
@@ -655,7 +712,10 @@ func isClamp(textOf func(ast.Node) string, cond *ast.BinaryExpr, body *ast.Block
 			return false
 		}
 		lhs, rhs := textOf(st.Lhs[0]), textOf(st.Rhs[0])
-		return (lhs == x && rhs == y) || (lhs == y && rhs == x)
+		if (lhs == x && rhs == y) || (lhs == y && rhs == x) {
+			return true
+		}
+		return heldToLength(x, y, lhs, rhs)
 	case *ast.ReturnStmt:
 		if len(st.Results) != 1 {
 			return false
