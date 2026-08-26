@@ -687,3 +687,60 @@ func TestACommandThatWorkedSaysSo(t *testing.T) {
 		t.Errorf("ask handed back %q, not what the daemon said", got)
 	}
 }
+
+func TestHelpGoesWhereItCanBeRead(t *testing.T) {
+	// `herdr-remote-panes help | less` showed nothing: the help was written to
+	// stderr whether it had been asked for or not. Asked for, it is the answer
+	// to the command rather than a complaint about it.
+	printed, warned := captureOutput(t, func() error { return run("help", nil) })
+
+	if !strings.Contains(printed, "herdr-remote-panes") {
+		t.Errorf("help printed nothing to stdout; stderr had %q", warned)
+	}
+	if warned != "" {
+		t.Errorf("help that was asked for went to stderr as well: %q", warned)
+	}
+}
+
+func TestAMistypedCommandSaysSoAndDoesNotPollute(t *testing.T) {
+	// The other half: unasked-for help must not land in whatever was reading
+	// this command's output.
+	var err error
+	printed, warned := captureOutput(t, func() error {
+		// Kept out of captureOutput's own return, which fails the test on an
+		// error -- here the error is the thing being checked.
+		err = run("stauts", nil)
+		return nil
+	})
+
+	if err == nil {
+		t.Fatal("a command that does not exist reported success")
+	}
+	if !strings.Contains(err.Error(), "stauts") {
+		t.Errorf("the error does not name what was typed: %v", err)
+	}
+	if !strings.Contains(warned, "herdr-remote-panes") {
+		t.Errorf("nothing showed what the commands are: %q", warned)
+	}
+	if printed != "" {
+		t.Errorf("help for a mistyped command went to stdout: %q", printed)
+	}
+}
+
+func TestDisconnectWithNothingToDisconnectSaysHow(t *testing.T) {
+	// No argument, no HRP_HOST, no selection: an action triggered with nothing
+	// to act on. The message has to say both ways of giving it one, since the
+	// action is usually reached from a menu rather than a command line.
+	t.Setenv("HRP_HOST", "")
+	t.Setenv("HERDR_PLUGIN_CONTEXT_JSON", "")
+
+	err := run("disconnect", nil)
+	if err == nil {
+		t.Fatal("disconnect with no machine named reported success")
+	}
+	for _, want := range []string{"disconnect", "ssh-target", "select"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the message does not mention %q: %v", want, err)
+		}
+	}
+}

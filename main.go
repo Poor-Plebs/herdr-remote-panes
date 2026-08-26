@@ -33,7 +33,9 @@ func main() {
 
 	args := os.Args[1:]
 	if len(args) == 0 {
-		usage()
+		// Run with nothing to do: stderr and a non-zero exit, same as a
+		// command that was not understood.
+		usage(os.Stderr)
 		os.Exit(2)
 	}
 
@@ -154,11 +156,15 @@ func run(command string, args []string) error {
 		return printVersion()
 
 	case "help", "-h", "--help":
-		usage()
+		// Asked for, so it is the answer rather than a complaint about the
+		// question: stdout, where `| less` and `| grep` can reach it.
+		usage(os.Stdout)
 		return nil
 
 	default:
-		usage()
+		// Not asked for. It goes to stderr so that a mistyped command cannot
+		// put a page of help into whatever was reading this command's output.
+		usage(os.Stderr)
 		return fmt.Errorf("unknown command %q", command)
 	}
 }
@@ -211,8 +217,8 @@ func selectedText() string {
 	return strings.TrimSpace(ctx.SelectedText)
 }
 
-func usage() {
-	fmt.Fprint(os.Stderr, `herdr-remote-panes — work on other machines from this Herdr
+func usage(w io.Writer) {
+	fmt.Fprint(w, `herdr-remote-panes — work on other machines from this Herdr
 
   daemon                     run the reconciler (Herdr [[startup]] hook)
   mirror                     run a machine's terminal in a pane (pane entrypoint)
