@@ -509,3 +509,49 @@ func TestAPaneThatWillNotGoRawIsLeftAsItIs(t *testing.T) {
 		}
 	}
 }
+
+func TestTheSizeAMirrorOpensAt(t *testing.T) {
+	// The remote stream is opened at whatever size is asked for, and the far
+	// end wraps its output to that. Ask for the wrong one and every line in a
+	// mirrored pane wraps somewhere other than where the pane ends, for as
+	// long as the mirror lasts.
+	//
+	// stty is the only thing that knows, and a pane that cannot be measured is
+	// an ordinary case rather than a failure -- so the defaults have to be
+	// used then, and not otherwise.
+	t.Run("what the pane says", func(t *testing.T) {
+		withSttySaying(t, "40 100")
+		if cols, rows := windowSize(); cols != 100 || rows != 40 {
+			t.Errorf("the mirror opens at %dx%d, want 100x40", cols, rows)
+		}
+	})
+
+	t.Run("a pane that cannot be measured", func(t *testing.T) {
+		withStty(t, false)
+		cols, rows := windowSize()
+		if cols != defaultCols || rows != defaultRows {
+			t.Errorf("an unmeasurable pane opens at %dx%d, want the defaults %dx%d",
+				cols, rows, defaultCols, defaultRows)
+		}
+	})
+
+	t.Run("a pane that answers with nonsense", func(t *testing.T) {
+		// Answering is not the same as answering usefully, and the defaults
+		// are right here for the same reason.
+		withSttySaying(t, "not a size at all")
+		if cols, rows := windowSize(); cols != defaultCols || rows != defaultRows {
+			t.Errorf("a nonsense answer opened the mirror at %dx%d, want the defaults", cols, rows)
+		}
+	})
+}
+
+// withSttySaying puts an stty on PATH that answers with the line given.
+func withSttySaying(t *testing.T, answer string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := fmt.Sprintf("#!/bin/sh\necho %q\n", answer)
+	if err := os.WriteFile(filepath.Join(dir, "stty"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
