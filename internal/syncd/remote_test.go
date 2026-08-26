@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/mirror"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
 	"log"
 	"os"
 	"path/filepath"
@@ -2746,5 +2748,47 @@ func TestTheOldConnectionIsTornDownWhenSettingsChange(t *testing.T) {
 
 	if got := teardowns() - before; got != 0 {
 		t.Errorf("connecting again with the same settings tore down %d connections, want none", got)
+	}
+}
+
+func TestAnAdoptedMachineLearnsWhereItsSpaceIs(t *testing.T) {
+	// After a Herdr restart the machine's mirrors are still on screen and the
+	// daemon adopts them rather than opening them again. Adopting skips
+	// ensureWorkspace, which is what would otherwise have told it which space
+	// the machine lives in -- so it learns that from a mirror it has just
+	// adopted instead.
+	//
+	// Nothing had called reconcileHost, so the check that decides whether to
+	// learn it could be turned inside out: the machine keeps an empty space
+	// id, and everything downstream that places a pane by it has nowhere to
+	// put one.
+	withFakeHerdr(t)
+	withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := withConfig(&Daemon{}, cfg)
+
+	host := cfg.Hosts[0]
+	state := newTestHost()
+	state.host = host
+	state.client = remote.NewWithBin(host.Target, cfg.SessionFor(host), cfg.BinFor(host))
+	// What adoption looks like: a mirror on screen, its bridge still running,
+	// and no idea yet which space it is in.
+	state.mirrors["term-1"] = "w1:p1"
+	state.workspaceID = ""
+	mirrorIsRunning(t, "w1:p1", "term-1")
+
+	index := newPaneIndex([]herdrcli.Pane{
+		{PaneID: "w1:p1", WorkspaceID: "w1", TerminalID: "term-1", Label: "shell@bot"},
+	})
+
+	if err := d.reconcileHost(state, index); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if state.workspaceID != "w1" {
+		t.Errorf("the machine's space is %q, and its own mirror is in %q",
+			state.workspaceID, "w1")
 	}
 }
