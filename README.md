@@ -528,7 +528,7 @@ that survives is a change no test would have caught, and it says which operator
 on the line it changed, since a line often holds several:
 
 ```
-SURVIVED  internal/syncd/daemon.go:1420:52  < -> <=
+SURVIVED  internal/syncd/daemon.go:1503:74  < -> <=  -- read before and left
             if last := d.lastPrune.Load(); last != 0 && now.Sub(...) < pruneInterval {
                                                                     ^
 ```
