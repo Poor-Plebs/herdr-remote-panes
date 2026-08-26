@@ -361,6 +361,23 @@ the session Herdr starts from will find it: for most desktop sessions that means
 `~/.profile` rather than `~/.bashrc`, since the latter is not read by a login
 manager.
 
+**Everything says `no running daemon`.** That is this plugin's own daemon on
+*your* machine, not anything on the far end — it never got as far as SSH. The
+menu shows every machine as not connected, because it has nothing to ask, and
+`enter` says the same.
+
+It runs as Herdr's `[[startup]]` hook, so it starts when Herdr does and stops
+when Herdr does. Restarting Herdr is the fix, and usually the diagnosis too. If
+it comes back, the log says why it did not start:
+
+```bash
+herdr plugin log list --plugin poorplebs.remote-panes
+```
+
+A `startup` entry with a non-zero `exit_code` is the daemon refusing to start,
+and its `stderr` says what stopped it. A build that failed leaves no binary for
+it to run at all, which the same log shows as a `build` entry.
+
 **A machine's space is missing.** You closed its terminals, and a space with
 nothing in it does not exist. The machine is still connected — the menu says so
 — and `enter` on it opens a terminal again.
