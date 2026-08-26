@@ -3,6 +3,7 @@ package mirror
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
 	"os"
 	"os/exec"
@@ -447,5 +448,64 @@ func TestTheReasonReachesTheRecordFromARealFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Host key verification failed") {
 		t.Errorf("what ssh said did not reach the record: %q", err)
+	}
+}
+
+// withStty puts an stty on PATH that records how it was called and succeeds or
+// fails as asked, and hands back what has been asked of it.
+func withStty(t *testing.T, works bool) func() []string {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "asked")
+	status := 0
+	if !works {
+		status = 1
+	}
+	script := fmt.Sprintf("#!/bin/sh\necho \"$@\" >> %s\nexit %d\n", log, status)
+	if err := os.WriteFile(filepath.Join(dir, "stty"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	return func() []string {
+		raw, err := os.ReadFile(log)
+		if err != nil {
+			return nil
+		}
+		return strings.Split(strings.TrimSpace(string(raw)), "\n")
+	}
+}
+
+func TestAMirroredPaneGetsItsTerminalBack(t *testing.T) {
+	// A read-only mirror stops the local pty echoing what you type, since what
+	// you type is not going anywhere. That has to be undone when the mirror
+	// ends: left raw, the pane echoes nothing and reads nothing line by line,
+	// and what is left behind in it is a shell that appears to have stopped
+	// working.
+	asked := withStty(t, true)
+
+	restore := rawMode()
+	if got := asked(); len(got) != 1 || !strings.Contains(got[0], "raw") {
+		t.Errorf("stty was asked %v, want raw mode once", got)
+	}
+
+	restore()
+	if got := asked(); len(got) != 2 || !strings.Contains(got[1], "sane") {
+		t.Errorf("stty was asked %v, want the pane put back", got)
+	}
+}
+
+func TestAPaneThatWillNotGoRawIsLeftAsItIs(t *testing.T) {
+	// Nothing was changed, so there is nothing to put back -- and asking a
+	// terminal that refused raw mode to go "sane" would change settings this
+	// never touched.
+	asked := withStty(t, false)
+
+	rawMode()()
+
+	for _, line := range asked() {
+		if strings.Contains(line, "sane") {
+			t.Errorf("stty was asked to put back a pane it never changed: %v", asked())
+		}
 	}
 }
