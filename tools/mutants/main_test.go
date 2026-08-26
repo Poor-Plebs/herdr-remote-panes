@@ -387,3 +387,91 @@ func TestATriagedDeletionMatchesItsEntry(t *testing.T) {
 		t.Errorf("an entry that matches was called stale: %v", stale)
 	}
 }
+
+func TestACaseExpressionIsAskedAboutAtItsSwitch(t *testing.T) {
+	// A coverage profile records the body of a case and never the line the
+	// case is written on, so every "case n > 0:" in the tree read as a line
+	// nothing runs and was skipped. Sweeping internal/text went from 14
+	// mutations with 40 skipped to 54 with none the day this was fixed, and
+	// the decisions it then reached had never been mutation-tested anywhere.
+	//
+	// Which makes this worth holding: the failure is silent, and what it costs
+	// is a whole class of survivor never being reported.
+	const src = `package p
+
+func f(n int) string {
+	switch {
+	case n > 0:
+		return "up"
+	case n < 0:
+		return "down"
+	default:
+		return "flat"
+	}
+}
+
+func g(n int) bool {
+	return n > 0
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := caseCoverLines(fset, file)
+
+	// Where each operator actually is, found rather than counted out by hand.
+	var found []struct {
+		line, cover int
+		what        string
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		binary, ok := n.(*ast.BinaryExpr)
+		if !ok {
+			return true
+		}
+		line := fset.Position(binary.OpPos).Line
+		found = append(found, struct {
+			line, cover int
+			what        string
+		}{line, at(binary.OpPos, line), src[binary.Pos()-1 : binary.End()-1]})
+		return true
+	})
+
+	if len(found) != 3 {
+		t.Fatalf("found %d comparisons in the snippet, want 3: %+v", len(found), found)
+	}
+	// The switch is on line 4; its two cases are on 5 and 7. Both are asked
+	// about at the switch.
+	for _, want := range []struct {
+		what        string
+		line, cover int
+	}{
+		{"n > 0", 5, 4},
+		{"n < 0", 7, 4},
+		// Not in a switch at all, so it answers for itself.
+		{"n > 0", 15, 15},
+	} {
+		var got *struct {
+			line, cover int
+			what        string
+		}
+		for i := range found {
+			if found[i].line == want.line {
+				got = &found[i]
+			}
+		}
+		if got == nil {
+			t.Errorf("no comparison found on line %d", want.line)
+			continue
+		}
+		if got.what != want.what {
+			t.Errorf("line %d holds %q, want %q", want.line, got.what, want.what)
+		}
+		if got.cover != want.cover {
+			t.Errorf("%q on line %d is asked about at line %d, want %d",
+				got.what, got.line, got.cover, want.cover)
+		}
+	}
+}
