@@ -552,6 +552,12 @@ They are keyed by the line as written rather than by its number: edit the line
 and the entry stops matching, which is right, because what was judged was the
 line that was there.
 
+A record that can only grow ends up being trusted for code that is no longer
+there, so both directions are checked. A sweep names the entries whose file it
+mutated but which no longer describe a survivor -- the line was edited, or a
+test now catches it. `make check` is faster and blunter: it fails if an entry
+names a line the tree does not contain.
+
 It works on a copy under the temp directory, so an interrupted run cannot leave
 a mutation in your tree, and it is not part of `make check`: it runs the tests
 once per mutation, so it is minutes rather than seconds.

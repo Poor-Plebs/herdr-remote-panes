@@ -23,9 +23,6 @@ internal/picker/picker.go	<= -> <	if visible < 1 || visible <= best {
 # at the boundary the branch assigns the value already there
 internal/picker/picker.go	> -> >=	if first+visible > count {
 
-# the list is built configured-first, so there is nothing here to reorder
-internal/picker/picker.go	! ->	return entries[i].Configured && !entries[j].Configured
-
 # Truncate returns the string unchanged when it fits, so this only adds a no-op call
 internal/picker/picker.go	> -> >=	if len(spans) == 1 && text.Width(spans[0].text) > room {
 

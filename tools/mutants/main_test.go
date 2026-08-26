@@ -4,6 +4,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -248,5 +251,81 @@ func TestASurvivorReadBeforeIsNotRaisedAgain(t *testing.T) {
 	spaced.source = "    return na < nb   "
 	if got := survivorClass(spaced, read); got != classRead {
 		t.Errorf("the same line differently indented came back as %q, want %q", got, classRead)
+	}
+}
+
+func TestStaleTriageNamesJudgementsThatNoLongerApply(t *testing.T) {
+	// read.tsv is the record of survivors somebody read and decided to leave.
+	// It can only ever grow, and two ordinary things silently retire an entry:
+	// the line gets edited, or a test is added and the mutation stops
+	// surviving. Neither is visible, so the record ends up describing code
+	// that is not there any more.
+	path := filepath.Join(t.TempDir(), "read.tsv")
+	record := strings.Join([]string{
+		"# a survivor that is still a survivor",
+		"picker.go\t< -> <=\tif room < 1 {",
+		"",
+		"# read once, but a test now catches it",
+		"picker.go\t! ->\treturn a.Configured && !b.Configured",
+		"",
+		"# a line that has since been edited away",
+		"picker.go\t> -> >=\tif gone > 0 {",
+		"",
+		"# another package, not swept this time",
+		"daemon.go\t== -> !=\tif kind == \"ssh\" {",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	swept := []mutation{
+		{file: "picker.go", old: "<", new: "<=", source: "\tif room < 1 {"},
+		{file: "picker.go", old: "!", new: "", source: "\treturn a.Configured && !b.Configured"},
+	}
+	survived := []mutation{swept[0]}
+
+	got := staleTriage(path, swept, survived)
+	want := []string{
+		"picker.go  ! ->  return a.Configured && !b.Configured",
+		"picker.go  > -> >=  if gone > 0 {",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("stale entries\n%v\nwant\n%v", got, want)
+	}
+}
+
+func TestEveryTriagedLineIsStillInTheTree(t *testing.T) {
+	// staleTriage reports this too, but only for the package being swept and
+	// only after the several minutes a sweep takes. A judgement about a line
+	// that has been deleted or rewritten is wrong whether or not anyone is
+	// sweeping, and this says so in milliseconds.
+	raw, err := os.ReadFile("read.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := map[string]string{}
+	for n, line := range strings.Split(string(raw), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) != 3 {
+			t.Errorf("read.tsv:%d is not file<TAB>change<TAB>line: %q", n+1, line)
+			continue
+		}
+		file := parts[0]
+		if _, ok := sources[file]; !ok {
+			body, err := os.ReadFile(filepath.Join("..", "..", file))
+			if err != nil {
+				t.Errorf("read.tsv:%d names a file that is not there: %v", n+1, err)
+				sources[file] = ""
+				continue
+			}
+			sources[file] = string(body)
+		}
+		if source := strings.TrimSpace(parts[2]); source != "" && !strings.Contains(sources[file], source) {
+			t.Errorf("read.tsv:%d was decided about a line %s no longer has:\n  %s",
+				n+1, file, source)
+		}
 	}
 }

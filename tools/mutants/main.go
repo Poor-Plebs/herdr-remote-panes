@@ -88,7 +88,8 @@ func main() {
 
 	// Beside the tool rather than beside the package: one record for the whole
 	// tree, since a survivor is identified by its file anyway.
-	read := readSurvivors(filepath.Join(root, "tools", "mutants", "read.tsv"))
+	readPath := filepath.Join(root, "tools", "mutants", "read.tsv")
+	read := readSurvivors(readPath)
 
 	covered, err := coveredLines(work, pkg)
 	check(err)
@@ -136,6 +137,15 @@ func main() {
 
 	fmt.Printf("\n%d mutations: %d caught, %d survived, %d would not build, in %s\n",
 		len(muts), caught, len(survived), unusable, time.Since(started).Round(time.Second))
+
+	if stale := staleTriage(readPath, muts, survived); len(stale) > 0 {
+		fmt.Printf("\n%d in tools/mutants/read.tsv no longer describe a survivor. The line was\n"+
+			"edited, or a test now catches it. Drop them:\n", len(stale))
+		for _, entry := range stale {
+			fmt.Println("  " + entry)
+		}
+	}
+
 	if len(survived) == 0 {
 		return
 	}
@@ -564,6 +574,49 @@ func readSurvivors(path string) map[string]bool {
 		read[strings.Join([]string{parts[0], parts[1], strings.TrimSpace(parts[2])}, "\t")] = true
 	}
 	return read
+}
+
+// staleTriage names the entries in read.tsv that no longer describe a survivor
+// of this sweep.
+//
+// A judgement is about one line as it was written, and the line moves on: it
+// gets edited, or a test is added and the mutation stops surviving. Neither
+// shows up anywhere -- the entry simply stops matching, and a record that can
+// only grow ends up being trusted for lines that no longer exist.
+//
+// Only files this sweep actually mutated are considered, so sweeping one
+// package does not call every other package's entries stale.
+func staleTriage(path string, muts, survived []mutation) []string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	swept := map[string]bool{}
+	for _, m := range muts {
+		swept[m.file] = true
+	}
+	alive := map[string]bool{}
+	for _, m := range survived {
+		alive[triageKey(m)] = true
+	}
+
+	var stale []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) != 3 {
+			continue
+		}
+		source := strings.TrimSpace(parts[2])
+		key := strings.Join([]string{parts[0], parts[1], source}, "\t")
+		if !swept[parts[0]] || alive[key] {
+			continue
+		}
+		stale = append(stale, parts[0]+"  "+parts[1]+"  "+source)
+	}
+	return stale
 }
 
 // isClamp reports whether an if-statement holds a value to a bound, in the shape
