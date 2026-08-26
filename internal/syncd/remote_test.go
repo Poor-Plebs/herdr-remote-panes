@@ -551,10 +551,15 @@ func TestAMachineWhoseHerdrIsNotUpIsStartedRatherThanRefused(t *testing.T) {
 }
 
 func TestWithoutAutoStartAMachineWithNoSessionIsNotStarted(t *testing.T) {
-	// Turning it off means the plugin leaves the machine's sessions alone. It
-	// still connects -- the machine is reachable and its terminals are usable
-	// over plain SSH -- so what it must not do is quietly look the same as
-	// having started one.
+	// Turning it off means the plugin leaves the machine's sessions alone.
+	//
+	// A machine set to mirror then has nothing to mirror from, and connecting
+	// says so rather than reporting success -- measured, because the comment
+	// here used to claim it connected anyway and it does not. Reporting
+	// success would be the worse of the two: the menu would show a machine
+	// connected and mirroring, with nothing on it and no reason given, and
+	// "no herdr server is running" is the one sentence that says what to do
+	// about it.
 	here := withFakeHerdr(t)
 	heldOn, _ := withRemoteHerdrRunning(t, false)
 	there := func() fakeHerdr { return heldOn("bot") }
@@ -565,14 +570,40 @@ func TestWithoutAutoStartAMachineWithNoSessionIsNotStarted(t *testing.T) {
 	cfg.AutoStart = &off
 	d := New(cfg)
 
-	d.dispatch(Command{Cmd: "connect", Host: "bot"})
+	reply := d.dispatch(Command{Cmd: "connect", Host: "bot"})
 	settle(t, d, here, 3, there)
 
+	if reply.OK {
+		t.Errorf("connecting to a machine with no session to mirror reported success: %q", reply.Message)
+	}
+	if !strings.Contains(reply.Message, "no herdr server is running") {
+		t.Errorf("the reply does not say what is wrong: %q", reply.Message)
+	}
+	// And it does not open by saying the machine connected. Letting this get
+	// as far as opening a terminal produces "connected to bot, but could not
+	// open a terminal", which reads as a healthy connection that failed at the
+	// last step -- when what happened is that the machine's Herdr never
+	// answered at all, and the thing to do about it is start the session.
+	if strings.Contains(reply.Message, "connected to") {
+		t.Errorf("a machine whose session never answered is reported as connected: %q", reply.Message)
+	}
 	if got := len(there().Panes); got != 0 {
 		t.Errorf("the machine has %d terminals; nothing should have started a session", got)
 	}
 	if got := panesFor(here(), "bot"); got != 0 {
 		t.Errorf("%d mirrors here of a machine with no session", got)
+	}
+	// And the menu is told the same thing the reply was, rather than showing a
+	// machine that is connected and mirroring nothing.
+	status := d.status()
+	if len(status) != 1 {
+		t.Fatalf("want one machine in the status, got %d", len(status))
+	}
+	if status[0].Connected {
+		t.Error("a machine whose session never answered is reported as connected")
+	}
+	if status[0].LastError == "" {
+		t.Error("the machine is quiet in the menu with no reason given")
 	}
 }
 
