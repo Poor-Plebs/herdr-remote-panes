@@ -3381,3 +3381,61 @@ func TestLeftoverPanesAreClosedWithoutAskingWhereTheSpaceIs(t *testing.T) {
 		t.Errorf("clearing a known space asked Herdr where it was %d times", n)
 	}
 }
+
+func TestAStartingDaemonWaitsForTheOneItIsReplacing(t *testing.T) {
+	// Restarting Herdr starts the new daemon before the old one has finished.
+	// They overlap, and for that moment the socket belongs to the old one.
+	//
+	// Refusing there is fatal rather than cautious: Herdr does not retry a
+	// startup command that exited, so the new daemon is gone for good, and
+	// when the old one stops a moment later there is nothing left serving.
+	// Every action then says there is no daemon — which is true, and cannot be
+	// fixed without restarting Herdr again.
+	socket := testSocket(t)
+
+	old, err := listenControl(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The old daemon goes shortly after the new one starts, which is the whole
+	// of what this is about.
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		old.Close()
+	}()
+
+	started := time.Now()
+	listener, err := listenControl(socket)
+	if err != nil {
+		t.Fatalf("the replacing daemon gave up instead of waiting: %v", err)
+	}
+	defer listener.Close()
+
+	if waited := time.Since(started); waited < 200*time.Millisecond {
+		t.Errorf("it took the socket after %s, which is sooner than the old daemon "+
+			"let go of it — two daemons would each answer half the commands", waited)
+	}
+}
+
+func TestADaemonThatIsReallyAlreadyRunningIsStillRefused(t *testing.T) {
+	// The other side of it. Something is serving and stays serving, so this
+	// one has nothing to do and says so rather than sitting there for ever.
+	socket := testSocket(t)
+
+	serving, err := listenControl(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serving.Close()
+
+	// Shortened, or this test waits out the real handover window.
+	restore := handoverWait
+	handoverWait = 300 * time.Millisecond
+	defer func() { handoverWait = restore }()
+
+	if _, err := listenControl(socket); err == nil {
+		t.Error("a second daemon took a socket that was being served")
+	} else if !strings.Contains(err.Error(), "already running") {
+		t.Errorf("refused with %q, which does not say a daemon is already there", err)
+	}
+}

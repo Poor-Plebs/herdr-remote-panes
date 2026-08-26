@@ -410,25 +410,58 @@ func (d *Daemon) Run() error {
 	}
 }
 
+// handoverWait is how long a starting daemon will wait for the one it is
+// replacing to let go of the socket.
+//
+// Restarting Herdr starts this one before the old one has finished: they
+// overlap, and the socket belongs to the old one until it does. Refusing there
+// leaves nothing running at all -- Herdr does not retry a startup command that
+// exited, so the new daemon is gone, and when the old one goes a moment later
+// every action says there is no daemon, which is true and unfixable without
+// restarting again.
+//
+// Generously long, because what it costs is a daemon that is idle for a minute
+// in the one case where something really is already serving, and what it saves
+// is a plugin that does nothing until somebody works out why.
+var handoverWait = 90 * time.Second
+
 // listenControl binds the control socket, clearing a socket left behind by a
-// daemon that did not shut down cleanly.
+// daemon that did not shut down cleanly and waiting out one that is still
+// shutting down.
 func listenControl(socket string) (net.Listener, error) {
-	listener, err := net.Listen("unix", socket)
-	if err == nil {
+	giveUp := time.Now().Add(handoverWait)
+	for waited := false; ; {
+		listener, err := net.Listen("unix", socket)
+		if err == nil {
+			return listener, restrict(socket, listener)
+		}
+
+		if conn, dialErr := net.DialTimeout("unix", socket, time.Second); dialErr == nil {
+			conn.Close()
+			// Someone is answering. On a restart that is the daemon this one
+			// is replacing, on its way out.
+			if time.Now().After(giveUp) {
+				return nil, fmt.Errorf("another herdr-remote-panes daemon is already running")
+			}
+			if !waited {
+				log.Print("another daemon still has the control socket; waiting for it to stop")
+				waited = true
+			}
+			time.Sleep(250 * time.Millisecond)
+			continue
+		}
+
+		// Nothing answering, so the file is what a daemon that was killed
+		// leaves behind.
+		if rmErr := os.Remove(socket); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			return nil, err
+		}
+		listener, err = net.Listen("unix", socket)
+		if err != nil {
+			return nil, err
+		}
 		return listener, restrict(socket, listener)
 	}
-	if conn, dialErr := net.DialTimeout("unix", socket, time.Second); dialErr == nil {
-		conn.Close()
-		return nil, fmt.Errorf("another herdr-remote-panes daemon is already running")
-	}
-	if rmErr := os.Remove(socket); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
-		return nil, err
-	}
-	listener, err = net.Listen("unix", socket)
-	if err != nil {
-		return nil, err
-	}
-	return listener, restrict(socket, listener)
 }
 
 // restrict keeps the control socket private to its owner.
