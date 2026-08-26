@@ -1,1 +1,5 @@
 /bin/
+# `go build ./tools/mutants` from here writes this, and once wrote it into a
+# commit. The Makefile runs the tool with `go run`, so the binary is never
+# wanted.
+/mutants
