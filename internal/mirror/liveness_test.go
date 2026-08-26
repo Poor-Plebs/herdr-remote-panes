@@ -63,9 +63,19 @@ func TestLivenessRejectsDeadAndCorruptMarks(t *testing.T) {
 	// look: the check for whether the process is still there is kill(2) with
 	// signal 0, and to kill(2) a pid of 0 means every process in this group
 	// and a negative one means a group of its own choosing. Nothing is
-	// delivered with signal 0, so today this is only a wrong answer -- but it
-	// is a wrong answer that the guard above is the only thing preventing.
-	for _, pid := range []string{"0", "-1", "-12345"} {
+	// delivered with signal 0, so today this is only a wrong answer.
+	//
+	// The last of them does not look like a pid at all, and Atoi does not
+	// reject it: out of range comes back as an error *and* the largest int,
+	// which is the one bad-input shape that arrives as a plausible number.
+	// Truncated to the kernel's 32-bit pid it can land on -1, which is the
+	// value kill(2) reads as every process the caller may signal.
+	//
+	// Two things stop all of this, and only one of them is portable: the guard
+	// above, and -- on Linux -- reading /proc/<pid>/comm, which no pid here
+	// has. On a system with no /proc that check passes everything, so the
+	// guard is the whole of it.
+	for _, pid := range []string{"0", "-1", "-12345", "99999999999999999999"} {
 		write("w1:p7", pid)
 		if IsLive("w1:p7") {
 			t.Errorf("a mark holding the pid %s read as live", pid)

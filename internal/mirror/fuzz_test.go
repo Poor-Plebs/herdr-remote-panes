@@ -18,6 +18,7 @@ func FuzzDecodeFrame(f *testing.F) {
 		`{"bytes":"aGVsbG8="}`, `{"bytes":"aGVsbG8"}`, `{"bytes":"aGVsbG8=!!!"}`,
 		`{"bytes":"not!base64!"}`, `{"type":"resize","cols":80}`,
 		"herdr: something happened", `{"bytes":123}`, `{"bytes":null}`,
+		`{"bytes":"aGVsbG8=","bytes":123}`,
 	} {
 		f.Add([]byte(seed))
 	}
@@ -52,4 +53,21 @@ func FuzzDecodeFrame(f *testing.F) {
 			t.Fatalf("decodeFrame(%q) gave %q then %q", line, raw, again)
 		}
 	})
+}
+
+func TestAFrameThatOnlyHalfDecodedIsRefused(t *testing.T) {
+	// Duplicate keys are valid JSON -- json.Valid says yes, so the fuzz target
+	// above passes them straight through -- and Unmarshal takes them in order:
+	// the first "bytes" lands in the struct, the second raises a type error.
+	// That is the one shape where the decode error and the empty field
+	// disagree, and it is the only thing keeping the two halves of that guard
+	// from being interchangeable.
+	//
+	// The frame is malformed. Writing the half of it that did decode puts a
+	// remote machine's half-read output into a terminal as though it were
+	// whole.
+	line := []byte(`{"bytes":"aGVsbG8=","bytes":123}`)
+	if raw, ok := decodeFrame(line); ok {
+		t.Errorf("a frame that failed to decode was written to the pane as %q", raw)
+	}
 }

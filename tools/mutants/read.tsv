@@ -58,3 +58,13 @@ internal/text/text.go	> -> >=	if pad := width - Width(s); pad > 0 {
 # unreachable: Wrap refuses a line budget below one, so cut is never handed an empty list
 internal/text/text.go	> -> >=	if more && len(lines) > 0 {
 
+
+# Equivalent on Linux only. Both spellings end up at sameProgram, which reads
+# /proc/<pid>/comm and rejects pid 0 and the clamped-int an out-of-range Atoi
+# hands back. On a system with no /proc that check passes everything and the
+# guard is the whole of it, which is what TestLivenessRejectsDeadAndCorruptMarks
+# asks about.
+internal/mirror/liveness.go	|| -> &&	if err != nil || pid <= 0 {
+
+# Same: pid 0 gets past the guard, and /proc/0/comm is what stops it here.
+internal/mirror/liveness.go	<= -> <	if err != nil || pid <= 0 {
