@@ -744,3 +744,40 @@ func TestDisconnectWithNothingToDisconnectSaysHow(t *testing.T) {
 		}
 	}
 }
+
+func TestHowWideStatusMayDraw(t *testing.T) {
+	// `stty size` is the terminal's answer, and it is read as text: the width
+	// is the second of two fields. Everything else it might say -- a machine
+	// with no terminal, a truncated answer, a nonsense number -- means "no
+	// limit", which is what the plugin-action and piped cases want anyway.
+	//
+	// Driven through a stand-in on PATH, so what is checked is the parsing
+	// rather than a copy of it.
+	for _, tt := range []struct {
+		what, script string
+		want         int
+	}{
+		{"an ordinary terminal", `echo "24 80"`, 80},
+		{"a wide one", `echo "50 200"`, 200},
+		{"no terminal at all", `exit 1`, 0},
+		{"nothing said", `echo ""`, 0},
+		{"only the rows", `echo "24"`, 0},
+		{"more than it was asked", `echo "24 80 extra"`, 0},
+		{"a width that is not a number", `echo "24 wide"`, 0},
+		{"a width of zero", `echo "24 0"`, 0},
+		{"a negative width", `echo "24 -1"`, 0},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "stty"),
+				[]byte("#!/bin/sh\n"+tt.script+"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			if got := outputWidth(); got != tt.want {
+				t.Errorf("stty said %q, read as %d, want %d", tt.script, got, tt.want)
+			}
+		})
+	}
+}
