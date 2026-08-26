@@ -2012,3 +2012,58 @@ func TestARestartBringsBackAMachineNobodyNamesAgain(t *testing.T) {
 		t.Errorf("the machine did not come back connected: %+v", hosts)
 	}
 }
+
+func TestTerminalsComeBackOneAtATime(t *testing.T) {
+	// The README promises a machine reconnects "with as many terminals as it
+	// had, opened one at a time rather than all at once". The restart test
+	// above allows for that -- it runs more passes than it needs -- but would
+	// pass just as happily if they all arrived at once, which is the thing the
+	// promise is about.
+	//
+	// It matters on the far side rather than here: each terminal is an ssh
+	// connection to the same machine, and a restart with several machines
+	// remembered would open every terminal of every one of them at once.
+	//
+	// Counted as a rate rather than as a total, because connecting restores
+	// some by itself and the promise is about how fast the rest arrive.
+	held := withFakeHerdr(t)
+	cfg := machineConfig("bot")
+
+	const had = 5
+	before := New(cfg)
+	if reply := before.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	for i := 1; i < had; i++ {
+		if reply := before.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
+			t.Fatalf("open: %s", reply.Message)
+		}
+	}
+	before.reconcileAll()
+	terminalsAreRunning(t, held())
+	before.persist()
+	if got := panesFor(held(), "bot"); got != had {
+		t.Fatalf("started with %d terminals, want %d", got, had)
+	}
+
+	herdrRestarted(t)
+	after := New(cfg)
+	if reply := after.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("reconnect: %s", reply.Message)
+	}
+
+	previous := panesFor(held(), "bot")
+	for pass := 1; pass <= had+3; pass++ {
+		after.reconcileAll()
+		terminalsAreRunning(t, held())
+		now := panesFor(held(), "bot")
+		if now-previous > 1 {
+			t.Errorf("pass %d brought back %d terminals at once, want at most one: "+
+				"a restart should not be a burst of ssh connections", pass, now-previous)
+		}
+		previous = now
+	}
+	if previous != had {
+		t.Errorf("the machine settled at %d terminals, want the %d it had", previous, had)
+	}
+}
