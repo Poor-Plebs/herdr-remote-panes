@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Each of these used to pass silently and behave as something else. A config
@@ -1309,6 +1310,56 @@ func TestAPathOnlyAShellCouldReadIsReported(t *testing.T) {
 			}
 			if said != tt.wantSaid {
 				t.Errorf("%s: said %v, want %v; problems were %v", tt.what, said, tt.wantSaid, cfg.Problems())
+			}
+		})
+	}
+}
+
+func TestAPollIntervalThatIsNotUsedSaysSo(t *testing.T) {
+	// This is how often every machine is reached over ssh, and anything the
+	// clamp refuses becomes two seconds. Somebody writing "30" for half a
+	// minute gets fifteen times the traffic they asked for, on every machine,
+	// with a file in front of them saying 30.
+	for _, tt := range []struct {
+		what, body string
+		wantSaid   bool
+		want       time.Duration
+	}{
+		{"no unit", `{"poll_interval":"30","hosts":[]}`, true, 2 * time.Second},
+		{"words", `{"poll_interval":"2 seconds","hosts":[]}`, true, 2 * time.Second},
+		{"nothing at all", `{"poll_interval":"0s","hosts":[]}`, true, 2 * time.Second},
+		{"backwards", `{"poll_interval":"-5s","hosts":[]}`, true, 2 * time.Second},
+		{"faster than any machine could answer", `{"poll_interval":"10ms","hosts":[]}`, true, 2 * time.Second},
+
+		// Used as written, so nothing to say.
+		{"half a minute", `{"poll_interval":"30s","hosts":[]}`, false, 30 * time.Second},
+		{"the floor itself", `{"poll_interval":"500ms","hosts":[]}`, false, 500 * time.Millisecond},
+		{"absent", `{"hosts":[]}`, false, 2 * time.Second},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			said := false
+			for _, problem := range cfg.Problems() {
+				if strings.Contains(problem, "poll_interval") {
+					said = true
+				}
+			}
+			if said != tt.wantSaid {
+				t.Errorf("said %v, want %v; problems were %v", said, tt.wantSaid, cfg.Problems())
+			}
+			// And what is said matches what is done. Written out rather than
+			// measured against Interval(), which would agree with itself.
+			if got := cfg.Interval(); got != tt.want {
+				t.Errorf("machines are polled every %s, want %s", got, tt.want)
 			}
 		})
 	}

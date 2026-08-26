@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -45,6 +46,22 @@ func (c Config) Problems() []string {
 	// and what somebody sees for it is "no herdr found on the machine, set
 	// herdr_bin if it is installed elsewhere there", which is the one thing
 	// they have already done.
+	// How often every machine is reached over ssh. Unparseable or too fast and
+	// the default goes back in its place -- so "30", meaning half a minute,
+	// polls fifteen times a second more often than that instead, quietly, on
+	// every machine at once. The one setting here whose surprise costs
+	// somebody else's network.
+	if written, err := time.ParseDuration(c.PollInterval); err != nil {
+		problems = append(problems, fmt.Sprintf(
+			"poll_interval %q is not a length of time, so machines are polled every %s; "+
+				"write it with a unit, as 30s or 500ms", c.PollInterval, c.Interval()))
+	} else if written < MinPollInterval {
+		problems = append(problems, fmt.Sprintf(
+			"poll_interval %q is faster than %s, which is more than a machine can keep up "+
+				"with over ssh; machines are polled every %s instead",
+			c.PollInterval, MinPollInterval, c.Interval()))
+	}
+
 	if unexpanded(c.HerdrBin) {
 		problems = append(problems, fmt.Sprintf(
 			"herdr_bin %q is expanded by a shell, and this one is not run through a "+

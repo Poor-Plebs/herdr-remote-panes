@@ -652,10 +652,18 @@ func describeDropped(index int, h Host) string {
 	return fmt.Sprintf("machine %d under hosts has no target and is ignored", index+1)
 }
 
+// MinPollInterval is the fastest poll a machine could be asked to keep up with
+// over ssh. Below it the default is used instead.
+//
+// Named so that the clamp and the warning about it cannot drift: a message
+// quoting a number written down beside the check is a message that goes stale
+// the first time the check moves.
+const MinPollInterval = 500 * time.Millisecond
+
 // Interval parses PollInterval, clamping it to something a remote can sustain.
 func (c Config) Interval() time.Duration {
 	d, err := time.ParseDuration(c.PollInterval)
-	if err != nil || d < 500*time.Millisecond {
+	if err != nil || d < MinPollInterval {
 		return 2 * time.Second
 	}
 	return d
