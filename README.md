@@ -42,7 +42,7 @@ need nothing but an SSH server you can already reach.
 That takes the latest commit. To pin a release instead:
 
 ```bash
-herdr plugin install Poor-Plebs/herdr-remote-panes --ref v0.2.1
+herdr plugin install Poor-Plebs/herdr-remote-panes --ref v0.2.2
 ```
 
 Updating is the same command again — there is no separate update. Herdr shows
@@ -743,9 +743,9 @@ git push && git push origin v0.2.0
 gh release create v0.2.0 --title "v0.2.0 — ..." --notes-file notes.md
 ```
 
-The notes say what somebody upgrading would notice, in the order they would
-notice it, rather than listing commits — the log is already there for anyone who
-wants it.
+The notes are sections — Fixed, New, Changed, whatever the release has — and a
+bullet each: one line saying what somebody upgrading would notice, and a link to
+the commit it came from.
 
 ## Trust
 
