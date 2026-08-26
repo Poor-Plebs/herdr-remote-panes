@@ -3300,3 +3300,37 @@ func TestAMachineWithoutHerdrIsRecognisedFromTheErrorItself(t *testing.T) {
 		t.Errorf("summarizeError(%v) = %q, want the sentence about falling back", err, got)
 	}
 }
+
+func TestLeftoverPanesAreClosedWithoutAskingWhereTheSpaceIs(t *testing.T) {
+	// Panes wearing a machine's name with no mirror behind them are husks a
+	// Herdr restart left in its space. Nothing had ever called the thing that
+	// clears them, so the lookup at the top of it -- insurance for a machine
+	// that got here without a workspace id -- could be turned inside out: the
+	// space is known, the lookup runs anyway, and if it comes back empty every
+	// husk is left where it is.
+	held := withFakeHerdr(t)
+	d := withConfig(&Daemon{}, config.Defaults())
+
+	state := newTestHost()
+	state.host = config.Host{Target: "bot"}
+	state.workspaceID = "w1"
+	// One husk, and one pane this machine is still tracking. Only the husk
+	// should go.
+	state.mirrors["term-1"] = "w1:p2"
+	index := newPaneIndex([]herdrcli.Pane{
+		{PaneID: "w1:p1", WorkspaceID: "w1", Label: "shell@bot"},
+		{PaneID: "w1:p2", WorkspaceID: "w1", Label: "work@bot"},
+	})
+
+	d.closeOrphans(state, index)
+
+	if index.alive["w1:p1"] {
+		t.Error("a husk wearing the machine's name was left in its space")
+	}
+	if !index.alive["w1:p2"] {
+		t.Error("a pane the machine is still tracking was closed as a husk")
+	}
+	if n := held().Calls["workspace list"]; n != 0 {
+		t.Errorf("clearing a known space asked Herdr where it was %d times", n)
+	}
+}
