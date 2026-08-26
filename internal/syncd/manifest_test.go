@@ -197,3 +197,34 @@ func TestEveryCommandTheManifestRunsIsOneThisBinaryHas(t *testing.T) {
 		}
 	}
 }
+
+func TestTheVersionIsTheSameInBothPlacesItIsWritten(t *testing.T) {
+	// A release is a tag, and the tag is not in the repository at the moment
+	// the version is bumped -- so nothing can hold either of these to it. What
+	// can be held is that the two agree with each other, which is what went
+	// wrong: v0.2.0 was tagged and released with the manifest still saying
+	// 0.1.0, because the release notes had it written down that the README was
+	// the only place a version appears.
+	manifest, err := os.ReadFile("../../herdr-plugin.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := regexp.MustCompile(`(?m)^version = "([^"]+)"`).FindSubmatch(manifest)
+	if declared == nil {
+		t.Fatal("the manifest no longer declares a version")
+	}
+
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned := regexp.MustCompile(`--ref v([0-9]+\.[0-9]+\.[0-9]+)`).FindSubmatch(readme)
+	if pinned == nil {
+		t.Fatal("the README no longer shows how to pin a version")
+	}
+
+	if string(declared[1]) != string(pinned[1]) {
+		t.Errorf("the manifest says %q and the README pins v%s; a release bumps both",
+			declared[1], pinned[1])
+	}
+}

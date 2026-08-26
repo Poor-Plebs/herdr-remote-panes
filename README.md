@@ -285,6 +285,39 @@ All optional, in `$(herdr plugin config-dir poorplebs.remote-panes)/config.json`
 
 ## When something looks wrong
 
+**Installing fails with `failed to start: No such file or directory`.**
+
+```
+plugin build failed  build: 1/1
+command: go build -trimpath -o bin/herdr-remote-panes .
+error: failed to start: No such file or directory (os error 2)
+```
+
+That is Herdr failing to *run* `go`, not Go failing to build anything — a
+compile error would come back as compiler output. The checkout worked; what is
+missing is the Go toolchain on the PATH Herdr itself runs with.
+
+A shell where `go version` works is not the same thing. Herdr started from a
+desktop session, a login manager or a service unit inherits that environment's
+PATH, which is often much shorter than the one your `.profile` builds — and Go
+installed under `/usr/local/go/bin`, `~/go/bin`, Homebrew, Nix or mise lives in
+exactly the part that goes missing. Check what the running Herdr has rather than
+what your shell has:
+
+```bash
+# Linux
+tr '\0' '\n' < /proc/"$(pgrep -n herdr)"/environ | grep '^PATH='
+
+# macOS
+ps eww -p "$(pgrep -n herdr)" | tr ' ' '\n' | grep '^PATH='
+```
+
+If Go is not installed there, install it — this plugin is built from source on
+the machine it runs on. If it is installed but not on that PATH, put it where
+the session Herdr starts from will find it: for most desktop sessions that means
+`~/.profile` rather than `~/.bashrc`, since the latter is not read by a login
+manager.
+
 **A machine's space is missing.** You closed its terminals, and a space with
 nothing in it does not exist. The machine is still connected — the menu says so
 — and `enter` on it opens a terminal again.
@@ -615,10 +648,12 @@ make check                                    # green, from a clean tree
 go test -run XXX -fuzz FuzzDecodeFrame -fuzztime 40s ./internal/mirror/
 ```
 
-Then the one thing that is easy to forget: the install line near the top of this
-README pins a version, and it is the only place a version number is written
-down. The release badge reads the latest release itself and needs nothing. Bump
-the pin, commit it, and tag *that* commit before pushing either:
+Then the two places a version number is written down: the install line near the
+top of this README, and `version` in `herdr-plugin.toml`. A test holds them to
+each other, because neither can be held to the tag — at the moment they are
+bumped, the tag they name does not exist yet. The release badge reads the latest
+release itself and needs nothing. Bump both, commit, and tag *that* commit
+before pushing either:
 
 ```bash
 git tag -a v0.2.0 -F notes.md
