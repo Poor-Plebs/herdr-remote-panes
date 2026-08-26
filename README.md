@@ -297,6 +297,9 @@ That is Herdr failing to *run* `go`, not Go failing to build anything — a
 compile error would come back as compiler output. The checkout worked; what is
 missing is the Go toolchain on the PATH Herdr itself runs with.
 
+The build says so itself now, and looks in the places Go is usually installed
+before giving up. The message above is what v0.2.0 and earlier print.
+
 A shell where `go version` works is not the same thing. Herdr started from a
 desktop session, a login manager or a service unit inherits that environment's
 PATH, which is often much shorter than the one your `.profile` builds — and Go

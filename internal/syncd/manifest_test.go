@@ -2,6 +2,7 @@ package syncd
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -157,15 +158,25 @@ func TestEveryCommandTheManifestRunsIsOneThisBinaryHas(t *testing.T) {
 		t.Fatalf("found %d commands to check, which is fewer than the manifest has", len(commands))
 	}
 
-	// Where the build puts the binary, taken from the build itself.
-	built := ""
-	for i, arg := range build {
-		if arg == "-o" && i+1 < len(build) {
-			built = build[i+1]
+	// Where the build puts the binary, taken from the build itself. The
+	// manifest runs a script rather than the compiler -- a machine with no Go
+	// on it can then be told so, where spawning `go` fails before anything of
+	// ours runs -- so the -o is one level down, in what that script does.
+	buildSource := strings.Join(build, " ")
+	if len(build) > 1 && build[0] == "sh" {
+		script, err := os.ReadFile(filepath.Join("..", "..", build[1]))
+		if err != nil {
+			t.Fatalf("the manifest builds with %q and there is no such script: %v", build[1], err)
 		}
+		buildSource = string(script)
+	}
+
+	built := ""
+	if at := regexp.MustCompile(`-o (\S+)`).FindStringSubmatch(buildSource); at != nil {
+		built = at[1]
 	}
 	if built == "" {
-		t.Fatal("the build command does not say where it puts the binary")
+		t.Fatal("the build does not say where it puts the binary")
 	}
 
 	main, err := os.ReadFile("../../main.go")

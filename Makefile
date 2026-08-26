@@ -47,7 +47,7 @@ mutants:
 
 ## build: the binary Herdr runs
 build:
-	go build -trimpath -o bin/herdr-remote-panes .
+	sh build.sh
 
 clean:
 	rm -rf bin

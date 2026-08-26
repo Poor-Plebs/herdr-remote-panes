@@ -5,8 +5,11 @@ min_herdr_version = "0.8.0"
 description = "Work on other machines from one Herdr: pick a machine, get a terminal on it. Optional two-way mirroring."
 platforms = ["linux", "macos"]
 
+# Through sh rather than calling go directly: a machine without Go can then be
+# told so, where spawning `go` itself fails with "No such file or directory"
+# before anything of ours runs.
 [[build]]
-command = ["go", "build", "-trimpath", "-o", "bin/herdr-remote-panes", "."]
+command = ["sh", "build.sh"]
 
 # Reconciles remote panes into local mirror panes for the life of the session.
 [[startup]]
