@@ -101,3 +101,31 @@ internal/syncd/daemon.go	!= -> ==	if state.remoteWorkspaceID != "" {
 # The line above trims the output, so it cannot begin with a newline and the
 # index can never be 0. Both spellings of the boundary agree by construction.
 internal/remote/remote.go	>= -> >	if i := strings.IndexByte(path, '\n'); i >= 0 {
+
+# The caret's own bounds. It is drawn from a column the parser gave for a line
+# the parser gave, so neither end is reachable; the check is against a future
+# caller that computes one itself.
+tools/mutants/main.go	< -> <=	if under < 0 || under > len(trimmed) {
+tools/mutants/main.go	> -> >=	if under < 0 || under > len(trimmed) {
+
+# Wording of the summary sentence when nothing is left to count. With no
+# clauses there is no sentence to put them in, and both spellings produce the
+# same empty result.
+tools/mutants/main.go	> -> >=	case rest == 1 && len(clauses) > 0:
+tools/mutants/main.go	> -> >=	case rest > 1 && len(clauses) > 0:
+
+# Defensive, and redundant with the comparison below it: a name that did not
+# have its "len(" and ")" cut off cannot equal the assignment's left side.
+tools/mutants/main.go	|| -> &&	if !ok || name != lhs {
+
+# Three checks that each make the other two unreachable for the shapes this can
+# see. A swap is rejected by the right-hand count whether or not the left-hand
+# one is there, and an AssignStmt always has at least one of each, so no
+# spelling of these can be told from another.
+tools/mutants/main.go	|| -> &&	if st.Tok != token.ASSIGN || len(st.Lhs) != 1 || len(st.Rhs) != 1 {
+tools/mutants/main.go	&& -> ||	if (lhs == x && rhs == y) || (lhs == y && rhs == x) {
+
+# The end of a case expression, which is the character after it -- a colon,
+# which holds no operator to mutate. The start of one is reachable and is held
+# by TestACaseExpressionIsAskedAboutAtItsSwitch.
+tools/mutants/main.go	< -> <=	if pos >= s.from && pos < s.to {

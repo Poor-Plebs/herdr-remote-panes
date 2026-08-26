@@ -197,6 +197,11 @@ func TestABoundHeldToItselfIsRecognised(t *testing.T) {
 		{"the front dropped rather than the end", "s, n := \"ab\", 1\nif len(s) > n {\ns = s[n:]\n}\n_ = s", false},
 		{"a different bound in the slice", "s, n, m := \"ab\", 1, 2\nif len(s) > n {\ns = s[:m]\n}\n_ = s", false},
 		{"another slice truncated", "s, o, n := \"ab\", \"cd\", 1\nif len(s) > n {\no = o[:n]\n}\n_ = o", false},
+
+		// Two things assigned at once. The branch is not holding one value to
+		// one bound, and reading only the first of them would call a swap a
+		// clamp -- which is a survivor somebody would then skip past.
+		{"a swap", "a, b := 1, 2\nif a > b {\na, b = b, a\n}\n_ = a", false},
 	} {
 		got := clampsIn(t, tt.body)
 		if len(got) != 1 {
@@ -413,6 +418,14 @@ func f(n int) string {
 func g(n int) bool {
 	return n > 0
 }
+
+func h(ok bool) string {
+	switch {
+	case !ok:
+		return "no"
+	}
+	return "yes"
+}
 `
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "p.go", src, 0)
@@ -420,6 +433,39 @@ func g(n int) bool {
 		t.Fatal(err)
 	}
 	at := caseCoverLines(fset, file)
+
+	// The first character of a case expression, which is where the span
+	// begins. "case !ok:" puts the operator that would be mutated exactly
+	// there, and a span that excludes its own first character sends that
+	// mutation back to its own line -- where the profile has nothing, so it is
+	// skipped as unreached and the case goes unmutated again.
+	var firstInCase token.Pos
+	var itsSwitch int
+	ast.Inspect(file, func(n ast.Node) bool {
+		sw, ok := n.(*ast.SwitchStmt)
+		if !ok {
+			return true
+		}
+		for _, stmt := range sw.Body.List {
+			clause, ok := stmt.(*ast.CaseClause)
+			if !ok || len(clause.List) == 0 {
+				continue
+			}
+			// Both taken from the tree rather than counted out of the snippet,
+			// so that editing it above cannot quietly make this check nothing.
+			if unary, ok := clause.List[0].(*ast.UnaryExpr); ok {
+				firstInCase, itsSwitch = unary.OpPos, fset.Position(sw.Switch).Line
+			}
+		}
+		return true
+	})
+	if firstInCase == 0 {
+		t.Fatal("the snippet no longer has a case starting with an operator")
+	}
+	if got := at(firstInCase, fset.Position(firstInCase).Line); got != itsSwitch {
+		t.Errorf("an operator at the very start of a case expression is asked about "+
+			"at line %d, want its switch at %d", got, itsSwitch)
+	}
 
 	// Where each operator actually is, found rather than counted out by hand.
 	var found []struct {
