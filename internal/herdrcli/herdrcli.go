@@ -197,12 +197,6 @@ var waitDelay = 2 * time.Second
 
 // Run executes a Herdr CLI command and returns its decoded `result` object.
 func Run(args ...string) (json.RawMessage, error) {
-	return RunWith(nil, args...)
-}
-
-// RunWith executes a Herdr CLI command with extra environment variables,
-// which is how remote invocations select a non-default HERDR_SESSION.
-func RunWith(env []string, args ...string) (json.RawMessage, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 
@@ -214,9 +208,6 @@ func RunWith(env []string, args ...string) (json.RawMessage, error) {
 	// deadline passed, the process was killed, and this went on waiting.
 	// WaitDelay closes them and gives up shortly after.
 	cmd.WaitDelay = waitDelay
-	if env != nil {
-		cmd.Env = append(os.Environ(), env...)
-	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

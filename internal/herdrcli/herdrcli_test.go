@@ -250,6 +250,31 @@ func TestTruncateKeepsValidUTF8(t *testing.T) {
 	if got := truncate("fine"); got != "fine" {
 		t.Errorf("truncate(%q) = %q", "fine", got)
 	}
+
+	// The two either side of the bound. A response that is exactly as long as
+	// this will carry must come back as it was: shortened, it reads as a
+	// response that was cut off, and what somebody does with that is go looking
+	// for the rest of a message that was whole.
+	const max = 200
+	for _, tt := range []struct {
+		what   string
+		length int
+		cut    bool
+	}{
+		{"one short of the bound", max - 1, false},
+		{"exactly the bound", max, false},
+		{"one over it", max + 1, true},
+	} {
+		in := strings.Repeat("x", tt.length)
+		got := truncate(in)
+		if cut := got != in; cut != tt.cut {
+			t.Errorf("%s: truncate on %d characters gave %d, and %v is not what "+
+				"should happen there", tt.what, tt.length, len([]rune(got)), map[bool]string{true: "shortening it", false: "leaving it"}[cut])
+		}
+		if tt.cut && !strings.HasSuffix(got, "...") {
+			t.Errorf("%s: a shortened response does not say it was shortened: %q", tt.what, got[len(got)-8:])
+		}
+	}
 }
 
 func TestLooksLikeShellTitle(t *testing.T) {
