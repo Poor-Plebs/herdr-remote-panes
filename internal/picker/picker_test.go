@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -825,5 +827,33 @@ func TestTheMenuOnlyWarnsAboutTheConfigWhenThereIsSomethingToSay(t *testing.T) {
 	// And it says something after the colon, which is the whole of its job.
 	if _, after, _ := strings.Cut(got, "Check the plugin config: "); strings.TrimSpace(after) == "" {
 		t.Errorf("the warning is %q, which stops at the colon", got)
+	}
+}
+
+func TestConfiguredMachinesAreListedFirst(t *testing.T) {
+	// The menu cannot currently hand this list over in the wrong order --
+	// the config is walked first -- so this asks the comparison directly.
+	// Otherwise the sort is a safety net with nothing behind it, and any
+	// change to it goes unnoticed until the two are walked the other way
+	// round and the answer is silently wrong.
+	entries := []Entry{
+		{Target: "only-in-ssh-config"},
+		{Target: "in-the-plugin-config", Configured: true},
+		{Target: "also-only-in-ssh-config"},
+		{Target: "also-configured", Configured: true},
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return configuredFirst(entries[i], entries[j])
+	})
+
+	var got []string
+	for _, entry := range entries {
+		got = append(got, entry.Target)
+	}
+	want := []string{"in-the-plugin-config", "also-configured", "only-in-ssh-config", "also-only-in-ssh-config"}
+	if !slices.Equal(got, want) {
+		// Order within each group must hold too: the menu's own order is the
+		// order machines were found in, and sorting is not licence to shuffle.
+		t.Errorf("sorted to %v, want %v", got, want)
 	}
 }

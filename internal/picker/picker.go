@@ -361,12 +361,21 @@ func collect() ([]Entry, string) {
 	//
 	// They are already in that order, because the config is walked before
 	// ~/.ssh/config is. This says so anyway, so that the order survives the two
-	// being walked the other way round -- which is why changing this comparison
-	// breaks no test: there is nothing here for it to reorder.
+	// being walked the other way round.
 	sort.SliceStable(entries, func(i, j int) bool {
-		return entries[i].Configured && !entries[j].Configured
+		return configuredFirst(entries[i], entries[j])
 	})
 	return entries, warning
+}
+
+// configuredFirst puts machines named in the config ahead of ones only
+// ~/.ssh/config knows about.
+//
+// Named, so that it can be tested on an order the menu cannot currently
+// produce. Inline, nothing reached it out of order and any change to it was
+// invisible -- a safety net that no longer catches anything fails quietly.
+func configuredFirst(a, b Entry) bool {
+	return a.Configured && !b.Configured
 }
 
 // status asks the daemon what it is currently mirroring. A daemon that is not
