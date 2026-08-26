@@ -100,7 +100,7 @@ func main() {
 	covered, err := coveredLines(work, pkg)
 	check(err)
 
-	muts, skipped, err := mutationsIn(work, pkg, only, covered)
+	muts, skipped, untouched, err := mutationsIn(work, pkg, only, covered)
 	check(err)
 	if len(muts) == 0 {
 		if len(only) > 0 {
@@ -111,7 +111,14 @@ func main() {
 		}
 		return
 	}
-	fmt.Printf("%d mutations on covered lines (%d skipped as unreached)\n\n", len(muts), skipped)
+	fmt.Printf("%d mutations on covered lines (%d skipped as unreached)\n", len(muts), skipped)
+	if len(untouched) > 0 {
+		// Said up front, not at the end: what this run is about to tell you is
+		// about part of a package, and it is the part you asked for rather
+		// than the part that needed looking at.
+		fmt.Printf("not this run: %s\n", strings.Join(untouched, ", "))
+	}
+	fmt.Println()
 
 	var survived []mutation
 	caught, unusable := 0, 0
@@ -227,14 +234,15 @@ func try(work, pkg string, m mutation) (string, error) {
 }
 
 // mutationsIn lists what can be changed in a package's own files.
-func mutationsIn(work, pkg string, only map[string]bool, covered map[string]map[int]bool) ([]mutation, int, error) {
+func mutationsIn(work, pkg string, only map[string]bool, covered map[string]map[int]bool) ([]mutation, int, []string, error) {
 	dir := filepath.Join(work, filepath.Clean(strings.TrimPrefix(pkg, "./")))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 
 	var out []mutation
+	var untouched []string
 	skipped := 0
 	for _, entry := range entries {
 		name := entry.Name()
@@ -242,15 +250,21 @@ func mutationsIn(work, pkg string, only map[string]bool, covered map[string]map[
 			continue
 		}
 		if len(only) > 0 && !only[name] {
+			// Named but not asked for. Reported at the end, because sweeping a
+			// package file by file is how a package comes to be called swept
+			// while two of its files have never been looked at -- which has
+			// happened twice here, both times to somebody who had the list in
+			// front of them a moment earlier.
+			untouched = append(untouched, name)
 			continue
 		}
 		rel, err := filepath.Rel(work, filepath.Join(dir, name))
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		found, err := mutationsInFile(filepath.Join(dir, name), rel)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		for _, m := range found {
 			if covered[rel][m.coverLine] {
@@ -266,7 +280,8 @@ func mutationsIn(work, pkg string, only map[string]bool, covered map[string]map[
 		}
 		return out[i].offset < out[j].offset
 	})
-	return out, skipped, nil
+	sort.Strings(untouched)
+	return out, skipped, untouched, nil
 }
 
 // mutationsInFile parses rather than matching text: a "&&" inside a string

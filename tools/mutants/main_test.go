@@ -578,3 +578,42 @@ func TestAJudgementCanBeAboutOneOfTwoIdenticalLines(t *testing.T) {
 		t.Errorf("stale = %v, want the entry naming a function nothing survived in", stale)
 	}
 }
+
+func TestASweepSaysWhichFilesItDidNotLookAt(t *testing.T) {
+	// Sweeping a package file by file is how a package comes to be called
+	// swept while two of its files have never been looked at. That has
+	// happened twice here, both times to somebody who had the file list in
+	// front of them a moment earlier, so the run says which ones it left.
+	work := t.TempDir()
+	pkg := filepath.Join(work, "internal", "thing")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"one.go", "two.go", "three.go", "one_test.go"} {
+		body := "package thing\n\nfunc f" + strings.TrimSuffix(name, ".go") + "(n int) bool { return n > 0 }\n"
+		if err := os.WriteFile(filepath.Join(pkg, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, _, untouched, err := mutationsIn(work, "./internal/thing",
+		map[string]bool{"one.go": true}, map[string]map[int]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"three.go", "two.go"}
+	if !slices.Equal(untouched, want) {
+		t.Errorf("left %v, want %v", untouched, want)
+	}
+
+	// A whole-package sweep leaves nothing, and saying so on every run would
+	// be noise on the runs that need none.
+	_, _, untouched, err = mutationsIn(work, "./internal/thing", nil, map[string]map[int]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(untouched) != 0 {
+		t.Errorf("a sweep of the whole package says it left %v", untouched)
+	}
+}

@@ -669,6 +669,10 @@ screen they are most of the rest.
 Only covered lines are tried, since a change to a line nothing runs survives by
 definition.
 
+Sweeping one file of a package is much faster than sweeping all of it, and is
+how a package comes to be called swept while two of its files have never been
+looked at. A run that was given file names says which ones it left.
+
 Survivors already read and decided against are recorded in
 `tools/mutants/read.tsv`, with a line each saying why, and marked in the report
 rather than raised again. A sweep of a package this size turns up the same dozen
