@@ -346,6 +346,11 @@ const paneModes = "\x1b[?1000l" + // mouse: clicks
 	"\x1b[?25h" + // the cursor, which a full-screen program may have hidden
 	"\x1b[0m" // colours and attributes
 
+// cancelPending abandons a control sequence in progress. ECMA-48 gives CAN
+// exactly that meaning, and a terminal not in the middle of one does nothing
+// with it -- unlike SUB, which some terminals draw a character for.
+const cancelPending = "\x18"
+
 // restorePane puts those modes back. Turning off one that was never on is
 // nothing, so this is safe to do whatever the far side did or did not set.
 func restorePane(w io.Writer) {
@@ -371,6 +376,13 @@ func observe(client *remote.Client, terminal string) error {
 	attempt := 0
 	for {
 		cols, rows := windowSize()
+		// Abandon anything the last stream left half-written. A connection
+		// that drops ends wherever it happened to be, which can be inside an
+		// escape sequence -- and the terminal then waits for the rest of it,
+		// swallowing the first bytes of whatever arrives next and acting on
+		// the two together as though they were one sequence. What that turns
+		// into is not predictable; that it is not what either side meant, is.
+		fmt.Print(cancelPending)
 		err := streamOnce(client, terminal, cols, rows, winch)
 		switch next, reset := planObserveNext(err, attempt); next {
 		case observeStop:

@@ -619,3 +619,48 @@ func TestPuttingAPaneBackHappensOnEveryWayOut(t *testing.T) {
 			"ends the modes the far side set are left on")
 	}
 }
+
+func TestAReconnectDoesNotFinishTheLastStreamsSentence(t *testing.T) {
+	// A connection that drops ends wherever it happened to be. If that is
+	// inside an escape sequence the terminal waits for the rest, and the first
+	// bytes of the next stream complete it: two halves of different sentences,
+	// read as one instruction.
+	//
+	// CAN is the one character that means "that sequence is over" and means
+	// nothing at all when there is no sequence, which is every other time this
+	// runs.
+	if cancelPending != "\x18" {
+		t.Errorf("cancelPending is %q; CAN is 0x18", cancelPending)
+	}
+	// Not SUB: it means the same thing to the parser and some terminals draw a
+	// character where it lands, which would put a mark in the pane on every
+	// reconnect.
+	if cancelPending == "\x1a" {
+		t.Error("SUB is drawn by some terminals; CAN is not")
+	}
+
+	// And it happens where a stream is started, rather than where one is
+	// known to have failed: a stream that ended cleanly can also have ended
+	// mid-sequence, and the cost of sending it when nothing is pending is
+	// nothing.
+	body, err := os.ReadFile("mirror.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observeAt := strings.Index(string(body), "func observe(")
+	if observeAt < 0 {
+		t.Fatal("observe has been renamed; this test is checking nothing")
+	}
+	rest := string(body)[observeAt:]
+	end := strings.Index(rest, "\nfunc ")
+	if end < 0 {
+		t.Fatal("could not find the end of observe")
+	}
+	loop := rest[:end]
+	if !strings.Contains(loop, "cancelPending") {
+		t.Error("observe reconnects without abandoning what the last stream left half-written")
+	}
+	if strings.Index(loop, "cancelPending") > strings.Index(loop, "streamOnce(") {
+		t.Error("the abandon happens after the stream it is meant to precede")
+	}
+}
