@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // withRemoteHerdr adds a machine that has Herdr on it to the stand-in world.
@@ -2940,5 +2941,71 @@ func TestWithScopeAllNothingIsLeftOut(t *testing.T) {
 	}
 	if status[0].Mirrors < 2 {
 		t.Errorf("scope all mirrors %d, want the machine's own terminal as well", status[0].Mirrors)
+	}
+}
+
+// withSlowPaneList makes `herdr pane list` take a moment, which is the window
+// a reconcile pass is in when it is holding no lock: it has taken its list of
+// machines and is away fetching the panes.
+func withSlowPaneList(t *testing.T, delay string) {
+	t.Helper()
+	real := os.Getenv("HERDR_BIN_PATH")
+	if real == "" {
+		t.Fatal("no stand-in herdr to wrap")
+	}
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "herdr")
+	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1 $2\" = \"pane list\" ]; then sleep %s; fi\nexec %s \"$@\"\n",
+		delay, real)
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_BIN_PATH", wrapper)
+}
+
+func TestDisconnectingDuringAPassLeavesTheWorkOnTheMachine(t *testing.T) {
+	// Disconnecting closes a machine's panes here and leaves the work running
+	// there -- that is the whole difference between it and closing the tabs,
+	// and it is what makes `enter` bring the machine straight back.
+	//
+	// A pass reconciles from a list of panes it fetched while holding no lock,
+	// because fetching it is a subprocess and holding the lock across one
+	// would stop the daemon answering. So the machine can be disconnected
+	// while that is in flight, and the pass then comes back to panes that are
+	// gone -- which is exactly what closing the tabs one at a time looks like,
+	// and with close_propagates on it closes the terminals on the machine.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+	if got := len(there().Panes); got != 1 {
+		t.Fatalf("the machine has %d terminals, want 1 to start from", got)
+	}
+
+	withSlowPaneList(t, "0.4")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		d.reconcileOnce()
+	}()
+	// Long enough to be past the snapshot and inside the fetch, short enough
+	// to be well before it returns.
+	time.Sleep(150 * time.Millisecond)
+
+	if reply := d.dispatch(Command{Cmd: "disconnect", Host: "bot"}); !reply.OK {
+		t.Fatalf("disconnect: %s", reply.Message)
+	}
+	<-done
+
+	if got := len(there().Panes); got != 1 {
+		t.Errorf("the machine has %d terminals after disconnecting, want 1: "+
+			"disconnecting closes panes here and leaves the work there", got)
 	}
 }

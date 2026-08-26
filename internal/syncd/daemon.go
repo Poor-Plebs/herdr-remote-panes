@@ -1635,6 +1635,20 @@ func (d *Daemon) reconcileOnce() {
 			defer wg.Done()
 			d.mu.Lock()
 			defer d.mu.Unlock()
+			// Disconnected while this pass was away fetching its pane
+			// listing. The lock was released for that -- it is a subprocess,
+			// and holding it across one would stop the daemon answering --
+			// so the machine can be gone and its panes closed by the time
+			// this comes back.
+			//
+			// Reconciling it now reads those panes as tabs closed one at a
+			// time, which is what disconnecting looks like from here and is
+			// not what it means: with close_propagates on, that closes the
+			// terminals on the machine, and disconnecting is the one thing
+			// that promises not to.
+			if d.hosts[state.host.Target] != state {
+				return
+			}
 			if state.gaveUp {
 				return
 			}
