@@ -39,6 +39,26 @@ func (c Config) Problems() []string {
 			"workspace_format %q has no {host}, so every machine will share one space", c.WorkspaceFormat))
 	}
 
+	// A path the remote shell would have to expand. It is passed quoted, as
+	// any path holding a space or a metacharacter must be, so "~" and "$HOME"
+	// arrive as those two characters and the machine reports no such file --
+	// and what somebody sees for it is "no herdr found on the machine, set
+	// herdr_bin if it is installed elsewhere there", which is the one thing
+	// they have already done.
+	if unexpanded(c.HerdrBin) {
+		problems = append(problems, fmt.Sprintf(
+			"herdr_bin %q is expanded by a shell, and this one is not run through a "+
+				"shell; write the path out in full", c.HerdrBin))
+	}
+	for _, h := range c.Hosts {
+		if unexpanded(h.HerdrBin) {
+			problems = append(problems, fmt.Sprintf(
+				"host %q has herdr_bin %q, which is expanded by a shell and this one is "+
+					"not run through a shell; write the path out in full",
+				h.Target, h.HerdrBin))
+		}
+	}
+
 	problems = append(problems, c.ignored...)
 	for _, name := range c.unknown {
 		problems = append(problems, fmt.Sprintf(
@@ -182,4 +202,11 @@ func PlausibleTarget(target string) error {
 		}
 	}
 	return nil
+}
+
+// unexpanded reports whether a path only means what it looks like once a shell
+// has been at it. A leading "~" is a home directory and "$" is a variable, and
+// neither survives being quoted for the remote command line.
+func unexpanded(path string) bool {
+	return strings.HasPrefix(path, "~") || strings.Contains(path, "$")
 }

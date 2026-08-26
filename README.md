@@ -383,6 +383,12 @@ ssh workbox 'command -v herdr || ls ~/.local/bin/herdr /opt/herdr/bin/herdr'
 { "target": "workbox", "mode": "attach", "herdr_bin": "/opt/herdr/bin/herdr" }
 ```
 
+Write the path out in full. It is put on the command line quoted, as any path
+holding a space has to be, so `~/bin/herdr` arrives at the machine as a tilde
+and `$HOME/bin/herdr` as five characters — and the machine then reports no such
+file. A relative path is fine: ssh drops you in your home directory. The plugin
+says so if it finds one of the other two.
+
 `status` says which machine, and that the setting exists:
 
 ```

@@ -1268,3 +1268,48 @@ func TestACapThatIsNotACapSaysSo(t *testing.T) {
 		})
 	}
 }
+
+func TestAPathOnlyAShellCouldReadIsReported(t *testing.T) {
+	// herdr_bin is put on the remote command line quoted, as any path holding
+	// a space or a metacharacter has to be. So "~" arrives as a tilde and
+	// "$HOME" as five characters, the machine reports no such file, and what
+	// somebody is shown for it is "no herdr found on the machine — set
+	// herdr_bin if it is installed elsewhere there": the one thing they have
+	// already done.
+	for _, tt := range []struct {
+		what, body string
+		wantSaid   bool
+	}{
+		{"a home-relative path", `{"hosts":[{"target":"bot","herdr_bin":"~/bin/herdr"}]}`, true},
+		{"a variable in it", `{"hosts":[{"target":"bot","herdr_bin":"$HOME/bin/herdr"}]}`, true},
+		{"the same at the top level", `{"herdr_bin":"~/bin/herdr","hosts":[{"target":"bot"}]}`, true},
+		// Both of these are read by the machine as they are written: an
+		// absolute path, and a relative one, which ssh resolves from the home
+		// directory it drops you in.
+		{"an absolute path", `{"hosts":[{"target":"bot","herdr_bin":"/usr/local/bin/herdr"}]}`, false},
+		{"a relative path", `{"hosts":[{"target":"bot","herdr_bin":"bin/herdr"}]}`, false},
+		{"none given", `{"hosts":[{"target":"bot"}]}`, false},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			said := false
+			for _, problem := range cfg.Problems() {
+				if strings.Contains(problem, "herdr_bin") {
+					said = true
+				}
+			}
+			if said != tt.wantSaid {
+				t.Errorf("%s: said %v, want %v; problems were %v", tt.what, said, tt.wantSaid, cfg.Problems())
+			}
+		})
+	}
+}
