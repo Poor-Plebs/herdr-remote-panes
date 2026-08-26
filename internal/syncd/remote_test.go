@@ -3009,3 +3009,49 @@ func TestDisconnectingDuringAPassLeavesTheWorkOnTheMachine(t *testing.T) {
 			"disconnecting closes panes here and leaves the work there", got)
 	}
 }
+
+func TestTogglingMirroringOffLeavesOneTerminalWhateverYouHad(t *testing.T) {
+	// What the README promises about the m key, and what it costs. The test
+	// above toggles a machine with one terminal, where "whatever you had" says
+	// nothing at all.
+	//
+	// Both halves matter and they pull opposite ways. Here: the panes cannot
+	// be kept -- a mirror and a plain SSH terminal are nothing alike
+	// underneath -- so they go and one comes back, rather than the machine
+	// vanishing from the sidebar. There: the work is on the machine and stays
+	// there, which is the whole reason mirroring is worth the trouble, and is
+	// what makes toggling recoverable rather than destructive.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+	withConfigFile(t, `{"hosts":[{"target":"bot","mode":"attach"}]}`)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+	for i := 0; i < 2; i++ {
+		if reply := d.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
+			t.Fatalf("open: %s", reply.Message)
+		}
+		settle(t, d, here, 2, there)
+	}
+	if got := panesFor(here(), "bot"); got != 3 {
+		t.Fatalf("started with %d mirrors, want 3 so that one is a change", got)
+	}
+
+	if reply := d.dispatch(Command{Cmd: "set-mode", Host: "bot", Mode: "ssh"}); !reply.OK {
+		t.Fatalf("toggle off: %s", reply.Message)
+	}
+	settle(t, d, here, 6, there)
+
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Errorf("%d terminals here after toggling, want the one the machine is given back", got)
+	}
+	if got := len(there().Panes); got != 3 {
+		t.Errorf("the machine has %d terminals, want the 3 it had: toggling drops the "+
+			"panes here, not the work there", got)
+	}
+}
