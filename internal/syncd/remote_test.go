@@ -2558,6 +2558,20 @@ func TestAnAgentThatChangesStateOnTheMachineChangesHere(t *testing.T) {
 		t.Errorf("the agent went idle on the machine and still reads as %q here, "+
 			"so the sidebar shows it working at something it finished", status)
 	}
+
+	// And now that it has settled, nothing is reported again. "Only when it
+	// differs" is what keeps this from being a call to Herdr per pane per
+	// poll, for every mirrored pane with an agent in it, for as long as the
+	// session lasts.
+	reported := held(here(), "pane report-agent")
+	if reported == 0 {
+		t.Fatal("the agent was never reported, so this checks nothing")
+	}
+	settle(t, d, here, 4, there)
+	if got := held(here(), "pane report-agent"); got != reported {
+		t.Errorf("the agent was reported %d more times over four passes with nothing "+
+			"about it changing", got-reported)
+	}
 }
 
 func TestAPlainSSHMachineReportsNoAgents(t *testing.T) {
