@@ -82,8 +82,14 @@ func StaleMessageFor(running, installed string) string {
 		return ""
 	}
 	if running == "" {
-		// A daemon old enough not to report its build at all.
-		running = "an older build"
+		// Something answered but named no build. That is either a daemon from
+		// before builds were reported or one built outside a checkout, and
+		// which of the two cannot be told apart from here -- so this says so,
+		// rather than calling it "an older build" when it might be newer.
+		// `version` prints "unknown" in the daemon column for the same reason,
+		// and the two lines appear together.
+		return "the running daemon does not report which build it is, and " +
+			installed + " is installed; restart Herdr to be sure that is the one running"
 	}
 	return "the running daemon is " + running + " but " + installed +
 		" is installed; restart Herdr to pick up the update"

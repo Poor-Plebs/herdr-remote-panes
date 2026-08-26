@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
 	"io"
+	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -454,4 +457,105 @@ func TestTheREADMEShowsTheVersionOutputThatIsPrinted(t *testing.T) {
 	if want := shown[0]; strings.Join(got, "\n") != want {
 		t.Errorf("version prints\n%q\nand the README shows\n%q", strings.Join(got, "\n"), want)
 	}
+}
+
+// answerAs stands a daemon up on the control socket and has it answer one
+// status command with the revision given. Every version test so far has run
+// with nothing listening, which exercises exactly one of the three answers
+// reportVersion can give -- and the switch it picks with was invisible to the
+// mutation sweep until case expressions were included in it.
+func answerAs(t *testing.T, revision string) {
+	t.Helper()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	socket, err := syncd.ControlSocket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		var cmd syncd.Command
+		if err := json.NewDecoder(conn).Decode(&cmd); err != nil {
+			return
+		}
+		_ = json.NewEncoder(conn).Encode(syncd.Reply{OK: true, Revision: revision})
+	}()
+	t.Cleanup(func() {
+		listener.Close()
+		<-served
+	})
+}
+
+func TestVersionNamesTheBuildTheDaemonAnswersWith(t *testing.T) {
+	answerAs(t, "9fcc667")
+
+	var out, warn strings.Builder
+	if err := reportVersion(&out, &warn, "9fcc667"); err != nil {
+		t.Fatalf("version failed: %v", err)
+	}
+
+	daemon := daemonLine(t, out.String())
+	if !strings.Contains(daemon, "9fcc667") {
+		t.Errorf("the daemon line does not name the build it answered with: %q", daemon)
+	}
+	if strings.Contains(daemon, "unknown") || strings.Contains(daemon, "not running") {
+		t.Errorf("a daemon that answered is reported as if it had not: %q", daemon)
+	}
+	if warn.String() != "" {
+		t.Errorf("warned about a daemon running the installed build: %q", warn.String())
+	}
+}
+
+func TestVersionSaysUnknownWhenTheDaemonNamesNoBuild(t *testing.T) {
+	// What `go run` and a test binary look like: something answers, but it has
+	// no commit of its own to report. A blank column reads as a bug.
+	answerAs(t, "")
+
+	var out, warn strings.Builder
+	if err := reportVersion(&out, &warn, "9fcc667"); err != nil {
+		t.Fatalf("version failed: %v", err)
+	}
+
+	daemon := daemonLine(t, out.String())
+	if !strings.Contains(daemon, "unknown") {
+		t.Errorf("a daemon that named no build leaves the column blank: %q", daemon)
+	}
+	// The warning appears directly under that column, and used to call the
+	// same daemon "an older build" -- a guess, stated as fact, about the one
+	// thing the line above had just said was unknown. It might equally be
+	// newer: a checkout run with `go run` reports no build either.
+	if strings.Contains(warn.String(), "an older build") {
+		t.Errorf("the column says unknown and the warning says it knows:\n%s%s", out.String(), warn.String())
+	}
+	if !strings.Contains(warn.String(), "restart Herdr") {
+		t.Errorf("a daemon that might not be the installed build goes unmentioned: %q", warn.String())
+	}
+}
+
+// daemonLine picks the daemon's row out of the two columns version prints, so
+// that a test about the daemon's build cannot be satisfied by the binary's.
+func daemonLine(t *testing.T, printed string) string {
+	t.Helper()
+	for _, line := range strings.Split(printed, "\n") {
+		if strings.HasPrefix(line, daemonLabel) {
+			return line
+		}
+	}
+	t.Fatalf("no %q line in the version output:\n%s", daemonLabel, printed)
+	return ""
 }

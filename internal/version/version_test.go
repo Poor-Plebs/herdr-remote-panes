@@ -103,11 +103,13 @@ func TestWhenTheRunningDaemonIsWorthMentioning(t *testing.T) {
 			mentions: []string{"427e2ad", "9fcc667", "restart Herdr"},
 		},
 		{
-			// The daemon answers, but is old enough not to say which build it
-			// is. Silence there would be the update-is-invisible case again.
-			what:    "a daemon too old to say still gets mentioned",
+			// The daemon answers, but does not say which build it is.
+			// Silence there would be the update-is-invisible case again --
+			// and so would claiming to know which build it is, which is what
+			// the daemon column two lines above has just said it does not.
+			what:    "a daemon that names no build still gets mentioned",
 			running: "", installed: "9fcc667",
-			mentions: []string{"an older build", "9fcc667", "restart Herdr"},
+			mentions: []string{"does not report which build", "9fcc667", "restart Herdr"},
 		},
 	} {
 		t.Run(tt.what, func(t *testing.T) {
