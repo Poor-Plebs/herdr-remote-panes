@@ -65,3 +65,54 @@ func TestEveryLinkBetweenTheDocsPointsAtSomething(t *testing.T) {
 		t.Error("no relative links were found to follow, so this test proved nothing")
 	}
 }
+
+// proseWidth is the column the prose in these pages is wrapped at. Not a rule
+// about taste: every paragraph here is already wrapped to roughly this, so one
+// that is not stands out as a paragraph somebody edited and did not re-flow,
+// and reads differently from the ones around it in an editor that does not
+// wrap.
+//
+// Generous, so that a sentence running a little over is left alone and only a
+// paragraph that lost its wrapping altogether is reported.
+const proseWidth = 88
+
+func TestTheProseInTheDocsStaysWrapped(t *testing.T) {
+	// The line this was written for ran to 117 columns in the middle of a
+	// paragraph wrapped at 80: an edit that added a clause and never re-flowed
+	// what followed. Nothing reads markdown for shape, so it sat there.
+	for _, page := range docPagesFor(t) {
+		raw, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fenced := false
+		for n, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "```") {
+				fenced = !fenced
+				continue
+			}
+			switch {
+			case fenced:
+				// Quoted output, which has whatever width it has. Wrapping it
+				// would be a picture of something the program does not print.
+			case strings.HasPrefix(strings.TrimSpace(line), "|"):
+				// A table row cannot be wrapped and stay a table row.
+			case strings.Contains(line, "](http"):
+				// A badge or a link whose target is longer than the line.
+			case len([]rune(line)) > proseWidth:
+				t.Errorf("%s:%d is %d columns and is prose, so it wants re-wrapping:\n  %s",
+					filepath.Base(page), n+1, len([]rune(line)), line)
+			}
+		}
+	}
+}
+
+// docPagesFor is every markdown page in the repository.
+func docPagesFor(t *testing.T) []string {
+	t.Helper()
+	pages, err := filepath.Glob(filepath.Join("docs", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(pages, "README.md")
+}
