@@ -2412,6 +2412,11 @@ func (d *Daemon) label(host config.Host, rp herdrcli.Pane, name string) string {
 	// a different route.
 	replacer := strings.NewReplacer(
 		"{name}", name,
+		// Already safe: DisplayLabel cleans a label once, where it is read,
+		// so that the pane's name, the space's name and the suffix they are
+		// matched against cannot disagree about it. Left here because reading
+		// this line should not require knowing that, and because it costs a
+		// pass over a string that is already short.
 		"{host}", text.Sanitize(host.DisplayLabel()),
 		"{agent}", rp.SafeAgent(),
 		"{pane}", text.Sanitize(rp.PaneID),

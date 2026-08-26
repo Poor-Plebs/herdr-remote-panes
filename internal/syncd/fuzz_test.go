@@ -2,7 +2,10 @@ package syncd
 
 import (
 	"encoding/json"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
+	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 )
@@ -273,6 +276,68 @@ func FuzzPlanLabelsTellsPanesApart(f *testing.F) {
 				t.Fatalf("terminals %q and %q are both called %q", other, pane.TerminalID, label)
 			}
 			byLabel[label] = pane.TerminalID
+		}
+	})
+}
+
+func FuzzLabelIsSafeToDraw(f *testing.F) {
+	for _, seed := range []string{"build", "", "\x1b[31mred", "日本語", "a\nb", "\x00\x01", "  "} {
+		f.Add(seed, seed, seed, "w1:p1", seed)
+		// The pane's id as well. It is Herdr's own and always tame, but it is
+		// what a terminal falls back to being called when its name cleans away
+		// to nothing, and it is what {pane} puts in the sidebar -- so holding
+		// the others while handing this one through untouched leaves a way in
+		// that looks closed.
+		f.Add(seed, seed, seed, seed, seed)
+	}
+
+	f.Fuzz(func(t *testing.T, title, cwd, agent, paneID, machine string) {
+		// A format naming every part this substitutes, which the settings table
+		// offers and the default does not use. With the default, {agent} and
+		// {pane} are never put anywhere, so nothing about making them safe is
+		// exercised -- the first draft of this held two of the four.
+		//
+		// The format itself is left alone: one with an escape sequence in it is
+		// somebody's own doing, in their own config.
+		cfg := config.Defaults()
+		cfg.LabelFormat = "{name} {agent} {pane} @{host}"
+		d := New(cfg)
+		pane := herdrcli.Pane{
+			PaneID:      paneID,
+			TerminalID:  "t1",
+			Title:       title,
+			Cwd:         cwd,
+			Agent:       agent,
+			AgentStatus: "idle",
+		}
+
+		// The machine's name is somebody's label from their own config, but it
+		// reaches the sidebar the same way, and a label is not always typed:
+		// with none, it is the target, and a target can come from a selection.
+		host := config.Host{Target: "bot", Label: machine}
+		got := d.label(host, pane, pane.DisplayName())
+
+		// Drawn into the sidebar on every pass. Anything here that is not a
+		// character a terminal draws is a character it acts on instead, and all
+		// four of these -- the title, the directory, the agent's name, the
+		// pane's id -- come from the far machine.
+		for _, r := range got {
+			if !unicode.IsGraphic(r) {
+				t.Fatalf("label(%q, %q, %q, %q) = %q, which holds %U",
+					title, cwd, agent, paneID, got, r)
+			}
+		}
+		// And it says something. A terminal called nothing cannot be told from
+		// any other terminal called nothing, which is what the fallback to the
+		// pane's own id is for.
+		if strings.TrimSpace(got) == "" {
+			t.Fatalf("label(%q, %q, %q, %q) came back empty", title, cwd, agent, paneID)
+		}
+		// The same pane twice is the same name: this is compared against what
+		// the pane is already called to decide whether to rename it, so a name
+		// that drifts renames every pass.
+		if again := d.label(host, pane, pane.DisplayName()); again != got {
+			t.Fatalf("the same pane was called %q then %q", got, again)
 		}
 	})
 }
