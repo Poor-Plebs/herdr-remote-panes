@@ -1148,6 +1148,17 @@ func TestFittingAStatusIntoItsColumn(t *testing.T) {
 		}
 	}
 
+	// Nothing to fit, which the one caller does not produce -- every branch of
+	// statusSpans says at least one thing -- and which this must not fall over
+	// on regardless. The check for a single piece left is what keeps it safe:
+	// reach for that piece before checking there is one, and a machine with
+	// nothing to say takes the menu down with it.
+	for _, room := range []int{-1, 0, 1, 40} {
+		if got := fitStatus(nil, room); len(got) != 0 {
+			t.Errorf("fitting nothing into %d columns produced %d pieces", room, len(got))
+		}
+	}
+
 	// One column short: the tail goes rather than the state.
 	short := fitStatus(full(), width-1)
 	if !strings.HasPrefix(plainOf(short), "unreachable") {
