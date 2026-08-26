@@ -1274,3 +1274,70 @@ func TestTheWarningSurvivesAPopupWorthReadingItIn(t *testing.T) {
 		}
 	}
 }
+
+func TestWhichNameFitsTheRoomThereIs(t *testing.T) {
+	// The full "target (label)" whenever it fits. When it does not, what used
+	// to be drawn was the front of the target -- and the front of a target is
+	// a login, so every machine reached as the same user came out identical.
+	for _, tt := range []struct {
+		what  string
+		entry Entry
+		width int
+		want  string
+	}{
+		{"both, when there is room", Entry{Target: "deploy@prod", Label: "prod"}, 30, "deploy@prod (prod)"},
+		{"the label, when the pair will not fit", Entry{Target: "deploy@prod", Label: "prod"}, 8, "prod"},
+		{"the target, when it is the shorter name", Entry{Target: "prod", Label: "production web server"}, 8, "prod"},
+		{"the label, when neither fits whole", Entry{Target: "deploy@prod", Label: "production-web"}, 6, "production-web"},
+		{"the target, when there is no label", Entry{Target: "raspberrypi.local"}, 8, "raspberrypi.local"},
+		{"the target, when the label repeats it", Entry{Target: "workbox", Label: "workbox"}, 4, "workbox"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			if got := nameWithin(tt.entry, tt.width); got != tt.want {
+				t.Errorf("in %d columns the name is %q, want %q", tt.width, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestANarrowMenuStillTellsMachinesApart(t *testing.T) {
+	// Three machines reached as the same user. Their targets share a prefix
+	// and their labels do not, so a narrow menu that draws targets draws the
+	// same eight characters three times.
+	entries := []Entry{
+		{Target: "deploy@prod", Label: "prod", Configured: true},
+		{Target: "deploy@staging", Label: "staging", Configured: true},
+		{Target: "deploy@canary", Label: "canary", Configured: true},
+	}
+
+	drawn := visible(strings.Join(lines(entries, 0, 54, 24), "\n"))
+
+	for _, want := range []string{"prod", "staging", "canary"} {
+		if !strings.Contains(drawn, want) {
+			t.Errorf("the menu does not name %q:\n%s", want, drawn)
+		}
+	}
+	if strings.Count(drawn, "deploy@") > 0 {
+		t.Errorf("a login is still standing in for a machine name:\n%s", drawn)
+	}
+}
+
+func TestTwoMachinesAreNeverDrawnWithTheSameName(t *testing.T) {
+	// A label can collide with another machine's target: a "staging" in
+	// ~/.ssh/config beside a configured machine labelled "staging". Two rows
+	// naming different machines identically is the thing this is here to
+	// prevent, so the one that would collide goes back to the full form.
+	entries := []Entry{
+		{Target: "deploy@staging", Label: "staging", Configured: true},
+		{Target: "staging"},
+	}
+
+	names := namesWithin(entries, 8)
+
+	if names[0] == names[1] {
+		t.Errorf("both machines are drawn as %q", names[0])
+	}
+	if names[1] != "staging" {
+		t.Errorf("the machine that owns the name lost it: %q", names[1])
+	}
+}

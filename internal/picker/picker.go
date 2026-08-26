@@ -660,6 +660,60 @@ func displayName(entry Entry) string {
 	return name
 }
 
+// nameWithin is the best name for a machine in the room available.
+//
+// Ordinarily that is the full "target (label)". When it does not fit, what got
+// drawn was the front of the target and an ellipsis -- and a login is the front
+// of the target: "deploy@prod" and "deploy@staging" both became "deploy@…",
+// two rows of a menu naming two different machines identically, with each of
+// their labels short enough to have been drawn whole.
+//
+// So when the pair will not fit, pick a name that survives instead of a prefix
+// that does not identify anything. The label goes first, being the name
+// somebody chose for the machine; the target if the label is the longer of the
+// two. If neither fits, the label still loses less: labels differ from each
+// other where several machines sharing a login do not.
+func nameWithin(entry Entry, width int) string {
+	full := displayName(entry)
+	target, label := text.Sanitize(entry.Target), text.Sanitize(entry.Label)
+	if text.Width(full) <= width || label == "" || label == target {
+		// Nothing to choose between, so the caller truncates as before.
+		return full
+	}
+	if text.Width(label) <= width {
+		return label
+	}
+	if text.Width(target) <= width {
+		return target
+	}
+	return label
+}
+
+// namesWithin picks each machine's name for a column this wide, and makes sure
+// no two of them come out the same.
+//
+// A label can collide with another machine's target -- a "staging" in
+// ~/.ssh/config beside a configured machine labelled "staging" -- and two rows
+// naming different machines identically is the thing this is here to prevent,
+// so a name that collides goes back to the full form and is cut instead.
+//
+// Computed across every machine, not the visible ones, so that a name does not
+// change as the list scrolls under the cursor.
+func namesWithin(entries []Entry, width int) []string {
+	names := make([]string, len(entries))
+	used := make(map[string]int, len(entries))
+	for i, entry := range entries {
+		names[i] = nameWithin(entry, width)
+		used[names[i]]++
+	}
+	for i, entry := range entries {
+		if used[names[i]] > 1 {
+			names[i] = displayName(entry)
+		}
+	}
+	return names
+}
+
 // nameColumn is how wide the column of machine names should be.
 //
 // It used to be whatever the popup could afford, which for the usual case --
@@ -825,6 +879,7 @@ func render(entries []Entry, selected, cols, rows int, warning string) string {
 	first, last := frame.first, frame.last
 
 	column := nameColumn(entries, cols)
+	names := namesWithin(entries, column)
 
 	var b strings.Builder
 	b.WriteString(esc + "[2J" + esc + "[H")
@@ -850,7 +905,7 @@ func render(entries []Entry, selected, cols, rows int, warning string) string {
 			number = fmt.Sprintf("%d.", i+1)
 		}
 
-		name := text.Pad(text.Truncate(displayName(entry), column), column)
+		name := text.Pad(text.Truncate(names[i], column), column)
 
 		var line string
 		state := fitStatus(statusSpans(entry), cols-chromeWidth-text.Width(name))
