@@ -97,3 +97,7 @@ internal/syncd/daemon.go	> -> >=	if state.lastReopen.IsZero() || time.Since(stat
 # way. Inverted it says "its space on the machine is gone" about a machine that
 # never had one, which is wrong and is still only a log line.
 internal/syncd/daemon.go	!= -> ==	if state.remoteWorkspaceID != "" {
+
+# The line above trims the output, so it cannot begin with a newline and the
+# index can never be 0. Both spellings of the boundary agree by construction.
+internal/remote/remote.go	>= -> >	if i := strings.IndexByte(path, '\n'); i >= 0 {
