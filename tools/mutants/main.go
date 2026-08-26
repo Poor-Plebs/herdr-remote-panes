@@ -57,7 +57,10 @@ type mutation struct {
 	line     int
 	column   int
 	source   string
-	clamp    bool // the boundary maps to itself, so both spellings agree
+	// coverLine is where to ask whether this line runs. The same as line,
+	// except inside a case expression, which a coverage profile never records.
+	coverLine int
+	clamp     bool // the boundary maps to itself, so both spellings agree
 }
 
 func main() {
@@ -228,7 +231,7 @@ func mutationsIn(work, pkg string, only map[string]bool, covered map[string]map[
 			return nil, 0, err
 		}
 		for _, m := range found {
-			if covered[rel][m.line] {
+			if covered[rel][m.coverLine] {
 				out = append(out, m)
 			} else {
 				skipped++
@@ -266,6 +269,54 @@ func mutationsInFile(path, rel string) ([]mutation, error) {
 	}
 	clampAt := map[token.Pos]bool{}
 
+	// Where a case expression should look for its coverage.
+	//
+	// A coverage profile records the body of a case, never the line the case is
+	// written on -- so every "case x > 1:" in the tree was being filtered out as
+	// a line nothing runs, and the ones that did get mutated only did because
+	// they happened to fall inside some other block's range. This plugin decides
+	// a great deal in switch statements, so that was most of them.
+	//
+	// A case expression is evaluated whenever the switch is reached, so the
+	// switch's own line is the honest place to ask.
+	type caseSpan struct {
+		from, to token.Pos
+		line     int
+	}
+	var caseSpans []caseSpan
+	ast.Inspect(file, func(n ast.Node) bool {
+		var body *ast.BlockStmt
+		var at token.Pos
+		switch sw := n.(type) {
+		case *ast.SwitchStmt:
+			body, at = sw.Body, sw.Switch
+		case *ast.TypeSwitchStmt:
+			body, at = sw.Body, sw.Switch
+		default:
+			return true
+		}
+		for _, stmt := range body.List {
+			clause, ok := stmt.(*ast.CaseClause)
+			if !ok || len(clause.List) == 0 {
+				continue
+			}
+			caseSpans = append(caseSpans, caseSpan{
+				from: clause.List[0].Pos(),
+				to:   clause.List[len(clause.List)-1].End(),
+				line: fset.Position(at).Line,
+			})
+		}
+		return true
+	})
+	coverLine := func(pos token.Pos, line int) int {
+		for _, s := range caseSpans {
+			if pos >= s.from && pos < s.to {
+				return s.line
+			}
+		}
+		return line
+	}
+
 	var out []mutation
 	add := func(pos token.Pos, old, new string) {
 		at := fset.Position(pos)
@@ -276,7 +327,8 @@ func mutationsInFile(path, rel string) ([]mutation, error) {
 		out = append(out, mutation{
 			file: rel, offset: at.Offset, old: old, new: new,
 			line: at.Line, column: at.Column, source: source,
-			clamp: clampAt[pos],
+			coverLine: coverLine(pos, at.Line),
+			clamp:     clampAt[pos],
 		})
 	}
 	ast.Inspect(file, func(n ast.Node) bool {

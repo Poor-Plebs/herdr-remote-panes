@@ -46,3 +46,18 @@ internal/mirror/mirror.go	> -> >=	if len(t.seen) > t.max {
 # unreachable: Wait returns nil on a zero exit, so the code here is never 0
 internal/mirror/mirror.go	> -> >=	if code := exitStatus(err); code > 0 && code != sshOwnFailure {
 
+# every character this names is non-graphic too, so the case below catches them all; checked across the whole range
+internal/text/text.go	|| -> &&	case r < 0x20 || r == 0x7f:
+
+# as above: the C1 controls are non-graphic, so the case below catches them
+internal/text/text.go	>= -> >	case r >= 0x80 && r <= 0x9f:
+
+# as above: the C1 controls are non-graphic, so the case below catches them
+internal/text/text.go	<= -> <	case r >= 0x80 && r <= 0x9f:
+
+# padding by nothing is the empty string, so both spellings pad the same
+internal/text/text.go	> -> >=	if pad := width - Width(s); pad > 0 {
+
+# unreachable: Wrap refuses a line budget below one, so cut is never handed an empty list
+internal/text/text.go	> -> >=	if more && len(lines) > 0 {
+
