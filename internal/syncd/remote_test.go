@@ -2792,3 +2792,48 @@ func TestAnAdoptedMachineLearnsWhereItsSpaceIs(t *testing.T) {
 			state.workspaceID, "w1")
 	}
 }
+
+func TestASteadyPassAsksAMachineTwoThings(t *testing.T) {
+	// Every machine is polled on a timer for as long as Herdr is open, so what
+	// one pass costs is paid again every couple of seconds, on every machine
+	// at once. Two calls: which panes it has, and what order its tabs are in.
+	// Both are needed -- the second is what keeps the two sides showing the
+	// same tabs in the same order -- and a third would be half as much traffic
+	// again, arriving quietly.
+	//
+	// Counted from the transcript rather than reasoned about, which is how the
+	// conversation with a machine has been checked here before.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	// Settled: connecting itself costs more, and rightly so.
+	settle(t, d, here, 3, there)
+
+	before := len(asked(t))
+	const passes = 5
+	settle(t, d, here, passes, there)
+	spoken := asked(t)[before:]
+
+	if len(spoken) != 2*passes {
+		t.Errorf("%d passes cost %d calls, want %d:\n%s",
+			passes, len(spoken), 2*passes, strings.Join(spoken, "\n"))
+	}
+	for _, want := range []string{"pane list", "tab list"} {
+		got := 0
+		for _, line := range spoken {
+			if strings.HasSuffix(strings.TrimSpace(line), want) {
+				got++
+			}
+		}
+		if got != passes {
+			t.Errorf("%q was asked %d times over %d passes, want once each:\n%s",
+				want, got, passes, strings.Join(spoken, "\n"))
+		}
+	}
+}

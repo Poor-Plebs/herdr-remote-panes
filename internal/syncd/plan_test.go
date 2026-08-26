@@ -1656,8 +1656,16 @@ func TestListenControlRefusesToStealALiveSocket(t *testing.T) {
 	}
 	defer first.Close()
 
-	if _, err := listenControl(socket); err == nil {
-		t.Error("a second daemon took a socket that was already being served")
+	_, err = listenControl(socket)
+	if err == nil {
+		t.Fatal("a second daemon took a socket that was already being served")
+	}
+	// And says which of the two things went wrong. Refusing with the bind
+	// error underneath -- "address already in use" -- sends somebody looking
+	// for a port conflict, when what is there is the other half of this same
+	// plugin, already running and answering.
+	if !strings.Contains(err.Error(), "already running") {
+		t.Errorf("refused with %q, which does not say a daemon is already there", err)
 	}
 }
 
