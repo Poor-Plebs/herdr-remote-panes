@@ -425,32 +425,31 @@ func (d *Daemon) Run() error {
 // is a plugin that does nothing until somebody works out why.
 var handoverWait = 90 * time.Second
 
+// dialControl asks whether anything is serving the socket. A variable so that
+// a test can count the asking, which is the whole of what went wrong: a daemon
+// that is busy is not accepting, so every connection made to find out whether
+// it is there stays in its backlog, and once that is full the next one is
+// refused -- which reads exactly like a daemon that has gone.
+var dialControl = func(socket string) (net.Conn, error) {
+	return net.DialTimeout("unix", socket, time.Second)
+}
+
 // listenControl binds the control socket, clearing a socket left behind by a
 // daemon that did not shut down cleanly and waiting out one that is still
 // shutting down.
 func listenControl(socket string) (net.Listener, error) {
-	giveUp := time.Now().Add(handoverWait)
-	for waited := false; ; {
-		listener, err := net.Listen("unix", socket)
-		if err == nil {
-			return listener, restrict(socket, listener)
-		}
+	listener, err := net.Listen("unix", socket)
+	if err == nil {
+		return listener, restrict(socket, listener)
+	}
 
-		if conn, dialErr := net.DialTimeout("unix", socket, time.Second); dialErr == nil {
-			conn.Close()
-			// Someone is answering. On a restart that is the daemon this one
-			// is replacing, on its way out.
-			if time.Now().After(giveUp) {
-				return nil, fmt.Errorf("another herdr-remote-panes daemon is already running")
-			}
-			if !waited {
-				log.Print("another daemon still has the control socket; waiting for it to stop")
-				waited = true
-			}
-			time.Sleep(250 * time.Millisecond)
-			continue
-		}
-
+	// Asked once, and only once. A daemon that is busy is not accepting, so
+	// every connection made to find out whether it is there stays queued in
+	// its backlog -- and once that is full the next one is refused, which
+	// reads exactly like a daemon that has gone. Asking on a timer therefore
+	// ends in taking the socket from a daemon that was answering perfectly
+	// well a moment before, which is the one thing this must not do.
+	if conn, dialErr := dialControl(socket); dialErr != nil {
 		// Nothing answering, so the file is what a daemon that was killed
 		// leaves behind.
 		if rmErr := os.Remove(socket); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
@@ -461,7 +460,22 @@ func listenControl(socket string) (net.Listener, error) {
 			return nil, err
 		}
 		return listener, restrict(socket, listener)
+	} else {
+		conn.Close()
 	}
+
+	// Someone is serving it. On a restart that is the daemon this one is
+	// replacing, still shutting down, and the socket becomes bindable the
+	// moment it goes -- so wait for that rather than exiting, which would
+	// leave nothing running once it does.
+	log.Print("another daemon still has the control socket; waiting for it to stop")
+	for giveUp := time.Now().Add(handoverWait); time.Now().Before(giveUp); {
+		time.Sleep(250 * time.Millisecond)
+		if listener, err := net.Listen("unix", socket); err == nil {
+			return listener, restrict(socket, listener)
+		}
+	}
+	return nil, fmt.Errorf("another herdr-remote-panes daemon is already running")
 }
 
 // restrict keeps the control socket private to its owner.

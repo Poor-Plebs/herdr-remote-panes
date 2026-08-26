@@ -1672,6 +1672,12 @@ func TestListenControlRefusesToStealALiveSocket(t *testing.T) {
 	}
 	defer first.Close()
 
+	// Shortened, or this waits out the whole handover window -- ninety
+	// seconds of a test suite, for a socket nobody is going to let go of.
+	restore := handoverWait
+	handoverWait = 300 * time.Millisecond
+	defer func() { handoverWait = restore }()
+
 	_, err = listenControl(socket)
 	if err == nil {
 		t.Fatal("a second daemon took a socket that was already being served")
@@ -3437,5 +3443,72 @@ func TestADaemonThatIsReallyAlreadyRunningIsStillRefused(t *testing.T) {
 		t.Error("a second daemon took a socket that was being served")
 	} else if !strings.Contains(err.Error(), "already running") {
 		t.Errorf("refused with %q, which does not say a daemon is already there", err)
+	}
+
+	// And the daemon that was serving still is. Refusing is not enough on its
+	// own: the way this went wrong was asking repeatedly whether anybody was
+	// there, filling the backlog of a daemon that was not accepting fast
+	// enough, reading the refused connection as a daemon that had gone, and
+	// taking the socket from under it.
+	accepted := make(chan error, 1)
+	go func() {
+		conn, err := serving.Accept()
+		if err == nil {
+			conn.Close()
+		}
+		accepted <- err
+	}()
+	conn, err := net.DialTimeout("unix", socket, 2*time.Second)
+	if err != nil {
+		t.Fatalf("the daemon that was serving can no longer be reached: %v", err)
+	}
+	conn.Close()
+	select {
+	case err := <-accepted:
+		if err != nil {
+			t.Errorf("the serving daemon could not accept afterwards: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("the connection went somewhere other than the daemon that was serving")
+	}
+}
+
+func TestWhetherAnyoneIsServingIsAskedOnce(t *testing.T) {
+	// The bug this is for: a daemon that is busy is not accepting, so every
+	// connection made to ask whether it is there stays queued in its backlog.
+	// Ask on a timer and the backlog fills — 128 of them, at four a second, is
+	// half a minute — and the next ask is refused, which reads exactly like a
+	// daemon that has gone. The socket is then taken from a daemon that was
+	// answering a moment before.
+	//
+	// It does not reproduce on every platform: Linux dequeues differently and
+	// only the macOS runner ever showed it. So what is held is the shape of
+	// the thing rather than its symptom — asked once, whatever the answer.
+	socket := testSocket(t)
+
+	serving, err := listenControl(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serving.Close()
+
+	asked := 0
+	restoreDial := dialControl
+	dialControl = func(s string) (net.Conn, error) {
+		asked++
+		return restoreDial(s)
+	}
+	defer func() { dialControl = restoreDial }()
+
+	restoreWait := handoverWait
+	handoverWait = 700 * time.Millisecond
+	defer func() { handoverWait = restoreWait }()
+
+	if _, err := listenControl(socket); err == nil {
+		t.Fatal("a second daemon took a socket that was being served")
+	}
+	if asked != 1 {
+		t.Errorf("asked whether anyone was serving %d times over the wait; once is "+
+			"the answer, and asking again is what fills the backlog", asked)
 	}
 }
