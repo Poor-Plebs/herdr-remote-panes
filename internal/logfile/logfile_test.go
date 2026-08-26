@@ -358,3 +358,62 @@ func TestTheLogSurvivesACloseThatComplains(t *testing.T) {
 		}
 	}
 }
+
+func TestTheLogKeepsWritingWhenItCannotRollOver(t *testing.T) {
+	// The other half of the rotation going wrong: the file closes cleanly and
+	// the rename is what fails. Something is sitting where the previous
+	// generation goes, or the directory has stopped accepting renames.
+	//
+	// The bound is the thing given up, not the log. Outgrowing it is a
+	// nuisance; stopping is the daemon losing its account of what it did, and
+	// there is nowhere else that account exists.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "daemon.log")
+
+	// A non-empty directory where the kept generation goes, which is a rename
+	// the operating system will refuse.
+	if err := os.MkdirAll(path+".1", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path+".1", "in-the-way"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := Open(path, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write([]byte(strings.Repeat("x", 49) + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	line := []byte("the line that could not roll the log over\n")
+	if n, err := f.Write(line); err != nil || n != len(line) {
+		t.Errorf("a line was lost because the log could not roll over: n=%d err=%v", n, err)
+	}
+	after := []byte("and the next one\n")
+	if n, err := f.Write(after); err != nil || n != len(after) {
+		t.Errorf("the log stopped after a rename it could not make: n=%d err=%v", n, err)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"could not roll the log over", "and the next one"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("the log does not hold %q:\n%s", want, body)
+		}
+	}
+
+	// And it stops trying for another bound's worth. The count is what decides
+	// when to roll over, so leaving it at the file's real size means a rename
+	// attempted for every line written from here on -- a syscall per line, on
+	// a rename already known to fail. Giving the bound up is the point;
+	// hammering the thing that refused it is not.
+	if f.written >= f.max {
+		t.Errorf("the log holds %d bytes against a bound of %d, so the next line "+
+			"tries the rename again", f.written, f.max)
+	}
+}
