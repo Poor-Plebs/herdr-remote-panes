@@ -142,3 +142,19 @@ Showing whose is whose in the sidebar is polish and can come last.
   the above happens.
 - A terminal whose owner has disconnected stays owned. That is what the menu
   takeover is for.
+- **`close_propagates` is on by default, and in a shared space it is somebody
+  else's terminal.** Closing a mirrored tab closes the terminal on the machine,
+  with whatever was running in it — which is right when the terminal is yours
+  and is the two-way behaviour people expect. Pointed at a space two people are
+  in, it means either of you can end the other's work by closing a tab, without
+  either of you doing anything unusual.
+
+  Ownership is the answer rather than the setting: the model here already says
+  each terminal belongs to whoever made it, so closing should propagate for the
+  terminals you own and do nothing for the ones you are watching. Until that
+  exists, pairing wants `"close_propagates": false` — and that costs the
+  ordinary case, because then closing your own tab leaves it running on the
+  machine.
+- **`scope` must stay `shared`.** The whole model is one named space that both
+  of you mirror; `"all"` would mirror everything on the machine, including the
+  other person's other work and whatever else is running there.
