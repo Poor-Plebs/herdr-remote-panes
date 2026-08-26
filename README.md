@@ -432,9 +432,10 @@ says so if it finds one of the other two.
   bot  2 ssh  mirroring off: no herdr found on the machine — set herdr_bin if it is installed elsewhere there
 ```
 
-**A machine says `n more in other spaces on the machine`.** You turned mirroring
-on for a machine you already work on, and one terminal arrived instead of the
-four that are open there. Nothing failed: `scope` decides which of a machine's
+**A machine says `n more in other spaces on the machine`.** In the menu the same
+machine reads `connected · 1 mirrored · 3 elsewhere`. You turned mirroring on
+for a machine you already work on, and one terminal arrived instead of the four
+that are open there. Nothing failed: `scope` decides which of a machine's
 terminals are mirrored, and it defaults to `shared` — the space this plugin
 made on the machine, and nothing else. Your own terminals live in spaces of
 their own there, so they are left alone.

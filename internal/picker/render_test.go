@@ -1480,3 +1480,44 @@ func TestATerminalThatWillNotGoRawIsLeftAlone(t *testing.T) {
 		}
 	}
 }
+
+func TestTheMenuSaysWhatTheScopeIsLeavingAlone(t *testing.T) {
+	// The line somebody reads straight after pressing m. Without this, a
+	// machine with four terminals on it showing one mirror looks like three
+	// that failed rather than like the scope doing what it says.
+	entry := Entry{Target: "workbox", Configured: true, Connected: true,
+		Mirroring: true, Mirrors: 1, OutsideShared: 3}
+
+	drawn := visible(strings.Join(lines([]Entry{entry}, 0, 80, 24), "\n"))
+	if !strings.Contains(drawn, "1 mirrored") {
+		t.Errorf("the menu does not say what is mirrored:\n%s", drawn)
+	}
+	if !strings.Contains(drawn, "3 elsewhere") {
+		t.Errorf("the menu does not say what is not:\n%s", drawn)
+	}
+
+	// A machine with nothing left out says nothing, or every machine carries
+	// the phrase for ever.
+	entry.OutsideShared = 0
+	drawn = visible(strings.Join(lines([]Entry{entry}, 0, 80, 24), "\n"))
+	if strings.Contains(drawn, "elsewhere") {
+		t.Errorf("a machine with nothing left out still mentions it:\n%s", drawn)
+	}
+}
+
+func TestSayingWhatIsLeftOutCostsNoNameColumn(t *testing.T) {
+	// The name column is what the status column does not take, so a longer
+	// worst-case status is paid for by every machine's name at every width —
+	// which is the thing the column was fitted to the names to stop.
+	//
+	// This one fits under the widest status there already is, "unreachable ·
+	// mirrored · enter to retry", so it costs nothing. Written out rather than
+	// compared against widestStatus(), which would agree with itself.
+	if got := widestStatus(); got != 39 {
+		t.Errorf("the widest status is %d columns, and adding to it takes the "+
+			"same from every machine's name; check what grew", got)
+	}
+	if got := nameWidth(80); got != 33 {
+		t.Errorf("the name column at 80 columns is %d, want 33", got)
+	}
+}

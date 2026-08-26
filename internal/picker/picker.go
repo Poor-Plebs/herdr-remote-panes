@@ -28,6 +28,10 @@ type Entry struct {
 	Configured bool
 	Connected  bool
 	Mirrors    int
+	// OutsideShared is how many terminals the machine has that the scope does
+	// not mirror. Not a failure, and the one thing that explains a machine
+	// showing one mirror when there are four terminals on it.
+	OutsideShared int
 	// Terminals is how many plain SSH terminals the machine has open, which is
 	// what a machine in SSH mode has instead of mirrors.
 	Terminals int
@@ -358,6 +362,7 @@ func collect() ([]Entry, string) {
 		if entry, ok := byTarget[info.Target]; ok {
 			entry.Connected = info.Connected
 			entry.Mirrors = info.Mirrors
+			entry.OutsideShared = info.OutsideShared
 			entry.Terminals = info.Terminals
 			entry.SSHOnly = info.SSHOnly
 			entry.Mirroring = info.Mirroring
@@ -545,7 +550,15 @@ func statusSpans(entry Entry) []span {
 		}
 		return append(out, span{" · enter to retry", dim})
 	case entry.Connected && isMirroring(entry):
-		return []span{{fmt.Sprintf("connected · %d mirrored", entry.Mirrors), green}}
+		out := []span{{fmt.Sprintf("connected · %d mirrored", entry.Mirrors), green}}
+		// What the scope is leaving alone. This is the line somebody reads
+		// straight after pressing m, and without it a machine with four
+		// terminals on it showing one mirror looks like three that failed.
+		// Dim and last, so it is the first thing dropped for want of room.
+		if entry.OutsideShared > 0 {
+			out = append(out, span{fmt.Sprintf(" · %d elsewhere", entry.OutsideShared), dim})
+		}
+		return out
 	case entry.Connected && entry.Terminals > 0:
 		return []span{{fmt.Sprintf("connected · %d open", entry.Terminals), green}}
 	case entry.Connected:
@@ -625,6 +638,7 @@ func widestStatus() int {
 		{Connected: true, Mirroring: true, SSHOnly: true, Terminals: 99},
 		{GaveUp: true},
 		{Connected: true, Mirroring: true, Mirrors: 99},
+		{Connected: true, Mirroring: true, Mirrors: 99, OutsideShared: 99},
 		{Connected: true, Terminals: 99},
 		{Connected: true},
 		{Configured: true, Mirroring: true},
