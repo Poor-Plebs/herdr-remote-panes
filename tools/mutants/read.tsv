@@ -84,3 +84,16 @@ internal/config/config.go	|| -> &&	if at < 0 || at >= len(raw) {
 
 # Same guard, other end.
 internal/config/config.go	>= -> >	if at < 0 || at >= len(raw) {
+
+# A boundary one nanosecond wide. The two spellings differ only when the gap
+# since the last prune is exactly pruneInterval, which no clock reading in a
+# test is going to land on.
+internal/syncd/daemon.go	< -> <=	if last := d.lastPrune.Load(); last != 0 && now.Sub(time.Unix(0, last)) < pruneInterval {
+
+# Same: exactly reopenSettled since the last reopen, to the nanosecond.
+internal/syncd/daemon.go	> -> >=	if state.lastReopen.IsZero() || time.Since(state.lastReopen) > reopenSettled {
+
+# Guards a log line and nothing else -- the assignment below it runs either
+# way. Inverted it says "its space on the machine is gone" about a machine that
+# never had one, which is wrong and is still only a log line.
+internal/syncd/daemon.go	!= -> ==	if state.remoteWorkspaceID != "" {
