@@ -357,8 +357,19 @@ func (d *Daemon) Run() error {
 	if err != nil {
 		return err
 	}
+	// Closing is the whole of it: a Unix listener unlinks the path it bound.
+	//
+	// Removing the file separately as well is a hazard now that a replacing
+	// daemon waits for this socket rather than giving up on it. The two ran as
+	// separate deferred calls, so between them the path is unowned — and a
+	// daemon that binds in that gap has its brand new socket deleted by the
+	// old one finishing its cleanup, leaving it listening on a path nothing
+	// can reach. Which looks, from every action, exactly like no daemon at
+	// all.
+	//
+	// A socket left behind by a daemon that was killed before any of this ran
+	// is cleared by the next one, which finds nothing answering it.
 	defer listener.Close()
-	defer os.Remove(socket)
 
 	go d.serveControl(listener)
 

@@ -3512,3 +3512,60 @@ func TestWhetherAnyoneIsServingIsAskedOnce(t *testing.T) {
 			"the answer, and asking again is what fills the backlog", asked)
 	}
 }
+
+func TestStoppingLeavesNoSocketBehind(t *testing.T) {
+	// The daemon has to let go of the socket when it stops, or the next one
+	// finds a file with nothing behind it. Closing the listener is what does
+	// that -- a Unix listener unlinks the path it bound -- and it is the only
+	// thing that should, because removing the file separately can delete a
+	// socket that a replacing daemon has already created at the same path.
+	socket := testSocket(t)
+
+	listener, err := listenControl(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(socket); err != nil {
+		t.Fatalf("the socket was never created: %v", err)
+	}
+
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(socket); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the socket is still there after closing: %v", err)
+	}
+}
+
+func TestAReplacingDaemonKeepsItsOwnSocket(t *testing.T) {
+	// The hazard the removal was: the old daemon lets go, the new one binds,
+	// and then the old one's cleanup deletes the file the new one just made.
+	// What is left is a daemon listening on a path nothing can reach, which
+	// from every action looks exactly like no daemon at all.
+	socket := testSocket(t)
+
+	old, err := listenControl(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	replacing, err := listenControl(socket)
+	if err != nil {
+		t.Fatalf("the replacing daemon could not bind: %v", err)
+	}
+	defer replacing.Close()
+
+	// Whatever the old one does on its way out, the new one is still reachable.
+	old.Close()
+	if _, err := os.Stat(socket); err != nil {
+		t.Fatalf("the replacing daemon's socket is gone: %v", err)
+	}
+	conn, err := net.DialTimeout("unix", socket, 2*time.Second)
+	if err != nil {
+		t.Fatalf("nothing can reach the replacing daemon: %v", err)
+	}
+	conn.Close()
+}
