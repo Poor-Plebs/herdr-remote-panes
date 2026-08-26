@@ -1858,10 +1858,19 @@ func TestFocusDoesNothingUntilThereIsSomewhereToGo(t *testing.T) {
 	d.mu.Lock()
 	d.hosts["bot"].workspaceID = firstWorkspace(t, held())
 	d.mu.Unlock()
+	listed := held().Calls["workspace list"]
 	d.focusHost("bot")
 
 	if n := held().Calls["workspace focus"]; n != 1 {
 		t.Errorf("focusing a machine with a space made %d calls, want 1", n)
+	}
+	// Straight there. Looking the space up is the insurance for a machine that
+	// arrived here without one -- reconciling learns the id, and every path
+	// that reaches this reconciles first. Asking Herdr again on every pick is
+	// a process spawned for an answer already held, and turning that guard
+	// inside out is invisible while the lookup happens to succeed.
+	if n := held().Calls["workspace list"] - listed; n != 0 {
+		t.Errorf("focusing a machine whose space is known asked Herdr for the list %d times", n)
 	}
 }
 

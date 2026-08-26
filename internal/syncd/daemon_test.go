@@ -5,6 +5,8 @@ import (
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 
+	"encoding/json"
+
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 )
 
@@ -387,4 +389,66 @@ func TestATabCountNeverGoesNegative(t *testing.T) {
 	if got := planStrayPlacement(index.panesPerTab["w1:t1"]); got != placementTab {
 		t.Errorf("a stray pane beside an empty tab is placed as %q, want %q", got, placementTab)
 	}
+}
+
+func TestWhatIsRememberedAboutANewRemoteTerminal(t *testing.T) {
+	// A terminal made on the machine is mirrored here by the next pass, and
+	// how it should be placed -- and whether to jump to it -- is remembered
+	// against the terminal id in the reply. Every test around this builds that
+	// state by hand; nothing put it there through the code that records it.
+	//
+	// The reply is what `herdr tab create` answers with.
+	made := json.RawMessage(`{"workspace":{"workspace_id":"w1"},"tab":{"tab_id":"w1:t1"},` +
+		`"root_pane":{"pane_id":"w1:p1","terminal_id":"term-1"}}`)
+	d := &Daemon{}
+
+	t.Run("a placement with no focus", func(t *testing.T) {
+		// The "new tab on this machine" action: somewhere to put it, and no
+		// jumping to it. Nothing else in the pair is set, so a check that
+		// looks at only one of them drops this case entirely.
+		state := newTestHost()
+		d.rememberPlacement(state, made, "tab", false)
+
+		if got := state.pendingPlacement["term-1"]; got != "tab" {
+			t.Errorf("the placement was recorded as %q, want %q", got, "tab")
+		}
+		if state.pendingFocus["term-1"] {
+			t.Error("a terminal nobody asked to be taken to is marked for focus")
+		}
+	})
+
+	t.Run("focus with no placement", func(t *testing.T) {
+		state := newTestHost()
+		d.rememberPlacement(state, made, "", true)
+
+		if !state.pendingFocus["term-1"] {
+			t.Error("the terminal that was asked for is not marked to be shown")
+		}
+		if len(state.pendingPlacement) != 0 {
+			t.Errorf("a placement was invented: %v", state.pendingPlacement)
+		}
+	})
+
+	t.Run("neither", func(t *testing.T) {
+		state := newTestHost()
+		d.rememberPlacement(state, made, "", false)
+
+		if len(state.pendingPlacement)+len(state.pendingFocus) != 0 {
+			t.Errorf("something was remembered about a terminal nobody asked anything of: %v %v",
+				state.pendingPlacement, state.pendingFocus)
+		}
+	})
+
+	t.Run("a reply naming no terminal", func(t *testing.T) {
+		// Parseable, and with nothing to key the note against. Remembering it
+		// anyway files it under the empty string, where the next reply that
+		// names no terminal picks up the last one's placement.
+		state := newTestHost()
+		d.rememberPlacement(state, json.RawMessage(`{"root_pane":{"pane_id":"w1:p1"}}`), "tab", true)
+
+		if len(state.pendingPlacement)+len(state.pendingFocus) != 0 {
+			t.Errorf("a note was filed under no terminal at all: %v %v",
+				state.pendingPlacement, state.pendingFocus)
+		}
+	})
 }
