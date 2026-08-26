@@ -323,3 +323,57 @@ func TestPingIsHappyWhenThePaneListComesBack(t *testing.T) {
 		t.Errorf("a machine that answered failed its ping: %v", err)
 	}
 }
+
+func TestAConfiguredHerdrThatIsNotThere(t *testing.T) {
+	// herdr_bin names a path on the machine, and a path can be wrong -- a
+	// typo, an install that moved, a tilde that never got expanded. The
+	// configured path skips the probe, so nothing else would notice.
+	//
+	// It has to come back as ErrNoHerdr: the machine is fine and its terminals
+	// are usable over plain SSH, so the daemon falls back rather than refusing
+	// to connect. The test above reaches this through a machine with no Herdr
+	// at all, which fails earlier, in Bin.
+	fakeSSH(t, remoteCommandIs+`
+case "$last" in
+  true) exit 0;;
+  *--version*) exit 127;;
+  *) exit 0;;
+esac`)
+
+	err := NewWithBin("bot", "", "/opt/herdr/bin/herdr").CheckHerdr()
+	if !errors.Is(err, ErrNoHerdr) {
+		t.Errorf("a configured herdr that does not run = %v, want ErrNoHerdr", err)
+	}
+	// And it says which path, because that is the thing to go and fix.
+	if err != nil && !strings.Contains(err.Error(), "/opt/herdr/bin/herdr") {
+		t.Errorf("the error does not name the path that did not run: %v", err)
+	}
+}
+
+func TestAMachineThatCannotBeReachedIsNotAMachineWithoutHerdr(t *testing.T) {
+	// The other way round, and the one that matters more. If an unreachable
+	// machine came back as ErrNoHerdr the daemon would fall back to plain SSH
+	// and report a machine that is quietly working -- when it is not there at
+	// all, and every terminal opened on it would fail.
+	fakeSSH(t, `echo 'ssh: connect to host bot port 22: Connection refused' >&2
+exit 255`)
+
+	err := NewWithBin("bot", "", "/usr/bin/herdr").CheckHerdr()
+	if err == nil {
+		t.Fatal("a machine that refused every connection checked out fine")
+	}
+	if errors.Is(err, ErrNoHerdr) {
+		t.Errorf("an unreachable machine reads as one without Herdr: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not reachable") {
+		t.Errorf("the error does not say the machine could not be reached: %v", err)
+	}
+}
+
+func TestAConfiguredHerdrThatRunsIsAccepted(t *testing.T) {
+	fakeSSH(t, `exit 0`)
+
+	if err := NewWithBin("bot", "", "/usr/bin/herdr").CheckHerdr(); err != nil {
+		t.Errorf("a machine whose herdr runs was refused: %v", err)
+	}
+}
