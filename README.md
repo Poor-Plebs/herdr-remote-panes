@@ -378,6 +378,17 @@ A `startup` entry with a non-zero `exit_code` is the daemon refusing to start,
 and its `stderr` says what stopped it. A build that failed leaves no binary for
 it to run at all, which the same log shows as a `build` entry.
 
+A daemon that came up says so, once:
+
+```
+herdr-remote-panes: 21:11:17 herdr-remote-panes 200aec5 starting
+herdr-remote-panes: 21:11:17 listening on /home/you/.local/state/herdr/.../control-hub.sock
+```
+
+It says nothing else for the rest of its life unless something goes wrong, so
+that second line is the one to look for: `starting` without it means the socket
+is what it could not get.
+
 **A machine's space is missing.** You closed its terminals, and a space with
 nothing in it does not exist. The machine is still connected — the menu says so
 — and `enter` on it opens a terminal again.

@@ -80,6 +80,13 @@ func TestAnUpgradeHandsTheSocketOver(t *testing.T) {
 	if !answering(10 * time.Second) {
 		t.Fatalf("the first daemon never answered:\n%s", oldSaid)
 	}
+	// A daemon that is well says nothing for the rest of its life, so a log
+	// with "starting" and nothing after it reads the same whether it came up
+	// or the coming up is what failed. This is the line that tells them apart,
+	// and it is the first thing to look for in a report of no daemon.
+	if !strings.Contains(oldSaid.String(), "listening on") {
+		t.Errorf("the daemon never said where it was listening:\n%s", oldSaid)
+	}
 
 	// The upgrade: a second one starts while the first is still serving.
 	replacing, replacingSaid := daemon()

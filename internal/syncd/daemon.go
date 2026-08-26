@@ -357,6 +357,11 @@ func (d *Daemon) Run() error {
 	if err != nil {
 		return err
 	}
+	// Where, and that it got that far. A healthy daemon says nothing else for
+	// the rest of its life, so a log holding "starting" and nothing after it
+	// reads the same whether the socket was bound or the binding is what went
+	// wrong -- and "no running daemon" is the report either way.
+	log.Printf("listening on %s", socket)
 	// Closing is the whole of it: a Unix listener unlinks the path it bound.
 	//
 	// Removing the file separately as well is a hazard now that a replacing
