@@ -3241,3 +3241,84 @@ func TestAnAgentIsReleasedOnceAndNotOnEveryPassAfter(t *testing.T) {
 func held(state fakeHerdr, call string) int {
 	return state.Calls[call]
 }
+
+// setTitleOn renames what a terminal on the machine is showing, the way a
+// command starting or finishing there does.
+func setTitleOn(t *testing.T, statePath, paneID, title string) {
+	t.Helper()
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held fakeHerdr
+	if err := json.Unmarshal(raw, &held); err != nil {
+		t.Fatal(err)
+	}
+	pane, ok := held.Panes[paneID]
+	if !ok {
+		t.Fatalf("no pane %s on the machine: %+v", paneID, held.Panes)
+	}
+	pane["terminal_title_stripped"] = title
+	out, _ := json.Marshal(held)
+	if err := os.WriteFile(statePath, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAMirrorIsRenamedWhenItsTerminalIsAndNotOtherwise(t *testing.T) {
+	// A mirror is named after what the terminal on the machine is showing, so
+	// the sidebar says what is running rather than which pane it is. That
+	// changes whenever a command starts or ends over there.
+	//
+	// And it is asked for only when it differs. Renaming on every pass is a
+	// call to Herdr per mirrored pane per poll, which for somebody with
+	// several machines mirrored is most of what the daemon does all day.
+	here := withFakeHerdr(t)
+	there, machineState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.Scope = "all"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	paneThere := addPaneOn(t, machineState, "w-theirs", "vim")
+	settle(t, d, here, 3, there)
+	if !strings.Contains(labelsHere(here(), "bot"), "vim") {
+		t.Fatalf("the mirror is not named after what the terminal shows: %s", labelsHere(here(), "bot"))
+	}
+
+	// Settled: nothing about it is changing, so nothing should be asked.
+	renamed := held(here(), "pane rename")
+	if renamed == 0 {
+		t.Fatal("nothing was ever renamed, so this checks nothing")
+	}
+	settle(t, d, here, 4, there)
+	if got := held(here(), "pane rename"); got != renamed {
+		t.Errorf("a mirror whose terminal has not changed was renamed %d more times "+
+			"over four passes", got-renamed)
+	}
+
+	// And when it does change, it follows.
+	setTitleOn(t, machineState, paneThere, "make test")
+	settle(t, d, here, 3, there)
+	if !strings.Contains(labelsHere(here(), "bot"), "make test") {
+		t.Errorf("the terminal is showing something else and the mirror still reads %s",
+			labelsHere(here(), "bot"))
+	}
+}
+
+// labelsHere is every label this machine's panes are wearing.
+func labelsHere(state fakeHerdr, target string) string {
+	var out []string
+	for _, pane := range state.Panes {
+		if label, _ := pane["label"].(string); strings.HasSuffix(label, "@"+target) {
+			out = append(out, label)
+		}
+	}
+	sort.Strings(out)
+	return strings.Join(out, " ")
+}
