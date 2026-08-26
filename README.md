@@ -675,7 +675,9 @@ rather than raised again. A sweep of a package this size turns up the same dozen
 equivalents every time, and reading them again costs more than the sweep does.
 They are keyed by the line as written rather than by its number: edit the line
 and the entry stops matching, which is right, because what was judged was the
-line that was there.
+line that was there. A fourth field names the function, for a line that appears
+more than once in its file and does not mean the same thing both times — with
+only the line to go on, recording one of them says the other has been read too.
 
 A record that can only grow ends up being trusted for code that is no longer
 there, so both directions are checked. A sweep names the entries whose file it

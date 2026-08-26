@@ -61,6 +61,12 @@ type mutation struct {
 	// except inside a case expression, which a coverage profile never records.
 	coverLine int
 	clamp     bool // the boundary maps to itself, so both spellings agree
+	// function is what encloses it, which is how two identical lines in one
+	// file are told apart. A judgement about one of them is not a judgement
+	// about the other: "if state.restoreShells > 0" appears twice in
+	// daemon.go, and on one of them the change is equivalent while on the
+	// other it is caught.
+	function string
 }
 
 func main() {
@@ -288,6 +294,7 @@ func mutationsInFile(path, rel string) ([]mutation, error) {
 	// Where a case expression should look for its coverage.
 	//
 	coverLine := caseCoverLines(fset, file)
+	enclosing := enclosingFuncs(fset, file)
 
 	var out []mutation
 	add := func(pos token.Pos, old, new string) {
@@ -300,6 +307,7 @@ func mutationsInFile(path, rel string) ([]mutation, error) {
 			file: rel, offset: at.Offset, old: old, new: new,
 			line: at.Line, column: at.Column, source: source,
 			coverLine: coverLine(pos, at.Line),
+			function:  enclosing(pos),
 			clamp:     clampAt[pos],
 		})
 	}
@@ -491,9 +499,9 @@ const (
 
 // survivorClass says why a survivor is likely to be one, or "" for a decision
 // with nothing holding it -- which is the only kind worth reading closely.
-func survivorClass(m mutation, read map[string]bool) string {
+func survivorClass(m mutation, read map[string]string) string {
 	switch {
-	case read[triageKey(m)]:
+	case wasRead(read, m):
 		return classRead
 	case isErrorBranch(m.source):
 		return classErrorBranch
@@ -527,27 +535,49 @@ func triageKey(m mutation) string {
 // Every sweep of a package this size turns up the same dozen equivalents, and
 // reading them again costs more than the sweep does. A judgement kept only in a
 // commit message is one nobody finds.
-func readSurvivors(path string) map[string]bool {
+func readSurvivors(path string) map[string]string {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
-	read := map[string]bool{}
+	read := map[string]string{}
 	for _, line := range strings.Split(string(raw), "\n") {
 		if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
 		parts := strings.Split(line, "\t")
-		if len(parts) != 3 {
+		// A fourth field names the function the judgement was made in, for
+		// the lines that appear more than once in their file. Without it the
+		// entry is about that line wherever it is, which is what nearly every
+		// entry means.
+		if len(parts) != 3 && len(parts) != 4 {
 			continue
 		}
-		read[strings.Join([]string{
+		key := strings.Join([]string{
 			parts[0],
 			strings.TrimSpace(parts[1]),
 			strings.TrimSpace(parts[2]),
-		}, "\t")] = true
+		}, "\t")
+		where := ""
+		if len(parts) == 4 {
+			where = strings.TrimSpace(parts[3])
+		}
+		// Two entries for one line, each naming its own function: keep them
+		// apart rather than letting the second overwrite the first.
+		read[key+"\x00"+where] = where
 	}
 	return read
+}
+
+// wasRead reports whether a judgement has been recorded about this mutation,
+// either about its line anywhere or about its line in the function it is in.
+func wasRead(read map[string]string, m mutation) bool {
+	key := triageKey(m)
+	if _, anywhere := read[key+"\x00"]; anywhere {
+		return true
+	}
+	_, here := read[key+"\x00"+m.function]
+	return here
 }
 
 // staleTriage names the entries in read.tsv that no longer describe a survivor
@@ -569,9 +599,12 @@ func staleTriage(path string, muts, survived []mutation) []string {
 	for _, m := range muts {
 		swept[m.file] = true
 	}
+	// Both spellings of what a survivor answers to: its line anywhere, and its
+	// line in the function it is in.
 	alive := map[string]bool{}
 	for _, m := range survived {
-		alive[triageKey(m)] = true
+		alive[triageKey(m)+"\x00"] = true
+		alive[triageKey(m)+"\x00"+m.function] = true
 	}
 
 	var stale []string
@@ -580,15 +613,23 @@ func staleTriage(path string, muts, survived []mutation) []string {
 			continue
 		}
 		parts := strings.Split(line, "\t")
-		if len(parts) != 3 {
+		if len(parts) != 3 && len(parts) != 4 {
 			continue
 		}
 		change, source := strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+		where := ""
+		if len(parts) == 4 {
+			where = strings.TrimSpace(parts[3])
+		}
 		key := strings.Join([]string{parts[0], change, source}, "\t")
-		if !swept[parts[0]] || alive[key] {
+		if !swept[parts[0]] || alive[key+"\x00"+where] {
 			continue
 		}
-		stale = append(stale, parts[0]+"  "+change+"  "+source)
+		named := parts[0]
+		if where != "" {
+			named += " (" + where + ")"
+		}
+		stale = append(stale, named+"  "+change+"  "+source)
 	}
 	return stale
 }
@@ -708,6 +749,36 @@ func check(err error) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mutants:", err)
 		os.Exit(1)
+	}
+}
+
+// enclosingFuncs answers which function a position is in, or "" for anything
+// outside one.
+//
+// Only used to tell two identical lines apart when a judgement is recorded
+// about one of them, so a method is named by its own name rather than by its
+// receiver: two methods of different types with the same name and the same
+// line would still collide, and that is rare enough to leave.
+func enclosingFuncs(fset *token.FileSet, file *ast.File) func(token.Pos) string {
+	type span struct {
+		from, to token.Pos
+		name     string
+	}
+	var spans []span
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		spans = append(spans, span{from: fn.Pos(), to: fn.End(), name: fn.Name.Name})
+	}
+	return func(pos token.Pos) string {
+		for _, s := range spans {
+			if pos >= s.from && pos < s.to {
+				return s.name
+			}
+		}
+		return ""
 	}
 }
 

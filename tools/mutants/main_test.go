@@ -245,7 +245,7 @@ func TestASurvivorReadBeforeIsNotRaisedAgain(t *testing.T) {
 	// Reading them again costs more than the sweep does, and a judgement kept
 	// only in a commit message is one nobody finds.
 	m := mutation{file: "internal/syncd/plan.go", old: "<", new: "<=", source: "\t\treturn na < nb"}
-	read := map[string]bool{triageKey(m): true}
+	read := map[string]string{triageKey(m) + "\x00": ""}
 
 	if got := survivorClass(m, read); got != classRead {
 		t.Errorf("a survivor already read came back as %q, want %q", got, classRead)
@@ -328,8 +328,8 @@ func TestEveryTriagedLineIsStillInTheTree(t *testing.T) {
 			continue
 		}
 		parts := strings.Split(line, "\t")
-		if len(parts) != 3 {
-			t.Errorf("read.tsv:%d is not file<TAB>change<TAB>line: %q", n+1, line)
+		if len(parts) != 3 && len(parts) != 4 {
+			t.Errorf("read.tsv:%d is not file<TAB>change<TAB>line[<TAB>function]: %q", n+1, line)
 			continue
 		}
 		file := parts[0]
@@ -358,6 +358,15 @@ func TestEveryTriagedLineIsStillInTheTree(t *testing.T) {
 			if strings.TrimSpace(line) == source {
 				matches++
 			}
+		}
+		// A fourth field names the function the judgement was made in, which
+		// is how a line that appears more than once is spoken about without
+		// speaking about the others.
+		if len(parts) == 4 {
+			if matches == 0 {
+				t.Errorf("read.tsv:%d was decided about a line %s no longer has:\n  %s", n+1, file, source)
+			}
+			continue
 		}
 		switch matches {
 		case 1:
@@ -519,5 +528,53 @@ func h(ok bool) string {
 			t.Errorf("%q on line %d is asked about at line %d, want %d",
 				got.what, got.line, got.cover, want.cover)
 		}
+	}
+}
+
+func TestAJudgementCanBeAboutOneOfTwoIdenticalLines(t *testing.T) {
+	// The same line twice in one file, meaning different things. In daemon.go
+	// "if state.restoreShells > 0" is equivalent in one function and caught in
+	// the other, and with only the line to go on, recording the first said the
+	// second had been read too -- so the record could not hold it at all, and
+	// the survivor came back unlabelled on every sweep.
+	//
+	// A fourth field names the function. Without one the entry is about that
+	// line wherever it appears, which is what nearly every entry means.
+	path := filepath.Join(t.TempDir(), "read.tsv")
+	record := strings.Join([]string{
+		"# read in one function only",
+		"daemon.go\t> -> >=\tif n > 0 {\tinnocent",
+		"# and this one is about the line wherever it is",
+		"picker.go\t< -> <=\tif room < 1 {",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	read := readSurvivors(path)
+
+	inNamed := mutation{file: "daemon.go", old: ">", new: ">=", source: "\tif n > 0 {", function: "innocent"}
+	inOther := mutation{file: "daemon.go", old: ">", new: ">=", source: "\tif n > 0 {", function: "guilty"}
+	anywhere := mutation{file: "picker.go", old: "<", new: "<=", source: "\tif room < 1 {", function: "whatever"}
+
+	if got := survivorClass(inNamed, read); got != classRead {
+		t.Errorf("the line in the function it was read in classified as %q, want %q", got, classRead)
+	}
+	if got := survivorClass(inOther, read); got == classRead {
+		t.Error("reading one of two identical lines settled the other as well, " +
+			"which is the thing the fourth field is for")
+	}
+	if got := survivorClass(anywhere, read); got != classRead {
+		t.Errorf("an entry with no function named should be about that line wherever "+
+			"it is, and classified as %q", got)
+	}
+
+	// And neither is called stale while it still matches something.
+	if stale := staleTriage(path, []mutation{inNamed, anywhere}, []mutation{inNamed, anywhere}); len(stale) != 0 {
+		t.Errorf("entries that still match were called stale: %v", stale)
+	}
+	// The one whose function no longer has that line is.
+	stale := staleTriage(path, []mutation{inOther}, []mutation{inOther})
+	if len(stale) != 1 || !strings.Contains(stale[0], "innocent") {
+		t.Errorf("stale = %v, want the entry naming a function nothing survived in", stale)
 	}
 }

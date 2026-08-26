@@ -128,4 +128,16 @@ tools/mutants/main.go	&& -> ||	if (lhs == x && rhs == y) || (lhs == y && rhs == 
 # The end of a case expression, which is the character after it -- a colon,
 # which holds no operator to mutate. The start of one is reachable and is held
 # by TestACaseExpressionIsAskedAboutAtItsSwitch.
-tools/mutants/main.go	< -> <=	if pos >= s.from && pos < s.to {
+tools/mutants/main.go	< -> <=	if pos >= s.from && pos < s.to {	caseCoverLines
+
+# Two lines in one file that read alike and are not: the same count of zero
+# means "nothing to do" in one and "make a workspace and clear husks for a
+# machine that needs neither" in the other. Named, so this settles only the
+# first.
+internal/syncd/daemon.go	> -> >=	if state.restoreShells > 0 {	reconcileHost
+
+# Blank and comment lines are skipped before anything is parsed. Requiring both
+# at once skips neither, and what then reaches the field count is discarded by
+# it -- a comment is not three tab-separated fields.
+tools/mutants/main.go	|| -> &&	if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {	readSurvivors
+tools/mutants/main.go	|| -> &&	if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {	staleTriage
