@@ -555,3 +555,67 @@ func withSttySaying(t *testing.T, answer string) {
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
+
+func TestAPaneIsNotLeftReportingMouseEvents(t *testing.T) {
+	// A mirrored pane is handed to a program on another machine, and Herdr
+	// keeps the pane after that program has gone. Anything it turned on is
+	// still on: mouse reporting most visibly, because a terminal that reports
+	// mouse events does not select text with them — every drag goes to an
+	// application that is no longer there, and the pane cannot be copied from.
+	//
+	// stty does not reach these. It puts the line discipline back; these are
+	// the emulator's own modes.
+	var pane strings.Builder
+	restorePane(&pane)
+	said := pane.String()
+
+	for _, mode := range []struct{ sequence, what string }{
+		{"\x1b[?1000l", "mouse clicks"},
+		{"\x1b[?1002l", "mouse drags"},
+		{"\x1b[?1003l", "mouse movement"},
+		{"\x1b[?1006l", "SGR mouse encoding"},
+		{"\x1b[?2004l", "bracketed paste"},
+		{"\x1b[?25h", "the cursor"},
+		{"\x1b[0m", "colours and attributes"},
+	} {
+		if !strings.Contains(said, mode.sequence) {
+			t.Errorf("a pane can be left with %s on: %q is not put back", mode.what, mode.sequence)
+		}
+	}
+
+	// Nothing that moves what is on the screen. The last thing the far side
+	// printed is what somebody is looking at, and often why the mirror ended.
+	for _, mode := range []struct{ sequence, what string }{
+		{"\x1b[2J", "clearing the screen"},
+		{"\x1b[?1049l", "leaving the alternate screen"},
+		{"\x1bc", "a full reset"},
+	} {
+		if strings.Contains(said, mode.sequence) {
+			t.Errorf("putting a pane back should not take %s with it: %q", mode.what, mode.sequence)
+		}
+	}
+}
+
+func TestPuttingAPaneBackHappensOnEveryWayOut(t *testing.T) {
+	// The three things a mirror can be -- attached, observing, a plain SSH
+	// shell -- all hand the pane to another machine, and all of them end. The
+	// restore sits in the one place they are chosen from, so a fourth would
+	// get it too.
+	body, err := os.ReadFile("mirror.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridgeAt := strings.Index(string(body), "func bridge() error {")
+	if bridgeAt < 0 {
+		t.Fatal("bridge has been renamed; this test is checking nothing")
+	}
+	rest := string(body)[bridgeAt:]
+	end := strings.Index(rest, "\nfunc ")
+	if end < 0 {
+		t.Fatal("could not find the end of bridge")
+	}
+	if !strings.Contains(rest[:end], "defer restorePane(") {
+		t.Error("bridge does not put the pane back, so whichever way a mirror " +
+			"ends the modes the far side set are left on")
+	}
+}

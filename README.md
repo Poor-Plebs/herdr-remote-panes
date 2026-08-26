@@ -432,6 +432,23 @@ says so if it finds one of the other two.
   bot  2 ssh  mirroring off: no herdr found on the machine — set herdr_bin if it is installed elsewhere there
 ```
 
+**The mouse selects no text in a mirrored tab.** Those tabs are a terminal on
+the other machine, and its Herdr asks for mouse events the way yours does — so
+your terminal hands every click and drag to the far side instead of selecting
+with them. The far side does have a selection; you just cannot see it, because
+it belongs to a Herdr you are not looking at.
+
+Hold **shift** while dragging. Most terminals, Ghostty included, take the mouse
+back for their own selection while it is held, and that selection is the one
+you can copy. It is not particular to this plugin: any full-screen program that
+asks for the mouse — over ssh, in tmux, in vim — behaves the same way.
+
+Only mirrored tabs do this, because only they are handed to a Herdr on another
+machine. A plain SSH terminal from this plugin selects normally unless
+something you ran in it asks for the mouse itself.
+
+A pane is not left that way once the mirror ends, whichever way it ends.
+
 **A machine says `n more in other spaces on the machine`.** In the menu the same
 machine reads `connected · 1 mirrored · 3 elsewhere`. You turned mirroring on
 for a machine you already work on, and one terminal arrived instead of the four

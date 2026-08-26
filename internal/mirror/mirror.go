@@ -155,6 +155,12 @@ func bridge() error {
 	// Herdr restored without its command.
 	defer markLive(os.Getenv("HERDR_PANE_ID"), os.Getenv(EnvTerminal))()
 
+	// Whatever the far side turned on, turned off again. The pane outlives the
+	// stream -- Herdr keeps it, showing the last of what arrived -- and
+	// everything below hands it to a program on another machine that can set
+	// modes this end has no other way of clearing.
+	defer restorePane(os.Stdout)
+
 	target := os.Getenv(EnvTarget)
 	if target == "" {
 		return fmt.Errorf("%s must be set", EnvTarget)
@@ -322,6 +328,28 @@ func attach(client *remote.Client, terminal string) error {
 		return fmt.Errorf("%w running: %s", err, describeCommand(argv))
 	}
 	return nil
+}
+
+// paneModes are the terminal modes a program on another machine can turn on
+// and a pane must not be left in once that program has gone.
+//
+// stty puts the line discipline back and nothing else: these belong to the
+// terminal emulator and outlive it. Mouse reporting is the one that shows --
+// with it on, the terminal hands every drag to the application instead of
+// selecting text, so a pane left that way cannot be selected from at all, and
+// the application it is reporting to is not there any more.
+const paneModes = "\x1b[?1000l" + // mouse: clicks
+	"\x1b[?1002l" + // mouse: drags
+	"\x1b[?1003l" + // mouse: all movement
+	"\x1b[?1006l" + // mouse: SGR encoding
+	"\x1b[?2004l" + // bracketed paste
+	"\x1b[?25h" + // the cursor, which a full-screen program may have hidden
+	"\x1b[0m" // colours and attributes
+
+// restorePane puts those modes back. Turning off one that was never on is
+// nothing, so this is safe to do whatever the far side did or did not set.
+func restorePane(w io.Writer) {
+	fmt.Fprint(w, paneModes)
 }
 
 // takeoverEnabled reports whether a stale remote attach may be evicted.
