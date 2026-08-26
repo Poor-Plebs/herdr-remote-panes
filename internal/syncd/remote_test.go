@@ -3125,3 +3125,53 @@ func TestHowAMachinesTerminalsAreLaidOutHere(t *testing.T) {
 		})
 	}
 }
+
+func TestAMirrorThatOpensForgetsWhatItTook(t *testing.T) {
+	// Opening a mirror can fail, and the attempts are counted: enough of them
+	// and the terminal is given up on, left running on the machine with
+	// nothing here showing it. So a terminal that does open has to start
+	// again from nothing, or a flaky one that recovers carries its old count
+	// for ever and is abandoned at the first hint of trouble after that.
+	//
+	// The count is written rather than arrived at: making an open fail needs
+	// Herdr itself to refuse, and what is being checked is what success does,
+	// not what failure does.
+	here := withFakeHerdr(t)
+	there, statePath := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+
+	var shared string
+	for id := range there().Workspaces {
+		shared = id
+	}
+	paneID := addPaneOn(t, statePath, shared, "vim")
+	// The stand-in numbers a pane and its terminal together.
+	terminalID := "term_" + paneID[strings.LastIndex(paneID, ":p")+2:]
+
+	d.mu.Lock()
+	state := d.hosts["bot"]
+	state.failures[terminalID] = 2
+	state.retryAt[terminalID] = time.Now().Add(-time.Second)
+	d.mu.Unlock()
+
+	settle(t, d, here, 4, there)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if _, mirrored := state.mirrors[terminalID]; !mirrored {
+		t.Fatalf("%s was never mirrored, so this checks nothing: %v", terminalID, state.mirrors)
+	}
+	if got := state.failures[terminalID]; got != 0 {
+		t.Errorf("a mirror that opened still carries %d failed attempts", got)
+	}
+	if _, waiting := state.retryAt[terminalID]; waiting {
+		t.Error("a mirror that opened is still being waited on before the next try")
+	}
+}
