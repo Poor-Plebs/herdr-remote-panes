@@ -1,9 +1,12 @@
 package picker
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -855,5 +858,81 @@ func TestConfiguredMachinesAreListedFirst(t *testing.T) {
 		// Order within each group must hold too: the menu's own order is the
 		// order machines were found in, and sorting is not licence to shuffle.
 		t.Errorf("sorted to %v, want %v", got, want)
+	}
+}
+
+// answerWith stands a daemon up on the control socket and has it answer every
+// status command with the reply given, until the test ends.
+//
+// The picker has never had one in a test: every case so far ran with nothing
+// listening, which is the one path where status returns a warning instead of
+// machines. So the check that tells those apart could be inverted -- reporting
+// "the daemon is not running" to somebody whose daemon is running fine, and
+// dropping every machine it had just been handed -- and the suite stayed green.
+func answerWith(t *testing.T, reply syncd.Reply) {
+	t.Helper()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	socket, err := syncd.ControlSocket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			var cmd syncd.Command
+			if err := json.NewDecoder(conn).Decode(&cmd); err == nil {
+				_ = json.NewEncoder(conn).Encode(reply)
+			}
+			conn.Close()
+		}
+	}()
+	t.Cleanup(func() {
+		listener.Close()
+		<-served
+	})
+}
+
+func TestTheMenuShowsWhatARunningDaemonAnswersWith(t *testing.T) {
+	answerWith(t, syncd.Reply{OK: true, Hosts: []syncd.HostInfo{
+		{Target: "deploy@vm", Label: "vm", Connected: true, Mirrors: 3},
+	}})
+
+	hosts, warning := status()
+	if len(hosts) != 1 || hosts[0].Target != "deploy@vm" || hosts[0].Mirrors != 3 {
+		t.Errorf("the machines the daemon reported did not come through: %+v", hosts)
+	}
+	if warning != "" {
+		t.Errorf("warned about a daemon that answered: %q", warning)
+	}
+}
+
+func TestStatusWarnsWhenNothingIsAnswering(t *testing.T) {
+	// The other half of this: TestTheMenuSaysWhenNothingIsAnswering checks
+	// that the warning gets drawn, but hands it the text itself. Nothing
+	// checked that status is what produces it.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "no-daemon-here")
+
+	hosts, warning := status()
+	if hosts != nil {
+		t.Errorf("machines came back with nothing to report them: %+v", hosts)
+	}
+	if !strings.Contains(warning, "not running") {
+		t.Errorf("the menu does not say the daemon is not running: %q", warning)
 	}
 }
