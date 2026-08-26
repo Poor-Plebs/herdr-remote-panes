@@ -2067,3 +2067,45 @@ func TestTerminalsComeBackOneAtATime(t *testing.T) {
 		t.Errorf("the machine settled at %d terminals, want the %d it had", previous, had)
 	}
 }
+
+func TestEveryMachineInALargeConfigConnects(t *testing.T) {
+	// A ~/.ssh/config with fifty machines in it is an ordinary one, and
+	// connecting them all runs a goroutine for each: they finish in any order,
+	// they all write to the same maps, and the reply counts them. Nothing here
+	// was ever asked to do more than three at once.
+	//
+	// Correctness rather than speed -- a timing assertion on a shared runner
+	// fails for reasons that have nothing to do with the change that broke it.
+	// What is held is that all fifty arrive, that the pass afterwards is one
+	// pass and not fifty, and that nothing is left half-connected.
+	held := withFakeHerdr(t)
+
+	const machines = 50
+	names := make([]string, 0, machines)
+	for i := 0; i < machines; i++ {
+		names = append(names, fmt.Sprintf("machine%02d", i))
+	}
+	d := New(machineConfig(names...))
+
+	if reply := d.dispatch(Command{Cmd: "connect"}); !reply.OK {
+		t.Fatalf("connecting all of them: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	status := d.dispatch(Command{Cmd: "status"}).Hosts
+	if len(status) != machines {
+		t.Fatalf("status names %d machines, want %d", len(status), machines)
+	}
+	for _, h := range status {
+		if !h.Connected {
+			t.Errorf("%s did not connect: %s", h.Target, h.LastError)
+		}
+	}
+
+	// One terminal each, not none and not several: the count is what somebody
+	// notices, and a machine that opened two would look like somebody else's
+	// pane sitting in its space.
+	if got := len(held().Panes); got != machines {
+		t.Errorf("%d panes for %d machines", got, machines)
+	}
+}
