@@ -450,3 +450,57 @@ func TestARemoteRefusalKeepsItsCode(t *testing.T) {
 		t.Errorf("error %q should name the machine", wrapped)
 	}
 }
+
+func TestEverySSHCommandPutsTheDestinationAfterADash(t *testing.T) {
+	// The README says a machine's name cannot be read as an option, because the
+	// destination is passed after "--". That is true of SSHArgs, which nearly
+	// every call goes through, and the tests around it hold that one.
+	//
+	// What nothing held is that every call goes through it. ssh takes -o on the
+	// command line and -oProxyCommand=... runs a command, so a destination read
+	// as an option is a command somebody else chose -- and a name does not have
+	// to be typed to get here: connect falls back to whatever is selected in
+	// the terminal.
+	//
+	// Read from the source because that is where a new call would appear. A
+	// seventh one built by hand, without the separator, is not a test failing
+	// anywhere else: it works perfectly until the day a name starts with a dash.
+	raw, err := os.ReadFile("remote.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(raw), "\n")
+
+	found := 0
+	for i, line := range lines {
+		if !strings.Contains(line, `[]string{"ssh"`) {
+			continue
+		}
+		found++
+		// Either it hands off to SSHArgs, which ends with the separator, or it
+		// carries one itself. Looked for close by: these are short functions,
+		// and an argv assembled ten lines later is one worth reading anyway.
+		safe := strings.Contains(line, `"--"`)
+		for j := i + 1; j < len(lines) && j <= i+6 && !safe; j++ {
+			if strings.Contains(lines[j], "SSHArgs(") || strings.Contains(lines[j], `"--"`) {
+				safe = true
+			}
+		}
+		if !safe {
+			t.Errorf("remote.go:%d builds an ssh command with no \"--\" before the "+
+				"destination and no SSHArgs to add one:\n\t%s", i+1, strings.TrimSpace(line))
+		}
+	}
+	if found < 5 {
+		t.Fatalf("found %d ssh commands in remote.go, which is fewer than there are; "+
+			"this test is looking for the wrong shape", found)
+	}
+
+	// And the thing they all lean on actually does it, in both modes.
+	for _, tty := range []bool{true, false} {
+		args := New("bot", "").SSHArgs(tty)
+		if len(args) < 2 || args[len(args)-2] != "--" || args[len(args)-1] != "bot" {
+			t.Errorf("SSHArgs(%v) ends %v, want the destination after a \"--\"", tty, args[len(args)-2:])
+		}
+	}
+}
