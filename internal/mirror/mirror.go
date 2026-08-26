@@ -344,17 +344,12 @@ func observe(client *remote.Client, terminal string) error {
 	for {
 		cols, rows := windowSize()
 		err := streamOnce(client, terminal, cols, rows, winch)
-		switch {
-		case err == nil:
-			// The terminal on the machine ended, so this pane has nothing left
-			// to show and should close rather than reconnect to nothing.
-			return nil
-		case errors.Is(err, errResized):
-			// Not a failure: reconnect straight away at the new size.
-			attempt = 0
-			continue
-		case attempt >= maxObserveAttempts:
+		switch next, reset := planObserveNext(err, attempt); next {
+		case observeStop:
 			return err
+		case observeAgainNow:
+			attempt = reset
+			continue
 		}
 		select {
 		case <-time.After(time.Duration(attempt+1) * observeRetryStep):
@@ -362,6 +357,44 @@ func observe(client *remote.Client, terminal string) error {
 		}
 		attempt++
 	}
+}
+
+// observeNext is what to do after a stream has ended.
+type observeNext int
+
+const (
+	// observeStop closes the pane, with whatever the stream ended with.
+	observeStop observeNext = iota
+	// observeAgainNow opens another straight away, at the attempt count given.
+	observeAgainNow
+	// observeAgainSoon waits first, and counts the attempt.
+	observeAgainSoon
+)
+
+// planObserveNext decides what a stream ending means.
+//
+// Three endings that look alike and are not. A stream that ends with no error
+// is the terminal on the machine going away, so the pane has nothing left to
+// show and closes. A resize ends it too, and that is not a failure at all --
+// the far side renders at the size it was told, so the stream has to start
+// again and say the new one, and the count of attempts goes back to nothing.
+// Anything else is the connection failing, which is worth another go until it
+// has had a few.
+//
+// Held apart from the loop that carries it out because the loop cannot be
+// reached without a stream and a signal: what a resize costs is a count, and
+// counting a resize as a failure means a pane closing on somebody who did
+// nothing but drag a window edge four times.
+func planObserveNext(err error, attempt int) (next observeNext, resetTo int) {
+	switch {
+	case err == nil:
+		return observeStop, attempt
+	case errors.Is(err, errResized):
+		return observeAgainNow, 0
+	case attempt >= maxObserveAttempts:
+		return observeStop, attempt
+	}
+	return observeAgainSoon, attempt
 }
 
 // maxObserveAttempts is how many times a broken stream is picked up again

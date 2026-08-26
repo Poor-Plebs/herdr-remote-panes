@@ -2,6 +2,7 @@ package mirror
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -268,5 +269,67 @@ func TestTheRemoteCommandEndingClosesThePane(t *testing.T) {
 	}
 	if got := attempts(); got != 1 {
 		t.Errorf("the stream was opened %d times, want once", got)
+	}
+}
+
+func TestWhatAStreamEndingMeans(t *testing.T) {
+	// Three endings that look alike from the outside and are not.
+	other := errors.New("ssh: connection reset")
+
+	for _, tt := range []struct {
+		what    string
+		err     error
+		attempt int
+		want    observeNext
+		reset   int
+	}{
+		// The terminal on the machine went away, so there is nothing left to
+		// show and the pane closes rather than reconnecting to nothing.
+		{"the terminal ended", nil, 0, observeStop, 0},
+		{"the terminal ended late", nil, maxObserveAttempts, observeStop, maxObserveAttempts},
+
+		// A resize is not a failure. The far side renders at the size it was
+		// told, so the stream starts again saying the new one -- straight away,
+		// and without spending an attempt.
+		{"a resize", errResized, 0, observeAgainNow, 0},
+		{"a resize after failures", errResized, maxObserveAttempts - 1, observeAgainNow, 0},
+		{"a resize wrapped in something", fmt.Errorf("stream: %w", errResized), 2, observeAgainNow, 0},
+
+		// Anything else is the connection going, which is worth another go
+		// until it has had a few.
+		{"a broken stream", other, 0, observeAgainSoon, 0},
+		{"a broken stream, nearly out", other, maxObserveAttempts - 1, observeAgainSoon, maxObserveAttempts - 1},
+		{"a broken stream, out", other, maxObserveAttempts, observeStop, maxObserveAttempts},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			next, reset := planObserveNext(tt.err, tt.attempt)
+			if next != tt.want {
+				t.Errorf("planObserveNext(%v, %d) = %v, want %v", tt.err, tt.attempt, next, tt.want)
+			}
+			if next == observeAgainNow && reset != tt.reset {
+				t.Errorf("planObserveNext(%v, %d) reset the count to %d, want %d",
+					tt.err, tt.attempt, reset, tt.reset)
+			}
+		})
+	}
+}
+
+func TestResizingForeverNeverClosesThePane(t *testing.T) {
+	// The property the reset is for, rather than the line that does it: what a
+	// resize costs is a count, and counting one as a failure means a pane
+	// closing on somebody who did nothing but drag a window edge a few times.
+	attempt := 0
+	for i := 0; i < maxObserveAttempts*5; i++ {
+		next, reset := planObserveNext(errResized, attempt)
+		if next != observeAgainNow {
+			t.Fatalf("resize %d of %d was answered with %v", i+1, maxObserveAttempts*5, next)
+		}
+		attempt = reset
+	}
+
+	// And the budget is still whole afterwards: a stream that breaks after all
+	// that resizing gets its attempts, rather than being one short of them.
+	if next, _ := planObserveNext(errors.New("ssh: connection reset"), attempt); next != observeAgainSoon {
+		t.Errorf("after resizing, a broken stream was answered with %v, want another go", next)
 	}
 }
