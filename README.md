@@ -603,6 +603,33 @@ bytes twice gives the same answer — so they keep working when the wording of
 something changes. `go test ./...` runs their seed corpus; the fuzzing itself is
 opt-in, like the two above.
 
+### Cutting a release
+
+A release is an annotated tag carrying its own notes, and a GitHub release made
+from the same file. There is no workflow behind it: the version a build reports
+comes from the commit Go recorded, not from the tag, so tagging is the whole of
+it.
+
+```bash
+make check                                    # green, from a clean tree
+go test -run XXX -fuzz FuzzDecodeFrame -fuzztime 40s ./internal/mirror/
+```
+
+Then the one thing that is easy to forget: the install line near the top of this
+README pins a version, and it is the only place a version number is written
+down. The release badge reads the latest release itself and needs nothing. Bump
+the pin, commit it, and tag *that* commit before pushing either:
+
+```bash
+git tag -a v0.2.0 -F notes.md
+git push && git push origin v0.2.0
+gh release create v0.2.0 --title "v0.2.0 — ..." --notes-file notes.md
+```
+
+The notes say what somebody upgrading would notice, in the order they would
+notice it, rather than listing commits — the log is already there for anyone who
+wants it.
+
 ## Trust
 
 This runs with your privileges and connects by SSH to machines you name. Read
