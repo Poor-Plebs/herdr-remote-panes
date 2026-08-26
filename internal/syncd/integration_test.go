@@ -1236,11 +1236,25 @@ func TestPollingAndCommandsAtTheSameTimeIsSafe(t *testing.T) {
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
 
-	// The poll, running as fast as it can rather than every two seconds.
+	// The poll, running far faster than every two seconds, and for a fixed
+	// number of passes rather than for as long as the commands below take.
+	//
+	// Unbounded, it ran until they finished -- and each pass spawns a
+	// subprocess per machine while holding the daemon's lock, so the commands
+	// were queueing behind it while it spun because they had not finished, and
+	// they had not finished because it was spinning. What that costs is
+	// whatever the machine is doing otherwise: the same fifteen runs took four
+	// seconds on an idle machine here and forty on a busy one, and ten minutes
+	// on CI, where it was killed as a hang.
+	//
+	// A count instead. The races this is for were found in under a second, so
+	// what matters is that the passes overlap the commands, not that they run
+	// until the last one lands.
+	const passes = 100
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for {
+		for i := 0; i < passes; i++ {
 			select {
 			case <-stop:
 				return
@@ -1255,7 +1269,7 @@ func TestPollingAndCommandsAtTheSameTimeIsSafe(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for {
+		for i := 0; i < passes; i++ {
 			select {
 			case <-stop:
 				return
