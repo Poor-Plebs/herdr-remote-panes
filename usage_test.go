@@ -460,11 +460,12 @@ func TestTheREADMEShowsTheVersionOutputThatIsPrinted(t *testing.T) {
 }
 
 // answerAs stands a daemon up on the control socket and has it answer one
-// status command with the revision given. Every version test so far has run
-// with nothing listening, which exercises exactly one of the three answers
+// status command with the reply given. Every test here used to run with
+// nothing listening, which exercises exactly one of the three answers
 // reportVersion can give -- and the switch it picks with was invisible to the
-// mutation sweep until case expressions were included in it.
-func answerAs(t *testing.T, revision string) {
+// mutation sweep until case expressions were included in it. `status` had no
+// test at all for the same reason.
+func answerAs(t *testing.T, reply syncd.Reply) {
 	t.Helper()
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	t.Setenv("HERDR_SESSION", "hub")
@@ -493,7 +494,7 @@ func answerAs(t *testing.T, revision string) {
 		if err := json.NewDecoder(conn).Decode(&cmd); err != nil {
 			return
 		}
-		_ = json.NewEncoder(conn).Encode(syncd.Reply{OK: true, Revision: revision})
+		_ = json.NewEncoder(conn).Encode(reply)
 	}()
 	t.Cleanup(func() {
 		listener.Close()
@@ -502,7 +503,7 @@ func answerAs(t *testing.T, revision string) {
 }
 
 func TestVersionNamesTheBuildTheDaemonAnswersWith(t *testing.T) {
-	answerAs(t, "9fcc667")
+	answerAs(t, syncd.Reply{OK: true, Revision: "9fcc667"})
 
 	var out, warn strings.Builder
 	if err := reportVersion(&out, &warn, "9fcc667"); err != nil {
@@ -524,7 +525,7 @@ func TestVersionNamesTheBuildTheDaemonAnswersWith(t *testing.T) {
 func TestVersionSaysUnknownWhenTheDaemonNamesNoBuild(t *testing.T) {
 	// What `go run` and a test binary look like: something answers, but it has
 	// no commit of its own to report. A blank column reads as a bug.
-	answerAs(t, "")
+	answerAs(t, syncd.Reply{OK: true})
 
 	var out, warn strings.Builder
 	if err := reportVersion(&out, &warn, "9fcc667"); err != nil {
@@ -558,4 +559,87 @@ func daemonLine(t *testing.T, printed string) string {
 	}
 	t.Fatalf("no %q line in the version output:\n%s", daemonLabel, printed)
 	return ""
+}
+
+// captureOutput runs something that prints to the process's own streams and
+// hands back what it wrote.
+//
+// status writes to os.Stdout directly, as a command with nothing else to do
+// should. Rather than reshape it for the benefit of a test, the test takes the
+// streams: what it checks is then what a user actually sees, rather than what
+// an injected writer was handed.
+func captureOutput(t *testing.T, run func() error) (string, string) {
+	t.Helper()
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	realOut, realErr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = outW, errW
+
+	runErr := run()
+
+	os.Stdout, os.Stderr = realOut, realErr
+	outW.Close()
+	errW.Close()
+	// Small enough for the pipe buffer, so nothing has to drain concurrently.
+	printed, _ := io.ReadAll(outR)
+	warned, _ := io.ReadAll(errR)
+	if runErr != nil {
+		t.Fatalf("status failed: %v", runErr)
+	}
+	return string(printed), string(warned)
+}
+
+func TestStatusPrintsTheMachinesTheDaemonReports(t *testing.T) {
+	answerAs(t, syncd.Reply{OK: true, Hosts: []syncd.HostInfo{
+		{Target: "deploy@vm", Label: "vm", Connected: true, Mirrors: 3},
+		{Target: "ci@build", Label: "build", Connected: true, SSHOnly: true, Terminals: 1},
+	}})
+
+	printed, warned := captureOutput(t, status)
+
+	for _, want := range []string{"vm", "build"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("the table does not name %q:\n%s", want, printed)
+		}
+	}
+	if warned != "" {
+		t.Errorf("warned with nothing to warn about: %q", warned)
+	}
+}
+
+func TestStatusSaysSoWhenThereIsNothingToShow(t *testing.T) {
+	// A blank answer to `status` reads as a broken command. It has to say that
+	// there is nothing connected, in the words everything else here uses.
+	answerAs(t, syncd.Reply{OK: true})
+
+	printed, _ := captureOutput(t, status)
+
+	if strings.TrimSpace(printed) == "" {
+		t.Error("status printed nothing at all for a daemon with no machines")
+	}
+	if want := statusSummary(nil); !strings.Contains(printed, want) {
+		t.Errorf("status printed %q, and the notification says %q", printed, want)
+	}
+}
+
+func TestStatusPassesOnWhatTheDaemonIsWarningAbout(t *testing.T) {
+	// The daemon is the only one that can see a config it could not read. If
+	// status drops that, the machines simply are not listed and nothing says
+	// why.
+	answerAs(t, syncd.Reply{OK: true, Warning: "machine \"vm\" has no target"})
+
+	printed, warned := captureOutput(t, status)
+
+	if !strings.Contains(warned, "has no target") {
+		t.Errorf("the daemon's warning was dropped; stderr was %q, stdout %q", warned, printed)
+	}
+	if strings.Contains(printed, "has no target") {
+		t.Errorf("the warning went to stdout, where it would be parsed as a machine:\n%s", printed)
+	}
 }
