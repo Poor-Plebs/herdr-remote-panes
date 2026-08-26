@@ -557,3 +557,34 @@ func TestClosingUsesTheConnectionItIsClosing(t *testing.T) {
 		t.Errorf("the machine is not passed after the separator: %v", got)
 	}
 }
+
+func TestStartingASessionSaysWhichMachineWouldNot(t *testing.T) {
+	// auto_start launches a Herdr session on a machine that has none, and this
+	// is the one place a failure to do that is turned into something readable.
+	// The daemon logs it against a target and the menu shows it as the reason
+	// a machine is unreachable, so it has to name the machine and say what it
+	// was trying to do -- "exit status 255" on its own describes every ssh
+	// failure there is.
+	fakeSSH(t, `echo 'ssh: connect to host bot port 22: Connection refused' >&2
+exit 255`)
+
+	err := NewWithBin("bot", "agents", "herdr").Start()
+	if err == nil {
+		t.Fatal("starting a session on a machine that refused reported success")
+	}
+	for _, want := range []string{"bot", "start a remote Herdr session", "Connection refused"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not say %q: %v", want, err)
+		}
+	}
+}
+
+func TestStartingASessionThatWorksSaysNothing(t *testing.T) {
+	// The stand-in answers everything, which is what a machine with Herdr on
+	// it does.
+	fakeSSH(t, `exit 0`)
+
+	if err := NewWithBin("bot", "agents", "herdr").Start(); err != nil {
+		t.Errorf("starting a session on a machine that accepted it failed: %v", err)
+	}
+}
