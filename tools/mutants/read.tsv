@@ -68,3 +68,19 @@ internal/mirror/liveness.go	<= -> <	if err != nil || pid <= 0 {
 # What that decides is out of a test's reach, which is why shortRevision exists
 # separately and has one.
 internal/version/version.go	! ->	if !ok {
+
+# i == 0 means the line begins with "=", and the guard inside already rejects
+# it: Fields("") is empty, never the one field the rewrite needs. Both
+# spellings leave the line alone.
+internal/sshconfig/sshconfig.go	>= -> >	if i := strings.IndexByte(line, '='); i >= 0 && !strings.ContainsRune(line[:i], '"') {
+
+# Defensive against a decoder that stops past the end of what it was given.
+# SyntaxError.Offset is how much had been read, so for the errors encoding/json
+# actually produces -- including "unexpected end of JSON input", where Offset is
+# the whole length -- the byte before it is always inside the file. Removing
+# either half only matters if that stops being true, which is what the guard is
+# there for.
+internal/config/config.go	|| -> &&	if at < 0 || at >= len(raw) {
+
+# Same guard, other end.
+internal/config/config.go	>= -> >	if at < 0 || at >= len(raw) {

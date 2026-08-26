@@ -424,17 +424,47 @@ func TestTheCommonestHandEditingMistakesSayWhatTheyAre(t *testing.T) {
 	//
 	// Both of these are allowed by nearly every other format and not by JSON,
 	// which is exactly why they are the two people write into a config by hand.
-	for _, tt := range []struct{ what, body, want string }{
+	for _, tt := range []struct{ what, body, want, notWant string }{
 		{
-			"a comma before a closing brace",
-			`{"hosts":[],}`,
-			"a comma just before the }",
+			what: "a comma before a closing brace",
+			body: `{"hosts":[],}`,
+			want: "a comma just before the }",
 		},
 
 		{
-			"single quotes",
-			`{'hosts':[]}`,
-			"single quotes",
+			what: "single quotes",
+			body: `{'hosts':[]}`,
+			want: "single quotes",
+		},
+
+		// The three below are what the guards around those two messages are
+		// for. Each is a file somebody could actually save, and each lands on
+		// the same code by a different route.
+		{
+			// Pasted out of a shell command, quotes and all. The offending
+			// byte is the first one in the file, which is the edge of the
+			// range check that decides whether there is a byte to look at.
+			what: "the whole file wrapped in single quotes",
+			body: `'{"hosts":[]}'`,
+			want: "single quotes",
+		},
+		{
+			// A closing brace with nothing before it: there is no character
+			// preceding it to ask about, and asking anyway reads off the front
+			// of the file.
+			what: "nothing but a closing brace",
+			body: `}`,
+			want: "invalid character",
+		},
+		{
+			// A missing value, not a stray comma. The decoder stops on the
+			// same byte for both, and only what comes before it tells them
+			// apart -- so this is the case that turns a helpful message into
+			// a confidently wrong one.
+			what:    "a key with no value",
+			body:    `{"hosts": }`,
+			want:    "invalid character",
+			notWant: "a comma just before",
 		},
 	} {
 		t.Run(tt.what, func(t *testing.T) {
@@ -450,6 +480,9 @@ func TestTheCommonestHandEditingMistakesSayWhatTheyAre(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("%s reads as %q, which does not say %q", tt.what, err, tt.want)
+			}
+			if tt.notWant != "" && strings.Contains(err.Error(), tt.notWant) {
+				t.Errorf("%s reads as %q, which says %q and should not", tt.what, err, tt.notWant)
 			}
 		})
 	}
