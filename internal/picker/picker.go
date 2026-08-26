@@ -59,12 +59,8 @@ type Disconnect func(target string) (string, error)
 func Run(connect Connect, setMode SetMode, disconnect Disconnect) error {
 	entries, warning := collect()
 	if len(entries) == 0 {
-		// With no menu to put it in, a warning still has to be said somewhere.
-		body := []string{"Add hosts to ~/.ssh/config or to the plugin's config.json."}
-		if warning != "" {
-			body = append(body, warning)
-		}
-		notice("No machines found.", body...)
+		heading, body := noMachinesNotice(warning)
+		notice(heading, body...)
 		waitForKey()
 		return nil
 	}
@@ -251,6 +247,23 @@ func planSelectionAfterChange(selected, count int) int {
 		return 0
 	}
 	return selected
+}
+
+// noMachinesNotice is what a fresh installation draws: nothing in the plugin's
+// config and nothing in ~/.ssh/config either, so there is no menu to put a
+// machine in.
+//
+// Apart from Run so that what it says can be read without a terminal to draw
+// it on. It is the first screen this plugin ever shows somebody, and the only
+// one of the four that wait for a key which did not say that it was waiting --
+// a popup with nothing in it and no way out written down.
+func noMachinesNotice(warning string) (heading string, body []string) {
+	body = []string{"Add hosts to ~/.ssh/config or to the plugin's config.json."}
+	// With no menu to put it in, a warning still has to be said somewhere.
+	if warning != "" {
+		body = append(body, warning)
+	}
+	return "No machines found.", append(body, "Press any key.")
 }
 
 func choose(entry Entry, connect Connect) error {

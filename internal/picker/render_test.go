@@ -1341,3 +1341,44 @@ func TestTwoMachinesAreNeverDrawnWithTheSameName(t *testing.T) {
 		t.Errorf("the machine that owns the name lost it: %q", names[1])
 	}
 }
+
+func TestTheFirstScreenAFreshInstallationShows(t *testing.T) {
+	// Nothing configured and nothing in ~/.ssh/config either. There is no menu
+	// to draw, so this notice is the whole of what somebody sees the first
+	// time they press the key they just bound.
+	heading, body := noMachinesNotice("")
+	drawn := visible(renderNotice(76, heading, body...))
+
+	// What to do about it.
+	for _, want := range []string{"No machines found", "~/.ssh/config", "config.json"} {
+		if !strings.Contains(drawn, want) {
+			t.Errorf("the first screen does not mention %q:\n%s", want, drawn)
+		}
+	}
+	// And how to leave it. The three other screens that wait for a key say so;
+	// this one did not, which left a popup with nothing in it and no way out
+	// written down.
+	if !strings.Contains(drawn, "any key") {
+		t.Errorf("the first screen does not say how to close it:\n%s", drawn)
+	}
+	// It still fits.
+	for _, line := range strings.Split(drawn, "\r\n") {
+		if w := text.Width(line); w > 76 {
+			t.Errorf("a line is %d columns wide: %q", w, line)
+		}
+	}
+}
+
+func TestAConfigProblemIsSaidEvenWithNoMachinesToSayItAbout(t *testing.T) {
+	// A config that cannot be read is why there are no machines, and with no
+	// menu to carry the warning it would otherwise go nowhere a person looks.
+	_, body := noMachinesNotice("check the plugin config: mode \"shh\" is unknown")
+
+	joined := strings.Join(body, "\n")
+	if !strings.Contains(joined, "shh") {
+		t.Errorf("the reason there are no machines was dropped: %q", joined)
+	}
+	if !strings.Contains(joined, "any key") {
+		t.Errorf("the way out went missing once there was a warning: %q", joined)
+	}
+}
