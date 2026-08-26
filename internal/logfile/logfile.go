@@ -66,9 +66,13 @@ func (f *File) Write(p []byte) (int, error) {
 
 // rotate keeps the previous generation. Callers hold the lock.
 func (f *File) rotate() error {
-	if err := f.file.Close(); err != nil {
-		return err
-	}
+	// The descriptor is released whether or not Close reports a problem -- a
+	// failure there is the flush complaining, not the file staying open. So
+	// returning on it would leave nothing to write to, and the caller's
+	// fallback of carrying on regardless would write to a closed file: the
+	// log would stop for good the first time a close complained, which is the
+	// thing this package exists to avoid.
+	_ = f.file.Close()
 	if err := os.Rename(f.path, f.path+".1"); err != nil {
 		// Reopen what is there rather than leaving nothing to write to.
 		_ = f.open()

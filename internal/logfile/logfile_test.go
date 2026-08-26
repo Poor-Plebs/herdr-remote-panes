@@ -309,3 +309,52 @@ func TestReopeningRemembersHowBigTheLogAlreadyIs(t *testing.T) {
 		t.Errorf("the log went over its bound without rolling over: %v", err)
 	}
 }
+
+func TestTheLogSurvivesACloseThatComplains(t *testing.T) {
+	// Rolling over closes the file, renames it and opens a new one. Close can
+	// report a problem -- a flush failing on a disk that is misbehaving -- and
+	// the descriptor is gone either way, so a rotate that gave up there left
+	// nothing to write to. Every line after that was lost, silently and for
+	// as long as the daemon ran, which is exactly the failure this package
+	// was written to prevent.
+	//
+	// A file closed behind its back is what that looks like from in here: the
+	// next Close reports one, and the one after it fails the same way a flush
+	// error would.
+	path := filepath.Join(t.TempDir(), "daemon.log")
+	// Room for the two lines below to land in one generation, so that what is
+	// checked is the rotation whose close failed and not a later one.
+	f, err := Open(path, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	// Most of the way to the bound, so the next line is the one that rolls it.
+	if _, err := f.Write([]byte(strings.Repeat("x", 49) + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.file.Close()
+
+	// Long enough to be over the bound, so this write is the one that rotates.
+	line := []byte("the line that rolls the log over\n")
+	if n, err := f.Write(line); err != nil || n != len(line) {
+		t.Errorf("the line that rotated the log was lost: n=%d err=%v", n, err)
+	}
+	// And the log keeps working afterwards, rather than every later line
+	// meeting the same closed file.
+	after := []byte("and the next one\n")
+	if n, err := f.Write(after); err != nil || n != len(after) {
+		t.Errorf("the log stopped working after a close complained: n=%d err=%v", n, err)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"rolls the log over", "and the next one"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("the log does not hold %q:\n%s", want, body)
+		}
+	}
+}
