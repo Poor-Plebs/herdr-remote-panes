@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -24,14 +25,12 @@ import (
 //     stops there is nothing serving at all;
 //   - the daemon that goes must not take the replacement's socket with it.
 //
-// Opt-in: it builds the binary and waits on real processes.
-//
-//	HRP_UPGRADE=1 go test -run AnUpgradeHandsTheSocketOver .
+// It builds the binary and waits on real processes, which is slower than the
+// rest of the suite and still under two seconds. It was opt-in at first, and
+// that was the wrong side of the trade: the release steps are the only place
+// that would have run it, and forgetting the release steps is how the thing it
+// guards got out three times.
 func TestAnUpgradeHandsTheSocketOver(t *testing.T) {
-	if os.Getenv("HRP_UPGRADE") == "" {
-		t.Skip("set HRP_UPGRADE=1 to run; it builds the binary and runs two daemons")
-	}
-
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "herdr-remote-panes")
 	build := exec.Command("go", "build", "-o", binary, ".")
@@ -49,8 +48,8 @@ func TestAnUpgradeHandsTheSocketOver(t *testing.T) {
 		"HERDR_PLUGIN_CONFIG_DIR="+config,
 		"HERDR_SESSION=upgrade")
 
-	daemon := func() (*exec.Cmd, *strings.Builder) {
-		said := &strings.Builder{}
+	daemon := func() (*exec.Cmd, *saidWhat) {
+		said := &saidWhat{}
 		cmd := exec.Command(binary, "daemon")
 		cmd.Env = env
 		cmd.Stderr = said
@@ -110,4 +109,27 @@ func TestAnUpgradeHandsTheSocketOver(t *testing.T) {
 		t.Errorf("nothing answers after the handover.\nreplacing daemon said:\n%s\nold daemon said:\n%s",
 			replacingSaid, oldSaid)
 	}
+}
+
+// saidWhat collects what a process wrote while it is still writing.
+//
+// A strings.Builder handed to cmd.Stderr is written by the goroutine copying
+// the pipe, and reading it from the test while the process is alive is a race
+// -- one the race detector never saw while this test was opt-in, because
+// opt-in tests are not the ones CI runs with it.
+type saidWhat struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *saidWhat) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *saidWhat) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
