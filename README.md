@@ -207,6 +207,12 @@ here. For a tab each instead:
 be set per machine with `hosts[].placement`, which is worth doing when only one
 of your machines has enough open on it to matter.
 
+A terminal *you* open with the new-tab action is different: it keeps the tab you
+asked for, including when its pane has to be opened again — a link that dropped,
+a Herdr that restarted. It used to keep it only until then, and came back placed
+the machine's usual way, so a set of tabs turned into one tab with all of them
+split inside it some time after you made them.
+
 **Closing a mirrored tab closes the terminal on the machine.** Mirroring is
 two-way, and closing is part of it: the tab goes here and the terminal goes
 there, with whatever was running in it. That is `close_propagates`, and it is
