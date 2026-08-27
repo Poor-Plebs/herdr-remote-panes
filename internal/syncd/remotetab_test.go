@@ -202,3 +202,27 @@ func TestAHerdrThatWillNotAnswerDoesNotMakeTerminals(t *testing.T) {
 			"not answer was read as the machine having none", was, got)
 	}
 }
+
+func TestNewTerminalDoesNotFallBackToLocalWhenHerdrIsSilent(t *testing.T) {
+	// "New terminal" works out which machine a space belongs to by asking
+	// Herdr for the space's label. A Herdr that would not answer came back the
+	// same as a space with no label -- which means "belongs to no machine", and
+	// makes the action open an ordinary local terminal.
+	//
+	// So a moment's trouble put a local shell inside somebody's remote space
+	// and reported success. The comment beside hostForWorkspaceLabel records
+	// that same outcome arriving by another route; this is the other route.
+	withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+
+	withBrokenHerdr(t)
+	reply := d.dispatch(Command{Cmd: "open", Workspace: "w1", Placement: "tab"})
+
+	if reply.OK {
+		t.Errorf("with Herdr refusing, opening a terminal said %q and reported "+
+			"success; it cannot know whether that space is a machine's", reply.Message)
+	}
+	if !strings.Contains(reply.Message, "could not tell") {
+		t.Errorf("the failure does not say what went wrong: %q", reply.Message)
+	}
+}

@@ -480,11 +480,18 @@ func ClosePaneByID(paneID string) error {
 	return ignoreNotFound(err)
 }
 
-// WorkspaceLabel returns the label of a workspace, or "" when it is unknown.
-func WorkspaceLabel(workspaceID string) string {
+// WorkspaceLabel returns the label of a workspace, and whether Herdr could be
+// asked at all.
+//
+// The two were one answer: a workspace with no label and a Herdr that would not
+// answer both came back "". They mean different things to a caller deciding
+// which machine a space belongs to -- no label means it belongs to none, and no
+// answer means it is not known -- and treating the second as the first opens an
+// ordinary local terminal inside somebody's remote space, reporting success.
+func WorkspaceLabel(workspaceID string) (string, bool) {
 	result, err := Run("workspace", "list")
 	if err != nil {
-		return ""
+		return "", false
 	}
 	var body struct {
 		Workspaces []struct {
@@ -493,14 +500,16 @@ func WorkspaceLabel(workspaceID string) string {
 		} `json:"workspaces"`
 	}
 	if err := json.Unmarshal(result, &body); err != nil {
-		return ""
+		return "", false
 	}
 	for _, ws := range body.Workspaces {
 		if ws.WorkspaceID == workspaceID {
-			return ws.Label
+			return ws.Label, true
 		}
 	}
-	return ""
+	// Asked, and it has no label -- or no longer exists, which for this
+	// purpose is the same: it belongs to no machine.
+	return "", true
 }
 
 // SplitPane opens an ordinary local pane next to the focused one.

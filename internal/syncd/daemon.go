@@ -794,7 +794,10 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		return Reply{OK: true, Message: "disconnected from " + host.Target}
 
 	case "open":
-		host, ok := d.resolveOpenTarget(cmd)
+		host, ok, err := d.resolveOpenTarget(cmd)
+		if err != nil {
+			return Reply{Message: err.Error()}
+		}
 		if !ok {
 			// Not a mirrored workspace, so "new terminal" means what it
 			// normally means. This keeps one keybinding usable everywhere.
@@ -1068,23 +1071,31 @@ func (d *Daemon) ensureRemoteWorkspace(state *hostSync) (string, bool, error) {
 // named host, otherwise the machine whose mirrors live in the workspace the
 // action was invoked from. Creating a terminal while looking at a machine's
 // workspace should create it on that machine.
-func (d *Daemon) resolveOpenTarget(cmd Command) (config.Host, bool) {
+func (d *Daemon) resolveOpenTarget(cmd Command) (config.Host, bool, error) {
 	if cmd.Host != "" {
 		// Only whether, not why: a name that is not a machine falls back to
 		// opening an ordinary pane, which is what "new terminal" means
 		// everywhere else.
 		host, err := d.hostConfig(cmd.Host)
-		return host, err == nil
+		return host, err == nil, nil
 	}
 	if cmd.Workspace == "" {
-		return config.Host{}, false
+		return config.Host{}, false, nil
 	}
 
-	label := herdrcli.WorkspaceLabel(cmd.Workspace)
-	if label == "" {
-		return config.Host{}, false
+	label, asked := herdrcli.WorkspaceLabel(cmd.Workspace)
+	if !asked {
+		// Not knowing is not "belongs to no machine". Opening a local terminal
+		// on that answer puts an ordinary shell inside somebody's remote space
+		// and calls it success, which is the one outcome worse than failing.
+		return config.Host{}, false, fmt.Errorf(
+			"could not tell which machine this space belongs to; nothing was opened")
 	}
-	return d.hostForWorkspaceLabel(label)
+	if label == "" {
+		return config.Host{}, false, nil
+	}
+	host, ok := d.hostForWorkspaceLabel(label)
+	return host, ok, nil
 }
 
 // hostForWorkspaceLabel finds the machine whose space carries a label.

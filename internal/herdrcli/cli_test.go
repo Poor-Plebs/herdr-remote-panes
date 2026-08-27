@@ -86,20 +86,24 @@ func TestWorkspaceLabelFindsTheRightSpace(t *testing.T) {
 		`{"workspace_id":"w2","label":"☁  bot"}`+
 		`]},"id":"cli:test"}'`)
 
-	if got := WorkspaceLabel("w2"); got != "☁  bot" {
-		t.Errorf("WorkspaceLabel(w2) = %q", got)
+	if got, asked := WorkspaceLabel("w2"); got != "☁  bot" || !asked {
+		t.Errorf("WorkspaceLabel(w2) = %q, %v", got, asked)
 	}
 	// A space that is not there is not an error to the caller: it decides what
-	// an unknown space means.
-	if got := WorkspaceLabel("w9"); got != "" {
-		t.Errorf("WorkspaceLabel(w9) = %q, want empty", got)
+	// an unknown space means. It was asked, and the answer is that it has no
+	// label -- which is a different thing from not having been able to ask.
+	if got, asked := WorkspaceLabel("w9"); got != "" || !asked {
+		t.Errorf("WorkspaceLabel(w9) = %q, %v; want empty and asked", got, asked)
 	}
 }
 
 func TestWorkspaceLabelSaysNothingRatherThanGuessing(t *testing.T) {
 	// The caller uses the label to work out which machine a pane belongs to.
 	// Anything other than the real label would put a terminal on the wrong
-	// machine, so a failure has to read as "do not know".
+	// machine, so a failure has to read as "do not know" -- and say that it is
+	// one, rather than coming back as a space with no label. Those mean
+	// opposite things: no label is "belongs to no machine", which opens an
+	// ordinary local terminal, and a failure is "not known", which must not.
 	for _, name := range []string{"herdr refuses", "herdr says nothing", "unreadable output"} {
 		t.Run(name, func(t *testing.T) {
 			switch name {
@@ -110,8 +114,13 @@ func TestWorkspaceLabelSaysNothingRatherThanGuessing(t *testing.T) {
 			case "unreadable output":
 				fakeHerdr(t, `echo 'not json at all'`)
 			}
-			if got := WorkspaceLabel("w1"); got != "" {
+			got, asked := WorkspaceLabel("w1")
+			if got != "" {
 				t.Errorf("WorkspaceLabel = %q, want empty", got)
+			}
+			if asked {
+				t.Error("a failure came back as having been asked, which reads as " +
+					"a space that belongs to no machine")
 			}
 		})
 	}
