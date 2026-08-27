@@ -198,3 +198,76 @@ func TestFinishingARestoreForgetsThePlacementsWithTheCount(t *testing.T) {
 			"on a terminal that never asked for it", state.restoreShellsAs)
 	}
 }
+
+func TestATabKeepsItsPlaceWhenItsLinkDrops(t *testing.T) {
+	// The reported case said "after some time", which is more likely a link
+	// that dropped than a restart: the bridge dies, its pane goes, and the
+	// mirror is opened again on the next pass. No restart, so nothing is read
+	// back from the snapshot -- this is the same memory being used while the
+	// daemon is still running, and it is the commoner of the two paths.
+	held := withFakeHerdr(t)
+	withRemoteHerdrRunning(t, true)
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{{Target: "bot", Mode: "attach"}}
+
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	before := held()
+	if reply := d.dispatch(Command{Cmd: "open", Host: "bot", Placement: "tab"}); !reply.OK {
+		t.Fatalf("open-tab: %s", reply.Message)
+	}
+	for i := 0; i < 4; i++ {
+		d.reconcileAll()
+	}
+
+	// The pane that appeared, which is the one in the tab that was asked for.
+	var opened string
+	for id := range held().Panes {
+		if _, existed := before.Panes[id]; !existed {
+			opened = id
+			break
+		}
+	}
+	if opened == "" {
+		t.Fatal("the new terminal opened no pane")
+	}
+	wanted := tabsFor(held(), "bot")
+	if len(wanted) < 2 {
+		t.Fatalf("the terminal asked for as a tab is sharing a tab: %v", wanted)
+	}
+
+	// Which terminal that pane was showing, so its backoff can be cleared
+	// below.
+	var terminalID string
+	d.mu.Lock()
+	for id, paneID := range d.hosts["bot"].mirrors {
+		if paneID == opened {
+			terminalID = id
+		}
+	}
+	d.mu.Unlock()
+	if terminalID == "" {
+		t.Fatal("the pane that opened is not mirroring anything")
+	}
+
+	// Its link drops: the bridge fails and the pane goes with it.
+	terminalDied(t, opened, "ssh: connect to host bot port 22: Connection refused")
+
+	// A mirror that failed is backed off before it is tried again, so that a
+	// persistent error cannot open a pane on every tick. These passes take no
+	// real time at all, so without this the mirror is never retried and the
+	// test would be measuring the backoff rather than the placement.
+	for i := 0; i < 6; i++ {
+		d.mu.Lock()
+		delete(d.hosts["bot"].retryAt, terminalID)
+		d.mu.Unlock()
+		d.reconcileAll()
+	}
+
+	if got := tabsFor(held(), "bot"); len(got) < len(wanted) {
+		t.Errorf("a tab whose link dropped came back in %d tab(s), want %d: %v",
+			len(got), len(wanted), got)
+	}
+}
