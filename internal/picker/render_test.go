@@ -1292,6 +1292,19 @@ func TestWhichNameFitsTheRoomThereIs(t *testing.T) {
 		{"the label, when neither fits whole", Entry{Target: "deploy@prod", Label: "production-web"}, 6, "production-web"},
 		{"the target, when there is no label", Entry{Target: "raspberrypi.local"}, 8, "raspberrypi.local"},
 		{"the target, when the label repeats it", Entry{Target: "workbox", Label: "workbox"}, 4, "workbox"},
+
+		// Exactly as wide as the column, which is the ordinary case rather
+		// than an edge one: the column is sized to the widest name there is,
+		// so the widest name fits it exactly. A boundary read one column tight
+		// drops the full name for the label at precisely the width the column
+		// was made for.
+		{"the pair, exactly filling the column", Entry{Target: "bot", Label: "b"}, 7, "bot (b)"},
+		// Both fit and the label is chosen, which is the rule: the label is the
+		// name somebody picked for the machine. It takes both fitting to see
+		// it -- with only the label fitting, the fallback at the end returns
+		// the label too, so the two paths agree by accident.
+		{"the label, when both fit exactly", Entry{Target: "bot", Label: "prod"}, 4, "prod"},
+		{"the target, exactly filling it", Entry{Target: "prod", Label: "production web"}, 4, "prod"},
 	} {
 		t.Run(tt.what, func(t *testing.T) {
 			if got := nameWithin(tt.entry, tt.width); got != tt.want {
