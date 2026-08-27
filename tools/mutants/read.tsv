@@ -141,3 +141,4 @@ internal/syncd/daemon.go	> -> >=	if state.restoreShells > 0 {	reconcileHost
 # it -- a comment is not three tab-separated fields.
 tools/mutants/main.go	|| -> &&	if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {	readSurvivors
 tools/mutants/main.go	|| -> &&	if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {	staleTriage
+internal/syncd/plan.go	>= -> >	if wait >= autoRetryCeiling {	planAutoRetryWait
