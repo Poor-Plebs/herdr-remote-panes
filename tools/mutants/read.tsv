@@ -148,3 +148,5 @@ internal/cli/client.go	<= -> <	if err != nil || cols <= 0 {	outputWidth
 internal/syncd/daemon.go	> -> >=	if time.Since(failingSince) > acceptGraceTime {	serveControl
 internal/syncd/daemon.go	< -> <=	if delay < acceptRetryFloor {	serveControl
 internal/syncd/daemon.go	> -> >=	} else if delay *= 2; delay > acceptRetryCeil {	serveControl
+internal/mirror/liveness.go	> -> >=	if len(reason) > maxFailureReason {	MarkFailed
+internal/mirror/mirror.go	> -> >=	if len(t.seen) > t.max {	Write
