@@ -44,6 +44,12 @@ const preambleLimit = 8 << 10
 // its own output, which lands after that point and passes straight through.
 // So the mouse still works where something is using it, and belongs to the
 // terminal where nothing is.
+//
+// Attach only, and measured: `terminal session observe` sends no mouse
+// sequences whatever. It streams the screen as rendered rather than the bytes
+// that drew it, so mode changes are applied on the machine and never travel.
+// Nothing to gate there, and gating it would be a guess about a stream that
+// does not carry the thing being removed.
 type mouseGate struct {
 	w    io.Writer
 	open bool // once the preamble has ended, everything passes untouched
