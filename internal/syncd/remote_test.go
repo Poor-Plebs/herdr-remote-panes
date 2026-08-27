@@ -3424,3 +3424,64 @@ func TestAMachineAskedToMirrorWithNoHerdrStillWorks(t *testing.T) {
 		t.Errorf("%d terminals here, want the one connecting opens", got)
 	}
 }
+
+func TestATabYouClosedStaysClosedAcrossARestart(t *testing.T) {
+	// "A dropped connection comes back; one you closed does not — and is still
+	// closed after a restart." The pieces are held apart: the snapshot carries
+	// the dismissals, and the planner skips what is in it. Nothing held the
+	// two together, which is the only form the promise is made in.
+	//
+	// close_propagates off, or there is nothing to come back: with it on, the
+	// terminal on the machine goes when the tab does, and a terminal that does
+	// not exist stays closed for reasons that have nothing to do with this.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	no := false
+	cfg.ClosePropagates = &no
+
+	before := New(cfg)
+	if reply := before.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	if reply := before.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
+		t.Fatalf("open: %s", reply.Message)
+	}
+	settle(t, before, here, 4, there)
+	if got, want := panesFor(here(), "bot"), 2; got != want {
+		t.Fatalf("started with %d mirrors, want %d", got, want)
+	}
+
+	var mirror string
+	for id := range here().Panes {
+		mirror = id
+	}
+	closePaneByHand(t, mirror)
+	settle(t, before, here, 3, there)
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Fatalf("%d mirrors after closing one, want 1", got)
+	}
+	if got := len(there().Panes); got != 2 {
+		t.Fatalf("the machine has %d terminals, want both still there", got)
+	}
+	before.persist()
+
+	herdrRestarted(t)
+	after := New(cfg)
+	if reply := after.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("reconnect: %s", reply.Message)
+	}
+	settle(t, after, here, 6, there)
+
+	// The terminal is still on the machine and could be mirrored. It is not,
+	// because somebody closed it, and a restart is not them changing their
+	// mind.
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Errorf("%d mirrors after the restart, want 1: a tab somebody closed came back", got)
+	}
+	if got := len(there().Panes); got != 2 {
+		t.Errorf("the machine has %d terminals, want the 2 it had", got)
+	}
+}
