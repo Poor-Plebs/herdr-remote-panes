@@ -3725,3 +3725,52 @@ func TestASiblingMustBeInTheSpaceTheMachineIsUsing(t *testing.T) {
 			"uses; want a tab of its own", got)
 	}
 }
+
+func TestEverythingTheDaemonRemembersIsCleanedBySomething(t *testing.T) {
+	// The same question as the one about a machine, asked of the daemon. Three
+	// of these are keyed by a pane or a space, which come and go for as long as
+	// the daemon runs: one nobody cleans grows until Herdr does, and nothing
+	// says so because a leak is not a failure.
+	//
+	// Asking the type rather than naming them, because a list written here is
+	// a list that stops being complete -- which is how the one about a machine
+	// came to miss a field the same day it was added.
+	perPane := map[string]bool{ // keyed by a pane, and cleaned when it goes
+		"seenStray": true,
+	}
+	perWorkspace := map[string]bool{ // keyed by a space, and cleaned when it goes
+		"markedWorkspaces": true, "rootPanes": true,
+	}
+	// hosts is the record of what is connected rather than something
+	// remembered about it, and an entry goes when the machine is disconnected.
+	theRecord := map[string]bool{"hosts": true}
+	// touched is every machine this daemon has connected. Never cleaned, and
+	// it does not need to be: it is keyed by a machine, and there are as many
+	// of those as somebody has written down. Persisting reads it to tell a
+	// machine it has dealt with from one it has not reached.
+	bounded := map[string]bool{"touched": true}
+	// lastSaved is the bytes last written, held to avoid writing them again.
+	// One value, replaced rather than added to.
+	notACollection := map[string]bool{"lastSaved": true}
+
+	shape := reflect.TypeOf(Daemon{})
+	found := 0
+	for i := 0; i < shape.NumField(); i++ {
+		field := shape.Field(i)
+		if field.Type.Kind() != reflect.Map && field.Type.Kind() != reflect.Slice {
+			continue
+		}
+		found++
+		if !perPane[field.Name] && !perWorkspace[field.Name] && !theRecord[field.Name] &&
+			!bounded[field.Name] && !notACollection[field.Name] {
+			t.Errorf("Daemon.%s is remembered for as long as the daemon runs and "+
+				"nothing here says what clears it, or why it needs no clearing; "+
+				"add it to one of the lists above and to whatever forgets it",
+				field.Name)
+		}
+	}
+	if found < 6 {
+		t.Fatalf("found %d things the daemon remembers, which is fewer than there "+
+			"are -- this is checking nothing", found)
+	}
+}
