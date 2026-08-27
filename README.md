@@ -804,15 +804,19 @@ it.
 ```bash
 make check                                    # green, from a clean tree
 go test -run XXX -fuzz FuzzDecodeFrame -fuzztime 40s ./internal/mirror/
-HRP_UPGRADE=1 go test -run AnUpgradeHandsTheSocketOver .
 ```
 
-The last one is there because an upgrade is not an install, and three releases
-in one day went out broken on exactly that difference. Building from a clean
-checkout and starting a daemon passes every time — a clean checkout has no
-daemon already running in it. The upgrade check runs two, and holds the thing
-that actually breaks: the replacing daemon must not exit because the socket is
-taken, and the one it replaces must not take the socket with it on the way out.
+`make check` starts two daemons and hands the socket from one to the other,
+because an upgrade is not an install and three releases in one day went out
+broken on exactly that difference: building from a clean checkout and starting
+a daemon passes every time, since a clean checkout has no daemon already
+running in it. What it holds is the part that breaks — the replacing daemon
+must not exit because the socket is taken, and the one it replaces must not
+take the socket with it on the way out.
+
+That check was opt-in at first, which put it in these steps and nowhere else.
+Forgetting these steps is how the thing it guards got out three times, so it
+runs every time now.
 
 Then the two places a version number is written down: the install line near the
 top of this README, and `version` in `herdr-plugin.toml`. A test holds them to
