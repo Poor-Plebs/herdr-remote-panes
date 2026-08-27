@@ -216,3 +216,42 @@ func TestWhichCallsTreatAMissingThingAsDone(t *testing.T) {
 		})
 	}
 }
+
+func TestAReplyWithNoPanesFieldIsNotAnEmptyHerdr(t *testing.T) {
+	// An empty pane list means every mirror's pane has gone, and with
+	// close_propagates on that closes the terminals they were showing, on the
+	// machine. So "Herdr has no panes" and "that reply was not a pane list"
+	// must not arrive as the same answer.
+	//
+	// Herdr sends "panes":[] when it has none, which unmarshals to an empty
+	// slice; a reply that never mentions panes leaves it nil. That difference
+	// is the only thing separating the two, and it is worth using.
+	empty, err := ParsePaneList([]byte(`{"panes":[],"type":"pane_list"}`))
+	if err != nil {
+		t.Errorf("a Herdr with no panes was read as an error: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("found %d panes in a reply that lists none", len(empty))
+	}
+
+	// Valid JSON, and not a pane list. Reading this as "no panes" is what
+	// would close somebody's terminals.
+	for _, shape := range []string{
+		`{"type":"pane_list"}`,
+		`{"items":[{"pane_id":"w1:p1"}]}`,
+		`{}`,
+	} {
+		if _, err := ParsePaneList([]byte(shape)); err == nil {
+			t.Errorf("%s was read as a Herdr with no panes", shape)
+		}
+	}
+
+	// And a real one still parses.
+	got, err := ParsePaneList([]byte(`{"panes":[{"pane_id":"w1:p1","terminal_id":"t1"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].PaneID != "w1:p1" {
+		t.Errorf("parsed %+v, want the one pane it lists", got)
+	}
+}

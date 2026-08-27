@@ -307,6 +307,19 @@ func ParsePaneList(result json.RawMessage) ([]Pane, error) {
 	if err := json.Unmarshal(result, &body); err != nil {
 		return nil, fmt.Errorf("parse pane list: %w", err)
 	}
+	if body.Panes == nil {
+		// Valid JSON that says nothing about panes -- a reply of a shape this
+		// does not know. Unmarshalling leaves the slice nil rather than empty,
+		// which is the only thing separating "Herdr has no panes" from "that
+		// was not a pane list".
+		//
+		// They must not be confused. No panes means every mirror's pane has
+		// gone, which with close_propagates on closes the terminals they were
+		// showing, on the machine. Herdr sends "panes":[] when it has none, so
+		// an absent field is a reply this cannot read, and a pass that cannot
+		// read one is skipped.
+		return nil, fmt.Errorf("parse pane list: no panes field in the reply")
+	}
 	return body.Panes, nil
 }
 
