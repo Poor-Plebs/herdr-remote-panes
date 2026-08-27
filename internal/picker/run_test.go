@@ -508,3 +508,57 @@ func TestAMouseClickInTheMenuPressesNothing(t *testing.T) {
 		}
 	}
 }
+
+func TestWhatElseATerminalSendsTheMenu(t *testing.T) {
+	// The menu reads raw keys, and a terminal sends more than typing down that
+	// channel. A click was read as three keystrokes until it was not; this is
+	// the rest of what arrives, decided rather than discovered.
+	//
+	// What matters for each is whether it presses something, and whether it
+	// leaves anything behind for the next read to take for typing -- which is
+	// how both bugs in this reader have worked.
+	for _, tt := range []struct {
+		what  string
+		in    string
+		first key
+		// left is what a second read finds. quit means the input ran out,
+		// which is this test's way of saying nothing was left behind.
+		left key
+	}{
+		{"a focus notification", "\x1b[I", keyNone, keyQuit},
+		{"losing focus", "\x1b[O", keyNone, keyQuit},
+		{"a cursor position report", "\x1b[12;40R", keyNone, keyQuit},
+		{"a device attributes reply", "\x1b[?1;2c", keyNone, keyQuit},
+		{"the kitty keyboard protocol", "\x1b[<1u", keyNone, keyQuit},
+		{"a click in the urxvt encoding", "\x1b[32;21;5M", keyNone, keyQuit},
+		{"a modified arrow", "\x1b[1;5A", keyUp, keyQuit},
+
+		// These close the menu, and that is the choice rather than an
+		// oversight. An OSC or DCS reply cannot be told from alt and a key --
+		// both are ESC then something that is not [ or O -- and reading on to
+		// find a terminator would hang the menu on alt+] until somebody
+		// pressed another key. Closing is predictable; hanging is not.
+		//
+		// They do leave their text behind, and it starts with digits. That
+		// costs nothing only because quitting ends the loop that reads: there
+		// is no next read. Anything that made the menu carry on past a quit
+		// would turn this into the click bug again, which is why the
+		// distinction is drawn here rather than assumed.
+		{"a colour reply", "\x1b]11;rgb:1c/1c/1c\x07", keyQuit, keyNone},
+		{"a DCS reply", "\x1bP1$r0m\x1b\\", keyQuit, keyNone},
+		{"alt and a letter", "\x1ba", keyQuit, keyNone},
+	} {
+		r := strings.NewReader(tt.in)
+		if got := parseKey(r); got != tt.first {
+			t.Errorf("%s: read as %v, want %v", tt.what, got, tt.first)
+		}
+		if tt.first == keyQuit {
+			// The menu is gone; what is left in the buffer goes with it.
+			continue
+		}
+		if got := parseKey(r); got != tt.left {
+			t.Errorf("%s: the read after it gave %v, want %v — something was left "+
+				"behind, and the menu acts on it", tt.what, got, tt.left)
+		}
+	}
+}
