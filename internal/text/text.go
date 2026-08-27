@@ -47,12 +47,27 @@ func Sanitize(name string) string {
 // Padding by rune count misaligns anything that is not narrow: East Asian
 // characters and most emoji take two cells, and combining marks take none.
 func Width(s string) int {
-	width := 0
+	width, previous := 0, rune(0)
 	for _, r := range s {
+		if r == emojiPresentation && runeWidth(previous) == 1 {
+			// The cell before this one is drawn as emoji rather than as a
+			// symbol, and a terminal gives that two cells. Counting the
+			// selector as nothing and the character as one -- which is what
+			// they are apart -- measures a label an cell short of what is on
+			// the screen, and every column after it is out by that much.
+			width++
+			previous = r
+			continue
+		}
 		width += runeWidth(r)
+		previous = r
 	}
 	return width
 }
+
+// emojiPresentation asks for the emoji form of a character that has both. It
+// follows the character it applies to.
+const emojiPresentation = '\uFE0F'
 
 func runeWidth(r rune) int {
 	switch {
@@ -98,14 +113,20 @@ func Truncate(s string, width int) string {
 	}
 
 	var b strings.Builder
-	used := 0
+	used, previous := 0, rune(0)
 	for _, r := range s {
 		w := runeWidth(r)
+		if r == emojiPresentation && runeWidth(previous) == 1 {
+			// Measured the same way Width measures it, or a label is cut at a
+			// column that is not where it looked.
+			w = 1
+		}
 		if used+w > width-1 {
 			break
 		}
 		b.WriteRune(r)
 		used += w
+		previous = r
 	}
 	return b.String() + "…"
 }

@@ -308,3 +308,44 @@ func TestNoRuneAtAllComesThroughAsSomethingTheTerminalActsOn(t *testing.T) {
 		}
 	}
 }
+
+func TestAnEmojiVariationIsTwoCells(t *testing.T) {
+	// A character with both a symbol form and an emoji form is drawn as emoji
+	// when U+FE0F follows it, and a terminal gives emoji two cells. Counted
+	// apart -- the character one, the selector nothing -- a label measures a
+	// cell short of what is on the screen, and every column after it is out by
+	// that much for as long as the label is there.
+	//
+	// This plugin's own workspace names use two of them: ☁ for a machine and
+	// ⚠ for one that is down.
+	for _, tt := range []struct {
+		what  string
+		in    string
+		width int
+	}{
+		{"a symbol on its own", "☁", 1},
+		{"the same asked for as emoji", "☁️", 2},
+		{"a warning sign", "⚠", 1},
+		{"the same as emoji", "⚠️", 2},
+		{"emoji that needs no asking", "\U0001F680", 2},
+		{"a selector after something already wide", "\U0001F680️", 2},
+		{"a selector with nothing before it", "️", 0},
+		{"in a label", "☁️ bot", 6},
+		{"plain text is unchanged", "bot", 3},
+	} {
+		if got := Width(tt.in); got != tt.width {
+			t.Errorf("%s: Width(%q) = %d, want %d", tt.what, tt.in, got, tt.width)
+		}
+	}
+}
+
+func TestCuttingAnEmojiLabelMeasuresItTheSameWay(t *testing.T) {
+	// Truncate cuts to a number of cells, so it has to count them the way
+	// Width does or it cuts at a column that is not where it looked.
+	label := "☁️ production"
+	for width := 2; width <= Width(label); width++ {
+		if got := Width(Truncate(label, width)); got > width {
+			t.Errorf("cut to %d cells and got %d: %q", width, got, Truncate(label, width))
+		}
+	}
+}
