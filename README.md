@@ -843,6 +843,19 @@ screen they are most of the rest.
 Only covered lines are tried, since a change to a line nothing runs survives by
 definition.
 
+What it cannot see is worth knowing, because the report reads like a verdict on
+a package rather than on operators. It changes operators, so it says nothing
+about a call that passes the right values in the wrong order — and several
+functions here take four booleans in a row and decide from them whether to close
+somebody's terminal. Nor about what a function returns: rewriting `return ""` as
+`return "", false` changes no operator and produces no mutation at all.
+
+Both are checked by hand when the shape invites it. Swapping each pair of
+adjacent same-typed arguments at a call site and running the package says
+whether the order is held: three of the six pairs here are caught, and the other
+three are combined with `||` or compared with `!=`, so the order genuinely does
+not matter and no test could tell.
+
 Sweeping one file of a package is much faster than sweeping all of it, and is
 how a package comes to be called swept while two of its files have never been
 looked at. A run that was given file names says which ones it left.
