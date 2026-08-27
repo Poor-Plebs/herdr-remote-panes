@@ -4,11 +4,16 @@
 # read.tsv says why a survivor was left. This says what was looked at,
 # which read.tsv cannot: a clean package leaves nothing in it.
 #
-# package	swept	mutations	caught	survived
-./internal/cli	2026-08-27	54	50	4
-./internal/config	2026-08-27	135	133	2
-./internal/logfile	2026-08-27	8	8	0
-./internal/project	2026-08-27	3	3	0
-./internal/sshconfig	2026-08-27	33	32	1
-./internal/text	2026-08-27	54	49	5
-./internal/version	2026-08-27	9	7	2
+# The last column is the one to read: survivors nobody has explained.
+# Survived counts the error branches and the bounds that hold a value
+# to itself as well, and on anything that lays out a screen or talks to
+# Herdr for a living those are most of the list -- a package can survive
+# seventeen and have nothing whatever to answer for.
+#
+# package	swept	mutations	caught	survived	unexplained
+./internal/cli	2026-08-27	54	50	4	0
+./internal/logfile	2026-08-27	8	8	0	0
+./internal/project	2026-08-27	3	3	0	0
+./internal/sshconfig	2026-08-27	33	32	1	0
+./internal/text	2026-08-27	54	49	5	0
+./internal/version	2026-08-27	9	7	2	0

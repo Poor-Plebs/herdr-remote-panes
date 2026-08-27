@@ -154,11 +154,26 @@ func main() {
 		}
 	}
 
+	// Counted here rather than with the notes below, because the record wants
+	// them too and the notes are skipped when nothing survived.
+	onErrors, onClamps, onRead := 0, 0, 0
+	for _, m := range survived {
+		switch survivorClass(m, read) {
+		case classErrorBranch:
+			onErrors++
+		case classBound:
+			onClamps++
+		case classRead:
+			onRead++
+		}
+	}
+	unexplained := len(survived) - onErrors - onClamps - onRead
+
 	fmt.Printf("\n%d mutations: %d caught, %d survived, %d would not build, in %s\n",
 		len(muts), caught, len(survived), unusable, time.Since(started).Round(time.Second))
 
 	recordSweep(filepath.Join(root, "tools", "mutants", "swept.tsv"),
-		pkg, os.Args[2:], len(muts), caught, len(survived))
+		pkg, os.Args[2:], len(muts), caught, len(survived), unexplained)
 
 	if stale := staleTriage(readPath, muts, survived); len(stale) > 0 {
 		fmt.Printf("\n%d in tools/mutants/read.tsv no longer describe a survivor. The line was\n"+
@@ -178,18 +193,7 @@ func main() {
 	// about the decision on that line -- and on a package that talks to
 	// something else for a living they are most of the list. Separating them
 	// is the difference between a report worth reading and a wall.
-	onErrors, onClamps, onRead := 0, 0, 0
-	for _, m := range survived {
-		switch survivorClass(m, read) {
-		case classErrorBranch:
-			onErrors++
-		case classBound:
-			onClamps++
-		case classRead:
-			onRead++
-		}
-	}
-	if note := survivorNote(onErrors, onClamps, len(survived)-onErrors-onClamps-onRead); note != "" {
+	if note := survivorNote(onErrors, onClamps, unexplained); note != "" {
 		fmt.Println(note)
 	}
 	if onRead > 0 {
@@ -609,15 +613,15 @@ func wasRead(read map[string]string, m mutation) bool {
 // One line per package, replaced each time, so this says what is true now
 // rather than growing a history. The date is the useful part: a package swept
 // before the work that changed it has not really been swept.
-func recordSweep(path, pkg string, files []string, mutations, caught, survived int) {
+func recordSweep(path, pkg string, files []string, mutations, caught, survived, unexplained int) {
 	what := pkg
 	if len(files) > 0 {
 		// A partial sweep is not the package, and recording it as though it
 		// were would claim more than was done.
 		what = pkg + " (" + strings.Join(files, " ") + ")"
 	}
-	line := fmt.Sprintf("%s\t%s\t%d\t%d\t%d", what, time.Now().Format("2006-01-02"),
-		mutations, caught, survived)
+	line := fmt.Sprintf("%s\t%s\t%d\t%d\t%d\t%d", what, time.Now().Format("2006-01-02"),
+		mutations, caught, survived, unexplained)
 
 	const header = "# What has been swept, and when. One line per package or\n" +
 		"# partial sweep, replaced each time it runs.\n" +
@@ -625,7 +629,13 @@ func recordSweep(path, pkg string, files []string, mutations, caught, survived i
 		"# read.tsv says why a survivor was left. This says what was looked at,\n" +
 		"# which read.tsv cannot: a clean package leaves nothing in it.\n" +
 		"#\n" +
-		"# package\tswept\tmutations\tcaught\tsurvived\n"
+		"# The last column is the one to read: survivors nobody has explained.\n" +
+		"# Survived counts the error branches and the bounds that hold a value\n" +
+		"# to itself as well, and on anything that lays out a screen or talks to\n" +
+		"# Herdr for a living those are most of the list -- a package can survive\n" +
+		"# seventeen and have nothing whatever to answer for.\n" +
+		"#\n" +
+		"# package\tswept\tmutations\tcaught\tsurvived\tunexplained\n"
 
 	kept := []string{}
 	if raw, err := os.ReadFile(path); err == nil {
