@@ -31,6 +31,20 @@ func call(cmd syncd.Command) error {
 // only reaches the plugin log, so surface it as a Herdr notification too.
 func report(message string) {
 	fmt.Fprintln(os.Stdout, message)
+	notifyIfAction(message)
+}
+
+// notifyIfAction shows a Herdr notification when this run is an action.
+//
+// Herdr sets HERDR_PLUGIN_ACTION_ID for a command it invoked as an action, and
+// an action's stdout goes to the plugin log rather than to anybody. So the
+// notification is the whole of what the person who pressed the key sees, and
+// the same run from a terminal must not raise one -- they are reading the
+// output.
+//
+// One function because it was written twice, and a gate nothing holds is a
+// gate that can be got backwards in one place and not the other.
+func notifyIfAction(message string) {
 	if os.Getenv("HERDR_PLUGIN_ACTION_ID") != "" {
 		herdrcli.Notify(message)
 	}
@@ -61,9 +75,7 @@ func status() error {
 	for _, line := range statusLines(reply.Hosts, outputWidth()) {
 		fmt.Println(line)
 	}
-	if os.Getenv("HERDR_PLUGIN_ACTION_ID") != "" {
-		herdrcli.Notify(statusSummary(reply.Hosts))
-	}
+	notifyIfAction(statusSummary(reply.Hosts))
 	return nil
 }
 

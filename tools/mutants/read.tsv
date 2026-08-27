@@ -142,3 +142,6 @@ internal/syncd/daemon.go	> -> >=	if state.restoreShells > 0 {	reconcileHost
 tools/mutants/main.go	|| -> &&	if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {	readSurvivors
 tools/mutants/main.go	|| -> &&	if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {	staleTriage
 internal/syncd/plan.go	>= -> >	if wait >= autoRetryCeiling {	planAutoRetryWait
+internal/cli/client.go	<= -> <	if width <= 0 || indent+text.Width(r.state) <= width || room < minWrapColumn {	statusLines
+internal/cli/client.go	|| -> &&	if width <= 0 || indent+text.Width(r.state) <= width || room < minWrapColumn {	statusLines
+internal/cli/client.go	<= -> <	if err != nil || cols <= 0 {	outputWidth
