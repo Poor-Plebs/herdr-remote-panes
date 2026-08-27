@@ -1529,7 +1529,11 @@ func (d *Daemon) ensureRemotePresence(host config.Host) (bool, error) {
 
 	if state.sshOnly {
 		// Nothing to create over there; a plain SSH machine has no Herdr.
-		if !planNeedsTerminal(d.liveTerminalCountLocked(host.Target)) {
+		live, counted := d.liveTerminalCountLocked(host.Target)
+		if !counted || !planNeedsTerminal(live) {
+			// Not counted is not none. Opening one because the question could
+			// not be answered is how a machine ends up with terminals nobody
+			// opened; the next pass asks again.
 			return false, nil
 		}
 		// Nothing asked for a placement here: this is a machine being
@@ -1545,7 +1549,10 @@ func (d *Daemon) ensureRemotePresence(host config.Host) (bool, error) {
 		// The new space comes with a pane, which mirrors back here.
 		return true, nil
 	}
-	if !planNeedsTerminal(d.liveTerminalCountLocked(host.Target)) {
+	live, counted := d.liveTerminalCountLocked(host.Target)
+	if !counted || !planNeedsTerminal(live) {
+		// As above, and it matters more here: what follows creates a terminal
+		// on the machine rather than a pane on this one.
 		return false, nil
 	}
 	// The space is there but empty of anything to mirror.
@@ -1557,7 +1564,16 @@ func (d *Daemon) ensureRemotePresence(host config.Host) (bool, error) {
 // open. Callers hold d.mu: it took the lock itself until both of its callers
 // began holding it, at which point taking it again would have been a deadlock
 // rather than a guard.
-func (d *Daemon) liveTerminalCountLocked(target string) int {
+// liveTerminalCountLocked reports how many terminals a machine has, and whether
+// it could be counted at all.
+//
+// The two are not the same, and this returned a bare number: a Herdr that
+// would not answer counted as none, and none is what makes the caller create
+// one. So a listing that failed for a moment opened a terminal on the machine
+// that nobody asked for -- which is a thing that has happened here before, by a
+// different route, and reads to whoever it happens to as the plugin inventing
+// terminals.
+func (d *Daemon) liveTerminalCountLocked(target string) (int, bool) {
 	// Counted from the panes Herdr actually has, rather than from bookkeeping:
 	// a terminal closed a moment ago may not have been reconciled away yet,
 	// and a stale count is what makes a machine impossible to reopen.
@@ -1566,7 +1582,7 @@ func (d *Daemon) liveTerminalCountLocked(target string) int {
 		// The error already names the command it was: "herdr pane list: ...".
 		// What is worth adding is what it cost, not saying "pane list" twice.
 		log.Printf("cannot count %s's terminals: %v", target, err)
-		return 0
+		return 0, false
 	}
 	alive := make(map[string]bool, len(local))
 	for _, pane := range local {
@@ -1575,7 +1591,9 @@ func (d *Daemon) liveTerminalCountLocked(target string) int {
 
 	state, ok := d.hosts[target]
 	if !ok {
-		return 0
+		// Not connected, so it has none here -- which is an answer, not a
+		// failure to find one.
+		return 0, true
 	}
 
 	live := 0
@@ -1585,14 +1603,14 @@ func (d *Daemon) liveTerminalCountLocked(target string) int {
 				live++
 			}
 		}
-		return live
+		return live, true
 	}
 	for _, paneID := range state.mirrors {
 		if alive[paneID] {
 			live++
 		}
 	}
-	return live
+	return live, true
 }
 
 // connectAll connects every configured host that is not disabled, reporting

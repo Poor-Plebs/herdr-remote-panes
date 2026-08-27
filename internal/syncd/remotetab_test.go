@@ -159,3 +159,46 @@ func TestTerminalsSharingATabOnTheMachineShareOneHere(t *testing.T) {
 			"never opened", panes, want)
 	}
 }
+
+func TestAHerdrThatWillNotAnswerDoesNotMakeTerminals(t *testing.T) {
+	// Counting a machine's terminals asks Herdr what panes it has, and a
+	// listing that fails counted as none. None is what makes the caller create
+	// one -- and for a mirrored machine, what it creates is a terminal on the
+	// machine, not a pane here.
+	//
+	// So a Herdr that stopped answering for a moment opened terminals on
+	// somebody's machines. That has happened here before by another route, and
+	// it reads as the plugin inventing terminals.
+	held := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{{Target: "bot", Mode: "attach"}}
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	for i := 0; i < 4; i++ {
+		d.reconcileAll()
+	}
+	was := len(there().Panes)
+	if was == 0 {
+		t.Fatal("nothing on the machine to begin with")
+	}
+	_ = held
+
+	// Herdr stops answering. The machine is untouched and still has its
+	// terminals; it is this end that cannot see them.
+	withBrokenHerdr(t)
+	for i := 0; i < 3; i++ {
+		if _, err := d.ensureRemotePresence(config.Host{Target: "bot"}); err != nil {
+			// Failing is fine. Creating is not.
+			continue
+		}
+	}
+
+	if got := len(there().Panes); got != was {
+		t.Errorf("the machine had %d terminals and now has %d: a Herdr that would "+
+			"not answer was read as the machine having none", was, got)
+	}
+}
