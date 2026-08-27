@@ -50,6 +50,7 @@ func TestTheREADMESortsFailuresTheWayTheCodeDoes(t *testing.T) {
 		{"a changed host key", "REMOTE HOST IDENTIFICATION HAS CHANGED", true},
 		{"a name that does not resolve", "Name or service not known", true},
 		{"a key the machine will not take", "Permission denied (publickey).", true},
+		{"too many keys offered", "Received disconnect: Too many authentication failures", true},
 		{"refused", "ssh: connect to host bot port 22: Connection refused", false},
 		{"timed out", "ssh: connect to host bot port 22: Connection timed out", false},
 		{"no route", "ssh: connect to host bot port 22: No route to host", false},

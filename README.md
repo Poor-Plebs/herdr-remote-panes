@@ -481,6 +481,24 @@ someone sitting between you and it. Check the fingerprint against the machine
 itself before removing the old entry — the whole point of the warning is that
 you cannot tell the two cases apart from here.
 
+The other one worth naming is a key that never got offered:
+
+```
+too many keys offered — set IdentitiesOnly=yes for this host
+```
+
+An agent holding a dozen keys offers them in turn, and a machine that allows six
+attempts refuses before reaching the one that works — so a machine you can
+plainly reach with `ssh` fails here, having never been sent the right key.
+Naming the key for that host in `~/.ssh/config` is the fix, and the plugin
+reaches machines the same way `ssh` does, so it takes effect for both:
+
+```
+Host workbox
+  IdentityFile ~/.ssh/id_workbox
+  IdentitiesOnly yes
+```
+
 **The menu takes a moment to open while a machine is dropping out.** A poll
 talks to each machine in turn and holds the daemon while it does, so a machine
 that has stopped answering — one that swallows packets rather than refusing,
