@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -1599,5 +1600,60 @@ func TestWhatTheToggleQuestionSays(t *testing.T) {
 				t.Errorf("at %d columns a line is %d wide: %q", cols, w, visible(line))
 			}
 		}
+	}
+}
+
+func TestNoStateIsWiderThanTheColumnReservedForIt(t *testing.T) {
+	// widestStatus decides how much room the names get, by measuring the widest
+	// state there is. It measures a hand-written list of the worst entries — so
+	// a state added to statusSpans and not to that list is a state nobody
+	// measured, and the names are handed room on the understanding that it does
+	// not exist.
+	//
+	// Nothing runs off the edge when that happens: fitStatus trims the state to
+	// whatever the name left it. That is the damage. The new state is the one
+	// cut off, on exactly the machines whose names are long enough to want the
+	// room — so it reads correctly everywhere it is tested by hand, and elides
+	// on the machine someone named after its fully qualified domain.
+	//
+	// One field at a time, which is what a new state arrives as. Combinations
+	// are the list's business; this is about the phrase nobody measured.
+	widest := widestStatus()
+
+	shape := reflect.TypeOf(Entry{})
+	checked := 0
+	for i := 0; i < shape.NumField(); i++ {
+		field := shape.Field(i)
+		switch field.Name {
+		case "Target", "Label", "Reason":
+			// What somebody wrote or what a machine said, which is trimmed to
+			// fit rather than measured: fitStatus does that, and holding a
+			// reason to this width would hold the wrong thing.
+			continue
+		}
+
+		for _, connected := range []bool{false, true} {
+			entry := Entry{Connected: connected}
+			value := reflect.ValueOf(&entry).Elem().FieldByName(field.Name)
+			switch value.Kind() {
+			case reflect.Bool:
+				value.SetBool(true)
+			case reflect.Int:
+				value.SetInt(99)
+			default:
+				t.Fatalf("Entry.%s is a %s, which this does not know how to set",
+					field.Name, value.Kind())
+			}
+			checked++
+			if got := text.Width(plainOf(statusSpans(entry))); got > widest {
+				t.Errorf("Entry.%s makes a status %d columns wide and widestStatus "+
+					"measures %d: add it to the list there, or it is the state that "+
+					"gets trimmed away once a name is long enough to want the room",
+					field.Name, got, widest)
+			}
+		}
+	}
+	if checked < 12 {
+		t.Fatalf("checked %d states, which is fewer than there are", checked)
 	}
 }
