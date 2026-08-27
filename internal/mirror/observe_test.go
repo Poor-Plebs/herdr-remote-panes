@@ -333,3 +333,51 @@ func TestResizingForeverNeverClosesThePane(t *testing.T) {
 		t.Errorf("after resizing, a broken stream was answered with %v, want another go", next)
 	}
 }
+
+func TestADragIsOneReconnectRatherThanOnePerStep(t *testing.T) {
+	// Every resize ends the observe stream, and reconnecting asks the machine
+	// to render the whole screen again. Doing that on the first resize means an
+	// ssh per step of a drag across a divider, each rendering a size that is
+	// already out of date by the time it arrives.
+	was := resizeSettle
+	resizeSettle = 30 * time.Millisecond
+	defer func() { resizeSettle = was }()
+
+	winch := make(chan os.Signal, 1)
+	// A drag: resizes arriving faster than the settle time, then a pause.
+	go func() {
+		for i := 0; i < 5; i++ {
+			winch <- syscall.SIGWINCH
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	started := time.Now()
+	settleResize(winch)
+	took := time.Since(started)
+
+	// It waited out the drag rather than returning on the first one.
+	if took < 60*time.Millisecond {
+		t.Errorf("settled after %s, before the drag had finished: a reconnect "+
+			"per step is what this is for", took)
+	}
+	// And did not wait for each of them in turn.
+	if took > 400*time.Millisecond {
+		t.Errorf("settled after %s, which is longer than the drag plus one wait", took)
+	}
+}
+
+func TestOneResizeCostsOneWait(t *testing.T) {
+	// The other side of it: a single resize must not be made slow by the
+	// waiting that a drag needs.
+	was := resizeSettle
+	resizeSettle = 30 * time.Millisecond
+	defer func() { resizeSettle = was }()
+
+	winch := make(chan os.Signal, 1)
+	started := time.Now()
+	settleResize(winch)
+	if took := time.Since(started); took > 200*time.Millisecond {
+		t.Errorf("a window that is not being resized waited %s", took)
+	}
+}

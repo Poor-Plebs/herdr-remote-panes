@@ -394,6 +394,19 @@ func observe(client *remote.Client, terminal string) error {
 			return err
 		case observeAgainNow:
 			attempt = reset
+			// A drag across a divider is a run of resizes, and every one of
+			// them ends the stream. Reconnecting on the first means an ssh per
+			// step of the drag, each one asking the machine to render the
+			// whole screen at a size that is already out of date. Waiting for
+			// the size to stop changing makes it one.
+			//
+			// This line is not held by a test, unlike settleResize itself.
+			// Reaching it means a real SIGWINCH at the process, and a test
+			// built on that is one that fails on a loaded machine for reasons
+			// having nothing to do with the code. What it costs if it goes is
+			// a reconnect per drag step -- slower, not wrong -- which is a
+			// different bargain from the wirings that were worth holding.
+			settleResize(winch)
 			continue
 		}
 		select {
@@ -401,6 +414,32 @@ func observe(client *remote.Client, terminal string) error {
 		case <-winch:
 		}
 		attempt++
+	}
+}
+
+// resizeSettle is how long a size has to hold still before it is worth
+// reconnecting at. Long enough to swallow a drag, short enough that a single
+// resize is not noticeable.
+var resizeSettle = 120 * time.Millisecond
+
+// settleResize waits for the window to stop changing size.
+//
+// It returns as soon as nothing has arrived for resizeSettle, so one resize
+// costs that and a drag costs it once rather than once per step.
+func settleResize(winch <-chan os.Signal) {
+	timer := time.NewTimer(resizeSettle)
+	defer timer.Stop()
+	for {
+		select {
+		case <-winch:
+			// Still moving. Wait again from here.
+			if !timer.Stop() {
+				<-timer.C
+			}
+			timer.Reset(resizeSettle)
+		case <-timer.C:
+			return
+		}
 	}
 }
 
