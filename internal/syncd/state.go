@@ -4,7 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -196,10 +199,21 @@ func loadSnapshot() snapshot {
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			// Not there is the first run and is ordinary. There and unreadable
+			// is not, and reads to whoever it happens to as terminals they
+			// closed coming back by themselves -- which is what an empty
+			// snapshot means: nothing is known to have been dismissed.
+			log.Printf("could not read what the last daemon left in %s: %v", path, err)
+		}
 		return empty
 	}
 	var loaded snapshot
 	if err := json.Unmarshal(raw, &loaded); err != nil {
+		// Written whole or not at all -- a temporary file and a rename -- so
+		// this is a disk that has lost something rather than a write caught
+		// half done. Worth a line for the same reason.
+		log.Printf("could not make sense of %s, starting without it: %v", path, err)
 		return empty
 	}
 	if loaded.Hosts == nil {

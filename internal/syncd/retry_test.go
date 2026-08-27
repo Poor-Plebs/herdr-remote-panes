@@ -2,6 +2,8 @@ package syncd
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -292,6 +294,59 @@ func TestTheRetryNamesTheSoonestWait(t *testing.T) {
 			// Each still gets its own wait; only what is said is the soonest.
 			if wait := time.Until(weathered.linkRetryAt); wait < 4*time.Minute {
 				t.Errorf("the machine at the ceiling was rescheduled for %s, want its own wait", wait)
+			}
+		})
+	}
+}
+
+func TestASnapshotThatCannotBeReadIsSaidOutLoud(t *testing.T) {
+	// An empty snapshot means nothing was dismissed, so a machine's terminals
+	// are all mirrored again -- including the ones somebody closed. That is
+	// right when there is no snapshot, which is the first run. When there is
+	// one and it cannot be read, the same thing happens and looks like closed
+	// terminals coming back on their own.
+	for _, tt := range []struct {
+		what    string
+		write   func(t *testing.T, path string)
+		saysSo  bool
+		because string
+	}{
+		{
+			what:   "no snapshot at all",
+			write:  func(*testing.T, string) {},
+			saysSo: false, because: "the first run is not a problem to report",
+		},
+		{
+			what: "a snapshot that is not JSON",
+			write: func(t *testing.T, path string) {
+				if err := os.WriteFile(path, []byte("{ this is not json"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			saysSo: true, because: "terminals will come back and nothing else says why",
+		},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+			t.Setenv("HERDR_SESSION", "snap")
+			path, err := snapshotPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			tt.write(t, path)
+
+			logged := captureLog(t)
+			got := loadSnapshot()
+
+			if len(got.Hosts) != 0 {
+				t.Errorf("loaded %d machines from a snapshot that has none", len(got.Hosts))
+			}
+			if said := logged.String() != ""; said != tt.saysSo {
+				t.Errorf("said %v, want %v: %s (log: %q)", said, tt.saysSo, tt.because,
+					logged.String())
 			}
 		})
 	}
