@@ -39,6 +39,12 @@ type Entry struct {
 	// Mirroring reports whether this machine's terminals are kept in step,
 	// rather than being a plain SSH session.
 	Mirroring bool
+	// ReadOnly is a machine in observe mode: its terminals are mirrored and
+	// cannot be typed into. It is a config setting rather than something the
+	// menu offers, so m does not change it -- and the line has to say so,
+	// because otherwise it is indistinguishable from an attach machine right
+	// up until somebody tries to type.
+	ReadOnly bool
 	// GaveUp marks a machine that could not be reached and is no longer being
 	// retried until it is connected to again.
 	GaveUp bool
@@ -114,6 +120,18 @@ func Run(connect Connect, setMode SetMode, disconnect Disconnect) error {
 			// Toggling in place, rather than closing the menu, so the change
 			// and its effect are visible together.
 			entry := entries[selected]
+			if entry.ReadOnly {
+				// m only ever wrote "attach" or "ssh", so on an observe machine
+				// it read as a toggle and was a one-way door: observe went to
+				// ssh, ssh went to attach, and nothing in the menu went back.
+				// Two presses turned a machine chosen to be read-only into one
+				// that can be typed into, silently.
+				notice(text.Sanitize(entry.Target)+" is read-only",
+					"Its mode is set to observe in your config, and m does not change that.",
+					"Edit the config to change it. Press any key.")
+				readKey()
+				break
+			}
 			mode := "attach"
 			if entry.Mirroring {
 				mode = "ssh"
@@ -383,6 +401,7 @@ func collect() ([]Entry, string) {
 		entry.Configured = true
 		entry.Label = host.DisplayLabel()
 		entry.Mirroring = cfg.Mirrors(host)
+		entry.ReadOnly = cfg.EffectiveMode(host) == config.ModeObserve
 	}
 	for _, host := range sshconfig.Hosts() {
 		// An alias ssh would read as an option is not a machine anyone can
@@ -390,7 +409,19 @@ func collect() ([]Entry, string) {
 		if config.ValidTarget(host) != nil || disabled[host] {
 			continue
 		}
-		add(host)
+		entry := add(host)
+		// Only for the ones this loop is actually introducing. add hands back
+		// the entry that is already there for a machine the config named too,
+		// and a configured machine's mode was settled above from its own host
+		// entry -- working it out again from a bare target loses the mode it
+		// was set to and reads the top-level default instead.
+		//
+		// That default is why this is here at all: a config that sets observe
+		// for everything means a machine picked out of ~/.ssh/config is
+		// observe as well, and m must refuse it for the same reason.
+		if !entry.Configured {
+			entry.ReadOnly = cfg.EffectiveMode(config.Host{Target: host}) == config.ModeObserve
+		}
 	}
 
 	hosts, stale := status()
@@ -570,6 +601,9 @@ func statusSpans(entry Entry) []span {
 	mode := "ssh"
 	if isMirroring(entry) {
 		mode = "mirrored"
+		if entry.ReadOnly {
+			mode = "read-only"
+		}
 	}
 	switch {
 	case entry.GaveUp:
@@ -585,11 +619,14 @@ func statusSpans(entry Entry) []span {
 			out = append(out, span{" · " + entry.Reason, dim})
 		}
 		if isMirroring(entry) {
-			out = append(out, span{" · mirrored", dim})
+			out = append(out, span{" · " + mode, dim})
 		}
 		return append(out, span{" · enter to retry", dim})
 	case entry.Connected && isMirroring(entry):
-		out := []span{{fmt.Sprintf("connected · %d mirrored", entry.Mirrors), green}}
+		// The mode word rather than "mirrored" always: this is the line
+		// somebody reads before pressing m, and a read-only machine that says
+		// "mirrored" is indistinguishable from one they can type into.
+		out := []span{{fmt.Sprintf("connected · %d %s", entry.Mirrors, mode), green}}
 		// What the scope is leaving alone. This is the line somebody reads
 		// straight after pressing m, and without it a machine with four
 		// terminals on it showing one mirror looks like three that failed.
@@ -678,6 +715,8 @@ func widestStatus() int {
 		{GaveUp: true},
 		{Connected: true, Mirroring: true, Mirrors: 99},
 		{Connected: true, Mirroring: true, Mirrors: 99, OutsideShared: 99},
+		{GaveUp: true, Mirroring: true, ReadOnly: true},
+		{Connected: true, Mirroring: true, ReadOnly: true, Mirrors: 99, OutsideShared: 99},
 		{Connected: true, Terminals: 99},
 		{Connected: true},
 		{Configured: true, Mirroring: true},

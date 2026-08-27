@@ -1524,15 +1524,29 @@ func TestSayingWhatIsLeftOutCostsNoNameColumn(t *testing.T) {
 	// worst-case status is paid for by every machine's name at every width —
 	// which is the thing the column was fitted to the names to stop.
 	//
-	// This one fits under the widest status there already is, "unreachable ·
-	// mirrored · enter to retry", so it costs nothing. Written out rather than
-	// compared against widestStatus(), which would agree with itself.
-	if got := widestStatus(); got != 39 {
+	// Written out rather than compared against widestStatus(), which would
+	// agree with itself. Changing these numbers is allowed; changing them
+	// without having looked at what it costs is what this is here to stop.
+	//
+	// 39 → 40 was read-only. The word replaces "mirrored" in the widest status
+	// there is, "unreachable · mirrored · enter to retry", and is one longer.
+	// Paid deliberately: nameWidth caps at 40, which it reaches by 88 columns,
+	// so above that the extra column costs nothing at all. Between 72 and 88 it
+	// costs one character of a name, and only of a name already too long for
+	// the column. Against that, a machine somebody cannot type into looked
+	// exactly like one they can, which is found out by typing into it.
+	if got := widestStatus(); got != 40 {
 		t.Errorf("the widest status is %d columns, and adding to it takes the "+
 			"same from every machine's name; check what grew", got)
 	}
-	if got := nameWidth(80); got != 33 {
-		t.Errorf("the name column at 80 columns is %d, want 33", got)
+	if got := nameWidth(80); got != 32 {
+		t.Errorf("the name column at 80 columns is %d, want 32", got)
+	}
+	// The cap is the point of the paragraph above, so it is checked rather
+	// than asserted: an ordinary terminal pays nothing for this.
+	if got := nameWidth(100); got != 40 {
+		t.Errorf("the name column at 100 columns is %d, want the 40 cap: the "+
+			"status column is now taking room at widths that used to be free", got)
 	}
 }
 
@@ -1616,25 +1630,44 @@ func TestNoStateIsWiderThanTheColumnReservedForIt(t *testing.T) {
 	// room — so it reads correctly everywhere it is tested by hand, and elides
 	// on the machine someone named after its fully qualified domain.
 	//
-	// One field at a time, which is what a new state arrives as. Combinations
-	// are the list's business; this is about the phrase nobody measured.
+	// Every combination rather than one field at a time, which is what this
+	// checked first and why it was worth changing: read-only was added, and it
+	// only reaches the line on a machine that is also mirroring. One at a time
+	// never sets two things, so it measured nothing and passed while the widest
+	// state in the menu was a column past what the names had been told. The
+	// combinations are the whole point — they are what the hand-written list is
+	// made of, and the list is what this is checking.
 	widest := widestStatus()
 
 	shape := reflect.TypeOf(Entry{})
-	checked := 0
+	var fields []string
 	for i := 0; i < shape.NumField(); i++ {
-		field := shape.Field(i)
-		switch field.Name {
+		switch name := shape.Field(i).Name; name {
 		case "Target", "Label", "Reason":
 			// What somebody wrote or what a machine said, which is trimmed to
 			// fit rather than measured: fitStatus does that, and holding a
 			// reason to this width would hold the wrong thing.
-			continue
+		default:
+			fields = append(fields, name)
 		}
+	}
+	if len(fields) < 8 {
+		t.Fatalf("found %d states to combine, which is fewer than there are", len(fields))
+	}
+	if len(fields) > 20 {
+		// 2^20 is a minute of CPU to say what a smaller sweep says. If Entry
+		// ever grows this far the sweep needs rethinking rather than running.
+		t.Fatalf("%d states is too many to combine; this needs a different approach", len(fields))
+	}
 
-		for _, connected := range []bool{false, true} {
-			entry := Entry{Connected: connected}
-			value := reflect.ValueOf(&entry).Elem().FieldByName(field.Name)
+	for mask := 0; mask < 1<<uint(len(fields)); mask++ {
+		var entry Entry
+		holder := reflect.ValueOf(&entry).Elem()
+		for i, name := range fields {
+			if mask&(1<<uint(i)) == 0 {
+				continue
+			}
+			value := holder.FieldByName(name)
 			switch value.Kind() {
 			case reflect.Bool:
 				value.SetBool(true)
@@ -1642,18 +1675,13 @@ func TestNoStateIsWiderThanTheColumnReservedForIt(t *testing.T) {
 				value.SetInt(99)
 			default:
 				t.Fatalf("Entry.%s is a %s, which this does not know how to set",
-					field.Name, value.Kind())
-			}
-			checked++
-			if got := text.Width(plainOf(statusSpans(entry))); got > widest {
-				t.Errorf("Entry.%s makes a status %d columns wide and widestStatus "+
-					"measures %d: add it to the list there, or it is the state that "+
-					"gets trimmed away once a name is long enough to want the room",
-					field.Name, got, widest)
+					name, value.Kind())
 			}
 		}
-	}
-	if checked < 12 {
-		t.Fatalf("checked %d states, which is fewer than there are", checked)
+		if got := text.Width(plainOf(statusSpans(entry))); got > widest {
+			t.Fatalf("%+v makes a status %d columns wide and widestStatus measures "+
+				"%d: add it to the list there, or it is the state that gets trimmed "+
+				"away once a name is long enough to want the room", entry, got, widest)
+		}
 	}
 }

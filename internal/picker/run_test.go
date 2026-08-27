@@ -389,3 +389,87 @@ func TestWithNoMachinesAndABrokenConfigItSaysBoth(t *testing.T) {
 		t.Errorf("the config could not be read and the menu does not say so:\n%s", got.drawn)
 	}
 }
+
+func TestTheToggleWillNotQuietlyMakeAReadOnlyMachineWritable(t *testing.T) {
+	// m only ever wrote "attach" or "ssh". On a machine set to observe it
+	// therefore read as a toggle and was a one-way door: observe went to ssh,
+	// ssh went to attach, and nothing in the menu went back. Two presses turned
+	// a machine deliberately chosen to be read-only into one that can be typed
+	// into, and the only way back was editing the config by hand.
+	observe := `{"hosts":[{"target":"alpha","mode":"observe"}]}`
+
+	// m, then a key to dismiss what it says.
+	got := runMenuConfigured(t, threeMachines, observe, "m ")
+	if len(got.modes) != 0 {
+		t.Fatalf("pressing m on a read-only machine asked for %v, want no change at all", got.modes)
+	}
+	// Refusing silently would be a key that looks broken, so it has to say
+	// both that it will not and where the setting actually lives.
+	for _, want := range []string{"read-only", "observe", "config"} {
+		if !strings.Contains(got.drawn, want) {
+			t.Errorf("refusing to change a read-only machine never mentioned %q:\n%s", want, got.drawn)
+		}
+	}
+
+	// A machine that is only in ~/.ssh/config gets the mode from the top of the
+	// config, so observe reaches it too and m has to refuse it the same way.
+	// This is a separate path: it is settled in a different loop, which also
+	// runs over the machines the first loop already settled.
+	everything := `{"mode":"observe"}`
+	got = runMenuConfigured(t, threeMachines, everything, "m ")
+	if len(got.modes) != 0 {
+		t.Errorf("with observe set for every machine, m on one from ~/.ssh/config "+
+			"asked for %v, want no change", got.modes)
+	}
+
+	// And the two loops together: a machine named in both, whose own entry says
+	// observe. The second loop hands back the entry the first one made, and
+	// working the mode out again from a bare target reads the top-level default
+	// instead of what the machine was set to -- which quietly made it writable
+	// again, by the same key this is here to stop.
+	got = runMenuConfigured(t, threeMachines, observe, "m ")
+	if len(got.modes) != 0 {
+		t.Errorf("a machine set to observe and also in ~/.ssh/config was changed "+
+			"by m: %v", got.modes)
+	}
+
+	// The menu is still usable afterwards: a refusal that ate the keyboard
+	// would be worse than the thing it is preventing.
+	got = runMenuConfigured(t, threeMachines, observe, "m j\r")
+	if len(got.connected) != 1 || got.connected[0] != "beta" {
+		t.Errorf("after refusing, the menu connected to %v, want beta: the refusal "+
+			"left the menu unable to take keys", got.connected)
+	}
+}
+
+func TestAReadOnlyMachineSaysSoBeforeAnybodyTriesToType(t *testing.T) {
+	// Observe mirrors a machine's terminals and does not let you type into
+	// them. The line said "mirrored" for both it and attach, so the two were
+	// indistinguishable right up until somebody typed into one and nothing
+	// happened -- and now that m refuses to change it, the line is the only
+	// place the difference is visible at all.
+	for _, tt := range []struct {
+		what  string
+		entry Entry
+	}{
+		{"connected and mirroring", Entry{Connected: true, Mirroring: true, Mirrors: 3}},
+		{"configured, not connected", Entry{Configured: true, Mirroring: true}},
+		{"unreachable", Entry{GaveUp: true, Mirroring: true}},
+	} {
+		writable := plainOf(statusSpans(tt.entry))
+		readOnly := tt.entry
+		readOnly.ReadOnly = true
+		got := plainOf(statusSpans(readOnly))
+
+		if got == writable {
+			t.Errorf("%s: read-only and attach both say %q, so nothing in the menu "+
+				"tells them apart", tt.what, got)
+		}
+		if !strings.Contains(got, "read-only") {
+			t.Errorf("%s: a read-only machine's line is %q", tt.what, got)
+		}
+		if strings.Contains(got, "mirrored") {
+			t.Errorf("%s: a read-only machine still says mirrored: %q", tt.what, got)
+		}
+	}
+}
