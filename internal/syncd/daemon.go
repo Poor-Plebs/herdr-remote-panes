@@ -508,12 +508,66 @@ func restrict(socket string, listener net.Listener) error {
 	return nil
 }
 
+// acceptGraceTime is how long serveControl keeps trying after Accept starts
+// failing for a reason that is not the listener closing. Long enough for the
+// descriptors a fan-out of connects took to be given back, and bounded so a
+// failure that is never going to clear does not retry until the machine is
+// turned off.
+//
+// Variables so a test does not spend that long proving it.
+var (
+	acceptGraceTime  = 2 * time.Minute
+	acceptRetryFloor = 5 * time.Millisecond
+	acceptRetryCeil  = time.Second
+)
+
 func (d *Daemon) serveControl(listener net.Listener) {
+	// Accepting is the whole of the daemon's ability to be told anything. Every
+	// action in the menu is a connection to this socket, so when this loop
+	// stops the daemon goes on mirroring, goes on reconnecting, and answers
+	// nothing -- and every action reports no running daemon, about a daemon
+	// that is right there in the process list.
+	//
+	// It stopped on any error at all, including the ones that pass: too many
+	// open files is the one to expect here, since connecting fans out over
+	// every configured machine at once and each is an ssh with its pipes. That
+	// is a burst, and it clears. The daemon it left behind did not.
+	//
+	// So: a closed listener is the shutdown and returns, and anything else is
+	// given time to clear, backing off the way a server does rather than
+	// spinning on it.
+	var failingSince time.Time
+	delay := time.Duration(0)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			return
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			if failingSince.IsZero() {
+				failingSince = time.Now()
+				// Said once, when it starts. The retries are quiet: a log line
+				// per attempt at the ceiling is a line a second for as long as
+				// this lasts, and it buries the one that says what happened.
+				log.Printf("could not accept on the control socket: %v (retrying)", err)
+			}
+			if time.Since(failingSince) > acceptGraceTime {
+				// The line somebody reading this log needs, because the
+				// alternative is a daemon that looks healthy and is not.
+				log.Printf("giving up on the control socket after %s of %v -- "+
+					"mirroring continues, but no action can reach this daemon; "+
+					"stop it and start it again", acceptGraceTime, err)
+				return
+			}
+			if delay < acceptRetryFloor {
+				delay = acceptRetryFloor
+			} else if delay *= 2; delay > acceptRetryCeil {
+				delay = acceptRetryCeil
+			}
+			time.Sleep(delay)
+			continue
 		}
+		failingSince, delay = time.Time{}, 0
 		go d.handleControl(conn)
 	}
 }

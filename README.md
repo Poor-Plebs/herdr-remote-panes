@@ -405,6 +405,26 @@ It says nothing else for the rest of its life unless something goes wrong, so
 that second line is the one to look for: `starting` without it means the socket
 is what it could not get.
 
+Both lines present and every action still saying `no running daemon` is the
+rarer case: the daemon bound the socket, is still mirroring, and stopped being
+able to accept connections on it afterwards. Too many open files is what does
+this: the daemon reconnects every configured machine at once, each an `ssh`
+with its own pipes, so a lot of machines against a low descriptor limit is a
+burst. A burst clears, so it is retried for two minutes; if it does not clear,
+the log says so and what to do:
+
+```
+herdr-remote-panes: 09:02:41 could not accept on the control socket: accept unix
+  /home/you/.local/state/.../control-hub.sock: too many open files (retrying)
+herdr-remote-panes: 09:04:41 giving up on the control socket after 2m0s -- mirroring
+  continues, but no action can reach this daemon; stop it and start it again
+```
+
+Restarting Herdr is the fix. If it recurs, the descriptor limit is the lever —
+`ulimit -n` in the shell Herdr starts from. Not `max_mirrors`: each mirror is
+its own pane process holding its own connection, so that setting bounds
+something other than what the daemon has open.
+
 **A machine's space is missing.** You closed its terminals, and a space with
 nothing in it does not exist. The machine is still connected — the menu says so
 — and `enter` on it opens a terminal again.
