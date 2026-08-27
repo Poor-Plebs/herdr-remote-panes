@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -643,5 +644,60 @@ func TestAMachineWithNothingLeftOutSaysNothing(t *testing.T) {
 	}
 	if strings.Contains(lines[0], "scope") {
 		t.Errorf("a machine with nothing left out mentions scope: %q", lines[0])
+	}
+}
+
+func TestEveryThingAMachineCanReportIsAccountedFor(t *testing.T) {
+	// The test above holds every state a machine can be in to a README entry,
+	// and names them by hand. I added one today and had to remember to put it
+	// in that list; the next person will not, and a state with no entry is a
+	// line somebody meets with nowhere to look it up.
+	//
+	// So this asks the type. Every field a machine reports is either something
+	// that changes what the status line says -- in which case it belongs in
+	// that list -- or part of naming and counting, which the line is made of
+	// rather than about.
+	saysSomething := map[string]bool{
+		"NoHerdr": true, "AtCapacity": true, "SharedName": true,
+		"OutsideShared": true, "Unmirrored": true, "GaveUp": true,
+	}
+	partOfTheLine := map[string]bool{
+		"Target": true, "Label": true, "Connected": true, "Mirrors": true,
+		"SSHOnly": true, "Terminals": true, "Mirroring": true, "LastError": true,
+	}
+
+	shape := reflect.TypeOf(syncd.HostInfo{})
+	if shape.NumField() < 14 {
+		t.Fatalf("HostInfo has %d fields, which is fewer than it had -- this test "+
+			"has stopped looking at the type", shape.NumField())
+	}
+	for i := 0; i < shape.NumField(); i++ {
+		name := shape.Field(i).Name
+		if !saysSomething[name] && !partOfTheLine[name] {
+			t.Errorf("HostInfo.%s is something a machine reports and nothing here says "+
+				"whether it changes the status line. If it does, it needs a phrase in "+
+				"TestEveryStateAMachineCanBeInIsInTheREADME and an entry in the README "+
+				"to go with it", name)
+		}
+	}
+
+	// And everything called a state really does change the line, so the list
+	// above cannot become a place to put a name and forget it.
+	plain := statusLines([]syncd.HostInfo{{Label: "bot", Connected: true}}, 0)[0]
+	for name := range saysSomething {
+		host := syncd.HostInfo{Label: "bot", Connected: true}
+		field := reflect.ValueOf(&host).Elem().FieldByName(name)
+		switch field.Kind() {
+		case reflect.Bool:
+			field.SetBool(true)
+		case reflect.Int:
+			field.SetInt(2)
+		default:
+			t.Fatalf("HostInfo.%s is a %s, which this does not know how to set", name, field.Kind())
+		}
+		if got := statusLines([]syncd.HostInfo{host}, 0)[0]; got == plain {
+			t.Errorf("HostInfo.%s is listed as changing the status line and does not: %q",
+				name, got)
+		}
 	}
 }
