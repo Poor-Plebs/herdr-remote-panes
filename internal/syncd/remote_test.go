@@ -3364,3 +3364,63 @@ func TestReconnectingEverythingRevivesMachinesThatGaveUp(t *testing.T) {
 		t.Errorf("reconnecting everything dialled %d times for 3 machines", tried)
 	}
 }
+
+// withMachineLackingHerdr answers ssh but has no herdr on it, which is most
+// machines somebody has an account on.
+func withMachineLackingHerdr(t *testing.T) {
+	t.Helper()
+	script := "#!/bin/sh\n" +
+		"last=\"\"; for a in \"$@\"; do last=\"$a\"; done\n" +
+		"case \"$last\" in\n" +
+		"  true) exit 0;;\n" +
+		"  *) echo 'sh: herdr: command not found' >&2; exit 127;;\n" +
+		"esac\n"
+	bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAMachineAskedToMirrorWithNoHerdrStillWorks(t *testing.T) {
+	// The headline promise, and the reason this is usable on machines nobody
+	// controls: mirroring is the only part that needs Herdr at both ends, and
+	// a machine that turns out not to have it falls back rather than refusing.
+	//
+	// The remote package holds that the probe answers ErrNoHerdr. What was not
+	// held anywhere is what the daemon then does with it, which is the half
+	// somebody actually meets: asked to mirror, and given a plain terminal
+	// instead of an error.
+	here := withFakeHerdr(t)
+	withMachineLackingHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+
+	reply := d.dispatch(Command{Cmd: "connect", Host: "bot"})
+	if !reply.OK {
+		t.Fatalf("a machine without herdr refused to connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	status := d.status()
+	if len(status) != 1 {
+		t.Fatalf("want one machine, got %d", len(status))
+	}
+	if !status[0].Connected {
+		t.Errorf("the machine is not connected: %s", status[0].LastError)
+	}
+	// Reached the way it can be reached, and said so. Without the mark the
+	// menu offers to toggle mirroring on a machine that cannot do it, and
+	// nothing explains why it stayed off.
+	if !status[0].SSHOnly {
+		t.Error("the machine is not marked as reached over plain ssh")
+	}
+	if !status[0].NoHerdr {
+		t.Error("the machine is not marked as having no herdr, so nothing says why " +
+			"the mode it was asked for is not the mode it is in")
+	}
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Errorf("%d terminals here, want the one connecting opens", got)
+	}
+}
