@@ -1154,6 +1154,10 @@ const maxPasteBytes = 1 << 16
 
 // maxEscapeParams bounds how much of an escape sequence is read before giving
 // up on it, so a stream that never ends one cannot be read forever.
+// mouseReportBytes is how much a click in the old encoding carries after its
+// sequence: the button, the column and the row, each offset by 32.
+const mouseReportBytes = 3
+
 const maxEscapeParams = 16
 
 // parseKey reads one keypress, translating the escape sequences a terminal
@@ -1236,6 +1240,25 @@ func parseKey(r io.Reader) key {
 		// the end of it and say nothing happened.
 		if final == '~' && string(params) == "200" {
 			return swallowPaste(read)
+		}
+
+		// A mouse click in the old encoding, which is ESC [ M and then three
+		// raw bytes saying which button and where. Those bytes are not a
+		// sequence and nothing above stops at them, so they are read as three
+		// keystrokes of their own -- and the column byte is the column plus 32,
+		// which for columns 16 to 25 is a digit. A digit picks a machine and
+		// connects to it. So clicking in the menu connected to whatever was
+		// under a number nobody typed.
+		//
+		// The newer encoding puts the numbers in the parameters, where they are
+		// consumed above, and needs nothing here.
+		if final == 'M' && len(params) == 0 {
+			for i := 0; i < mouseReportBytes; i++ {
+				if _, ok := read(); !ok {
+					return keyQuit
+				}
+			}
+			return keyNone
 		}
 
 		switch final {

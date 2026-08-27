@@ -629,6 +629,17 @@ says so if it finds one of the other two.
   bot  2 ssh  mirroring off: no herdr found on the machine — set herdr_bin if it is installed elsewhere there
 ```
 
+**Clicking in the machine menu presses nothing.** It used to press whatever was
+under a number nobody typed. A click reaches the menu as an escape sequence, and
+in the older of the two encodings the button, column and row follow it as three
+raw bytes rather than as part of the sequence — so they were read as three
+keystrokes, and the byte carrying the column is the column plus 32, which for
+columns 16 to 25 is a digit. Digits pick a machine and connect to it.
+
+The menu does not turn mouse reporting off while it is up, so whether clicks
+arrive at all is whatever the terminal was already doing. Anybody mirroring a
+machine has it on.
+
 **The mouse selects no text in a mirrored tab.** Fixed — but if you are on a
 version before this was, here is what it was and why it looked so odd.
 

@@ -473,3 +473,38 @@ func TestAReadOnlyMachineSaysSoBeforeAnybodyTriesToType(t *testing.T) {
 		}
 	}
 }
+
+func TestAMouseClickInTheMenuPressesNothing(t *testing.T) {
+	// A click arrives as an escape sequence. In the old encoding that is
+	// ESC [ M followed by three raw bytes -- the button, the column and the
+	// row, each offset by 32 -- and those bytes are not a sequence, so they
+	// were read as three keystrokes of their own. The column byte for columns
+	// 16 to 25 is a digit, and a digit picks a machine and connects to it.
+	//
+	// So clicking in the menu connected to whatever machine was under a number
+	// nobody typed. The menu does not turn mouse reporting off while it is up,
+	// so whether clicks arrive at all is decided by whatever the terminal was
+	// already doing -- which for anybody mirroring a machine is reporting them.
+	for _, tt := range []struct{ what, in string }{
+		// The column byte is what makes this dangerous, so several of them.
+		{"a click at column 1", "\x1b[M \x21\x21"},
+		{"a click where the column reads as 0", "\x1b[M \x30\x21"},
+		{"a click where the column reads as 5", "\x1b[M \x35\x21"},
+		{"a click where the row reads as a digit", "\x1b[M \x21\x33"},
+		{"a drag, which reports as it moves", "\x1b[M\x20\x32\x32"},
+		// And the newer encoding, which puts the numbers where they are read
+		// as parameters and needs nothing swallowed.
+		{"a click in the newer encoding", "\x1b[<0;21;5M"},
+		{"its release", "\x1b[<0;21;5m"},
+	} {
+		r := strings.NewReader(tt.in)
+		first := parseKey(r)
+		if first != keyNone {
+			t.Errorf("%s: read as %v, want nothing at all", tt.what, first)
+		}
+		// And nothing left behind for the next read to take for typing.
+		if next := parseKey(r); next != keyQuit {
+			t.Errorf("%s: left %v in the buffer, which the menu acts on", tt.what, next)
+		}
+	}
+}
