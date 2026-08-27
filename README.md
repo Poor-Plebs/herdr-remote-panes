@@ -615,6 +615,12 @@ when nothing is.
 A plain SSH terminal from this plugin was never affected: nothing sits between
 it and the machine.
 
+Neither was `observe`, which was measured rather than assumed: it sends no
+mouse sequences at all. It streams the screen as rendered rather than the bytes
+that drew it, so a program's mode changes are applied on the machine and never
+travel — which is also why a program that wants the mouse does not get it in an
+observed pane, where an attached one now does.
+
 A pane is not left that way once the mirror ends, whichever way it ends.
 
 **A machine says `n more in other spaces on the machine`.** In the menu the same
