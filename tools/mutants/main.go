@@ -118,10 +118,16 @@ func main() {
 	muts, skipped, untouched, err := mutationsIn(work, pkg, only, covered, changed)
 	check(err)
 	if len(muts) == 0 {
-		if len(only) > 0 {
+		switch {
+		case since != "":
+			// Which is an answer rather than a problem: nothing here has
+			// changed since then, so there is nothing new to decide.
+			fmt.Printf("nothing to mutate: no covered lines in %s have changed since %s\n",
+				pkg, since)
+		case len(only) > 0:
 			fmt.Printf("nothing to mutate: %s has no covered lines, or no file of that name\n",
 				strings.Join(os.Args[2:], ", "))
-		} else {
+		default:
 			fmt.Println("nothing to mutate: no covered lines in that package")
 		}
 		return

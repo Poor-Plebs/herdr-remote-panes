@@ -617,3 +617,113 @@ func TestASweepSaysWhichFilesItDidNotLookAt(t *testing.T) {
 		t.Errorf("a sweep of the whole package says it left %v", untouched)
 	}
 }
+
+func TestASweepCanBeRestrictedToWhatChanged(t *testing.T) {
+	// Sweeping a large file to look at the lines somebody wrote this morning
+	// costs an hour and spends nearly all of it re-deciding mutations read
+	// months ago -- which is why the code written in a release went out
+	// unswept. Restricting a run to changed lines is what makes asking cheap
+	// enough to bother.
+	work := t.TempDir()
+	pkg := filepath.Join(work, "internal", "thing")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Three decisions, one per line, so a line can be named without naming
+	// the others.
+	body := "package thing\n" + // 1
+		"\n" + // 2
+		"func a(n int) bool { return n > 0 }\n" + // 3
+		"func b(n int) bool { return n > 1 }\n" + // 4
+		"func c(n int) bool { return n > 2 }\n" // 5
+	if err := os.WriteFile(filepath.Join(pkg, "one.go"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	covered := map[string]map[int]bool{
+		"internal/thing/one.go": {3: true, 4: true, 5: true},
+	}
+
+	all, _, _, err := mutationsIn(work, "./internal/thing", nil, covered, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("unrestricted, the sweep found %d mutations, want one per line", len(all))
+	}
+
+	// Only the line that changed.
+	changed := map[string]map[int]bool{"internal/thing/one.go": {4: true}}
+	some, skipped, _, err := mutationsIn(work, "./internal/thing", nil, covered, changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(some) != 1 {
+		t.Fatalf("restricted to one line, the sweep found %d mutations: %+v", len(some), some)
+	}
+	if some[0].line != 4 {
+		t.Errorf("the sweep took line %d, which is not the one that changed", some[0].line)
+	}
+	if skipped != 2 {
+		t.Errorf("%d mutations were skipped, want the 2 on lines that did not change", skipped)
+	}
+
+	// A file with no changed lines at all contributes nothing, rather than
+	// everything: getting this backwards sweeps the whole tree while saying it
+	// is sweeping what changed.
+	none := map[string]map[int]bool{"internal/thing/other.go": {1: true}}
+	empty, _, _, err := mutationsIn(work, "./internal/thing", nil, covered, none)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("with nothing changed in the file, the sweep found %d mutations", len(empty))
+	}
+}
+
+func TestChangedLinesReadsWhatADiffSays(t *testing.T) {
+	// The lines come out of git, and reading the hunk headers wrongly is not
+	// visible in the result -- a sweep of the wrong lines looks exactly like a
+	// sweep of the right ones, and reports just as confidently.
+	repo := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		if _, err := run(repo, args[0], args[1:]...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	run("git", "init", "-q")
+	run("git", "config", "user.email", "t@example.com")
+	run("git", "config", "user.name", "t")
+
+	first := "package thing\n\nfunc a() int { return 1 }\nfunc b() int { return 2 }\nfunc c() int { return 3 }\n"
+	if err := os.WriteFile(filepath.Join(repo, "one.go"), []byte(first), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("git", "add", "-A")
+	run("git", "commit", "-qm", "first")
+
+	// One line rewritten in the middle, and one added at the end.
+	second := "package thing\n\nfunc a() int { return 1 }\nfunc b() int { return 22 }\nfunc c() int { return 3 }\nfunc d() int { return 4 }\n"
+	if err := os.WriteFile(filepath.Join(repo, "one.go"), []byte(second), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := changedLines(repo, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := changed["one.go"]
+	if got == nil {
+		t.Fatalf("no lines reported for the file that changed: %+v", changed)
+	}
+	for _, line := range []int{4, 6} {
+		if !got[line] {
+			t.Errorf("line %d changed and is not in %v", line, got)
+		}
+	}
+	for _, line := range []int{1, 2, 3, 5} {
+		if got[line] {
+			t.Errorf("line %d did not change and is in %v", line, got)
+		}
+	}
+}
