@@ -281,3 +281,93 @@ func TestAMirroredPaneIsNotLeftReportingTheMouse(t *testing.T) {
 		}
 	}
 }
+
+func TestEscapeLenKnowsWhereASequenceEnds(t *testing.T) {
+	// Everything the gate does rests on this: get the length wrong and it
+	// either passes on half a sequence, which becomes characters on the
+	// screen, or holds a finished one waiting for a byte that never comes.
+	for _, tt := range []struct {
+		what string
+		in   string
+		want int
+	}{
+		// CSI ends at the first byte from @ to ~, and both ends of that range
+		// are real finals: @ is insert-blank, ~ ends a key sequence.
+		{"an ordinary CSI", "\x1b[?1000h", 8},
+		{"a CSI ending at @", "\x1b[3@", 4},
+		{"a CSI ending at ~", "\x1b[200~", 6},
+		{"a CSI ending just inside the range", "\x1b[?7l", 5},
+		{"a CSI with nothing after it yet", "\x1b[?100", -1},
+		{"a bare CSI introducer", "\x1b[", -1},
+
+		// Two bytes: ESC and one more. Held as incomplete, it never arrives.
+		{"an escape and one byte", "\x1bM", 2},
+		{"an escape alone", "\x1b", -1},
+
+		// OSC runs until BEL or ST, and the recording contains one.
+		{"OSC ended by BEL", "\x1b]0;title\x07", 10},
+		{"OSC ended by ST", "\x1b]8;;\x1b\\", 7},
+		{"OSC still going", "\x1b]0;tit", -1},
+		{"OSC with ST half arrived", "\x1b]8;;\x1b", -1},
+	} {
+		if got := escapeLen([]byte(tt.in)); got != tt.want {
+			t.Errorf("%s: escapeLen(%q) = %d, want %d", tt.what, tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestSequencesTheGateDoesNotUnderstandStillArrive(t *testing.T) {
+	// The gate stands in front of the terminal during the handshake, so
+	// anything it mishandles is a pane drawing wrongly with nothing to say
+	// why. These all pass through whole, and the mouse enable between them
+	// still goes.
+	for _, tt := range []struct{ what, in, want string }{
+		{"an OSC ended by BEL", "\x1b]0;a title\x07\x1b[?1000h", "\x1b]0;a title\x07"},
+		{"an OSC ended by ST", "\x1b]8;;x\x1b\\\x1b[?1000h", "\x1b]8;;x\x1b\\"},
+		{"a two-byte escape", "\x1bM\x1b[?1000h", "\x1bM"},
+		{"a CSI ending at @", "\x1b[3@\x1b[?1000h", "\x1b[3@"},
+		{"a CSI ending at ~", "\x1b[200~\x1b[?1000h", "\x1b[200~"},
+	} {
+		if got := through(t, nil, []byte(tt.in)); string(got) != tt.want {
+			t.Errorf("%s: got %q, want %q", tt.what, got, tt.want)
+		}
+	}
+}
+
+func TestAnOSCSplitAcrossWritesSurvives(t *testing.T) {
+	// An OSC is the longest thing in a handshake and the likeliest to be cut.
+	// Split inside the ST that ends it is the awkward case: the escape byte
+	// arrives and the backslash does not.
+	whole := "\x1b]8;;http://example\x1b\\\x1b[?1000h!"
+	for at := 1; at < len(whole); at++ {
+		got := through(t, nil, []byte(whole[:at]), []byte(whole[at:]))
+		if want := "\x1b]8;;http://example\x1b\\!"; string(got) != want {
+			t.Errorf("split at %d: got %q, want %q", at, got, want)
+		}
+	}
+}
+
+func TestNothingMalformedGetsPastTheEnableTest(t *testing.T) {
+	// isMouseEnable reads into the sequence it is given, so it has to refuse
+	// anything short or shaped wrong before it does. Called on every sequence
+	// in a handshake, a wrong answer here is a crash in somebody's pane.
+	for _, in := range []string{
+		"", "\x1b", "\x1b[", "\x1b[?", "\x1b[h", "\x1b[?h",
+		"\x1b]0;x\x07", "\x1bM", "[?1000h", "\x1b[1000h", "\x1b(B",
+		// Shaped to look right in every place but one. Each of these is
+		// refused by a different part of the test, and a chain of ors joined
+		// wrongly lets exactly one of them through -- which would then be read
+		// for parameters it does not have.
+		"X[?1000h",    // right but for the escape
+		"\x1b??1000h", // right but for the bracket
+		"\x1b[!1000h", // right but for the question mark
+	} {
+		if isMouseEnable([]byte(in)) {
+			t.Errorf("isMouseEnable(%q) said yes; it is not a mouse enable", in)
+		}
+	}
+	// And the shortest thing that really is one.
+	if !isMouseEnable([]byte("\x1b[?1000h")) {
+		t.Error("a plain mouse enable was not recognised")
+	}
+}

@@ -16,6 +16,7 @@
 ./internal/herdrcli	2026-08-27	57	57	0	0
 ./internal/logfile	2026-08-27	8	8	0	0
 ./internal/mirror	2026-08-27	102	96	6	0
+./internal/mirror (mousegate.go)	2026-08-27	31	25	6	0
 ./internal/picker	2026-08-27	114	97	17	0
 ./internal/project	2026-08-27	3	3	0	0
 ./internal/remote	2026-08-27	51	50	1	0
