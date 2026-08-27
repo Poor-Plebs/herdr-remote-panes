@@ -3,3 +3,8 @@
 # commit. The Makefile runs the tool with `go run`, so the binary is never
 # wanted.
 /mutants
+
+# `go build .` from here writes this, and once got as far as a tagged release
+# commit before anybody looked. The Makefile and build.sh both build to bin/,
+# so a binary with this name is never wanted.
+/herdr-remote-panes
