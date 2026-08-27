@@ -255,3 +255,46 @@ func TestAReplyWithNoPanesFieldIsNotAnEmptyHerdr(t *testing.T) {
 		t.Errorf("parsed %+v, want the one pane it lists", got)
 	}
 }
+
+func TestAReplyWithNoWorkspacesFieldIsNotAMachineWithNoSpaces(t *testing.T) {
+	// The same distinction as the pane list, and for a consequence of the same
+	// kind: no workspaces means this machine's space is not on the far end, and
+	// not being there is what makes the plugin make one -- with a terminal in
+	// it, on somebody's machine.
+	empty, err := ParseWorkspaceList([]byte(`{"workspaces":[],"type":"workspace_list"}`))
+	if err != nil {
+		t.Errorf("a Herdr with no spaces was read as an error: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("found %d spaces in a reply that lists none", len(empty))
+	}
+
+	for _, shape := range []string{`{"type":"workspace_list"}`, `{"spaces":[]}`, `{}`} {
+		if _, err := ParseWorkspaceList([]byte(shape)); err == nil {
+			t.Errorf("%s was read as a machine with no spaces", shape)
+		}
+	}
+}
+
+func TestATabListWithoutTabsIsTakenAsGiven(t *testing.T) {
+	// Deliberately unlike the two above. What an empty order costs is the
+	// order -- terminals sort by pane id rather than by the tab they are in on
+	// the machine. Refusing would cost the whole pass, and a reconcile that
+	// returns an error counts against the machine: enough of them and it is
+	// given up on. Losing an ordering is the smaller harm, so this one is not
+	// made strict.
+	for _, shape := range []string{`{"tabs":[]}`, `{"type":"tab_list"}`, `{}`} {
+		order, err := ParseTabOrder([]byte(shape))
+		if err != nil {
+			t.Errorf("%s was refused: %v", shape, err)
+		}
+		if len(order) != 0 {
+			t.Errorf("%s gave %d tabs", shape, len(order))
+		}
+	}
+	// And a real one is read.
+	order, err := ParseTabOrder([]byte(`{"tabs":[{"tab_id":"w1:t2","number":2}]}`))
+	if err != nil || order["w1:t2"] != 2 {
+		t.Errorf("parsed %v, %v; want the tab it lists", order, err)
+	}
+}
