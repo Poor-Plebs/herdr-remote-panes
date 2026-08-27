@@ -1834,6 +1834,22 @@ func (d *Daemon) reconcileOnce() {
 				// link here was the trouble rather than the machine -- so it
 				// gets another go without being asked, with a full budget of
 				// attempts as though it had just been connected to.
+				//
+				// A pass, not a connect, and deliberately. Connecting is what
+				// pressing enter does and it would fix strictly more -- only
+				// connect runs prepareRemote, so only connect restarts a Herdr
+				// session that died on the machine. It also clears dismissed,
+				// which is the record of panes somebody closed by hand: doing
+				// that on a timer brings closed terminals back a few minutes
+				// later, on their own, which is worse than anything it fixes.
+				//
+				// What is given up here costs almost nothing, because this
+				// only ever runs when every machine failed together. That is a
+				// link at this end, and a pass is enough to come back from it
+				// -- ssh remakes a dead ControlMaster by itself. A session
+				// dying on one machine while the others are fine never reaches
+				// here at all: one machine failing alone is left to wait for
+				// somebody, as it was before any of this.
 				state.linkRetryAt = time.Time{}
 				state.gaveUp = false
 				state.failCount = 0
