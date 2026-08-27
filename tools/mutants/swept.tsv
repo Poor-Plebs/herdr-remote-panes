@@ -21,5 +21,6 @@
 ./internal/project	2026-08-27	3	3	0	0
 ./internal/remote	2026-08-27	51	50	1	0
 ./internal/sshconfig	2026-08-27	33	32	1	0
+./internal/syncd (daemon.go)	2026-08-27	6	5	1	0
 ./internal/text	2026-08-27	54	49	5	0
 ./internal/version	2026-08-27	9	7	2	0

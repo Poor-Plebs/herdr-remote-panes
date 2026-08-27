@@ -259,23 +259,40 @@ func TestTheRetryNamesTheSoonestWait(t *testing.T) {
 	// Naming whichever came last in the loop would report a wait nothing is
 	// doing -- and the order machines come in is not something a reader
 	// controls.
-	logged := captureLog(t)
-	d := New(machineConfig("bot", "workbox"))
-	fresh, weathered := downHost("bot"), downHost("workbox")
-	weathered.linkRetryStep = 4 // at the ceiling
-	states := []*hostSync{weathered, fresh}
-	for _, state := range states {
-		d.hosts[state.host.Target] = state
-	}
+	// Both orders. The machines come out of a slice, and with the soonest
+	// second the first one sets the answer and the second corrects it -- which
+	// is the case that passes whether the first is handled properly or not.
+	// With the soonest first, nothing corrects a wrong start.
+	for _, tt := range []struct {
+		what  string
+		first string
+	}{
+		{"the soonest last", "weathered"},
+		{"the soonest first", "fresh"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			logged := captureLog(t)
+			d := New(machineConfig("bot", "workbox"))
+			fresh, weathered := downHost("bot"), downHost("workbox")
+			weathered.linkRetryStep = 4 // at the ceiling
+			states := []*hostSync{weathered, fresh}
+			if tt.first == "fresh" {
+				states = []*hostSync{fresh, weathered}
+			}
+			for _, state := range states {
+				d.hosts[state.host.Target] = state
+			}
 
-	d.scheduleWholePassRetry(states)
+			d.scheduleWholePassRetry(states)
 
-	said := logged.String()
-	if !strings.Contains(said, "in 5s") {
-		t.Errorf("with one machine due in 5s and another in 5m, the log says %q", said)
-	}
-	// Each still gets its own wait; only what is said is the soonest.
-	if wait := time.Until(weathered.linkRetryAt); wait < 4*time.Minute {
-		t.Errorf("the machine at the ceiling was rescheduled for %s, want its own wait", wait)
+			said := logged.String()
+			if !strings.Contains(said, "in 5s") {
+				t.Errorf("with one machine due in 5s and another in 5m, the log says %q", said)
+			}
+			// Each still gets its own wait; only what is said is the soonest.
+			if wait := time.Until(weathered.linkRetryAt); wait < 4*time.Minute {
+				t.Errorf("the machine at the ceiling was rescheduled for %s, want its own wait", wait)
+			}
+		})
 	}
 }

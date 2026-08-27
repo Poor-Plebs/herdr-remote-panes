@@ -807,6 +807,20 @@ Sweeping one file of a package is much faster than sweeping all of it, and is
 how a package comes to be called swept while two of its files have never been
 looked at. A run that was given file names says which ones it left.
 
+`SINCE` narrows it further, to the lines that have changed since a revision:
+
+```bash
+make mutants PKG=./internal/syncd FILES=daemon.go SINCE=v0.3.0
+```
+
+Which is the run worth making after writing something. Sweeping that file takes
+an hour and a half and spends nearly all of it re-deciding mutations that were
+read months ago; the forty lines that are new take four minutes. A restricted
+run does not check `read.tsv` for judgements that no longer apply — a sweep of
+four lines of a file leaves every other entry looking stale — so that stays a
+job for a whole-file run, and for `make check`, which holds every entry to a
+line that exists.
+
 Survivors already read and decided against are recorded in
 `tools/mutants/read.tsv`, with a line each saying why, and marked in the report
 rather than raised again. A sweep of a package this size turns up the same dozen

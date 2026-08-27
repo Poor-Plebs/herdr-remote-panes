@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -100,7 +101,21 @@ func main() {
 	covered, err := coveredLines(work, pkg)
 	check(err)
 
-	muts, skipped, untouched, err := mutationsIn(work, pkg, only, covered)
+	// Only what has changed, when asked. Sweeping a large file to look at the
+	// forty lines somebody wrote this morning costs an hour and spends nearly
+	// all of it re-deciding mutations that were read months ago.
+	since := os.Getenv("SINCE")
+	var changed map[string]map[int]bool
+	if since != "" {
+		changed, err = changedLines(root, since)
+		check(err)
+		if len(changed) == 0 {
+			fmt.Printf("nothing has changed since %s\n", since)
+			return
+		}
+	}
+
+	muts, skipped, untouched, err := mutationsIn(work, pkg, only, covered, changed)
 	check(err)
 	if len(muts) == 0 {
 		if len(only) > 0 {
@@ -111,7 +126,12 @@ func main() {
 		}
 		return
 	}
-	fmt.Printf("%d mutations on covered lines (%d skipped as unreached)\n", len(muts), skipped)
+	if since != "" {
+		fmt.Printf("%d mutations on covered lines changed since %s (%d skipped as "+
+			"unreached or unchanged)\n", len(muts), since, skipped)
+	} else {
+		fmt.Printf("%d mutations on covered lines (%d skipped as unreached)\n", len(muts), skipped)
+	}
 	if len(untouched) > 0 {
 		// Said up front, not at the end: what this run is about to tell you is
 		// about part of a package, and it is the part you asked for rather
@@ -175,7 +195,12 @@ func main() {
 	recordSweep(filepath.Join(root, "tools", "mutants", "swept.tsv"),
 		pkg, os.Args[2:], len(muts), caught, len(survived), unexplained)
 
-	if stale := staleTriage(readPath, muts, survived); len(stale) > 0 {
+	// Not when the run was restricted to what changed. This reads a file's
+	// entries against the survivors of a sweep of that file, and a sweep of
+	// four lines of it leaves every other entry looking like a judgement that
+	// no longer applies -- with "drop them" printed underneath. The check in
+	// `make check` still holds every entry to a line that exists.
+	if stale := staleTriage(readPath, muts, survived); since == "" && len(stale) > 0 {
 		fmt.Printf("\n%d in tools/mutants/read.tsv no longer describe a survivor. The line was\n"+
 			"edited, or a test now catches it. Drop them:\n", len(stale))
 		for _, entry := range stale {
@@ -241,7 +266,7 @@ func try(work, pkg string, m mutation) (string, error) {
 }
 
 // mutationsIn lists what can be changed in a package's own files.
-func mutationsIn(work, pkg string, only map[string]bool, covered map[string]map[int]bool) ([]mutation, int, []string, error) {
+func mutationsIn(work, pkg string, only map[string]bool, covered map[string]map[int]bool, changed map[string]map[int]bool) ([]mutation, int, []string, error) {
 	dir := filepath.Join(work, filepath.Clean(strings.TrimPrefix(pkg, "./")))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -274,6 +299,13 @@ func mutationsIn(work, pkg string, only map[string]bool, covered map[string]map[
 			return nil, 0, nil, err
 		}
 		for _, m := range found {
+			// The line the mutation is on, not the line coverage counts it
+			// against: a case inside a switch is counted against the switch,
+			// and a diff knows nothing about that.
+			if changed != nil && !changed[rel][m.line] {
+				skipped++
+				continue
+			}
 			if covered[rel][m.coverLine] {
 				out = append(out, m)
 			} else {
@@ -657,6 +689,45 @@ func recordSweep(path, pkg string, files []string, mutations, caught, survived, 
 		// and its answer is on the screen.
 		fmt.Fprintf(os.Stderr, "could not record the sweep in %s: %v\n", path, err)
 	}
+}
+
+// changedLines is the lines each file has gained or had rewritten since rev.
+//
+// Read from the repository rather than the copy this works in, because the
+// copy is what is about to be mutated and its history is beside the point.
+// Only the lines on the near side of the diff: a line that was deleted is not
+// there to mutate, and one that is merely near a change was already read.
+func changedLines(root, rev string) (map[string]map[int]bool, error) {
+	out, err := run(root, "git", "diff", "--unified=0", rev, "--", ".")
+	if err != nil {
+		return nil, fmt.Errorf("could not read what changed since %s: %w", rev, err)
+	}
+
+	changed := map[string]map[int]bool{}
+	file := ""
+	hunk := regexp.MustCompile(`^@@ -[0-9,]+ \+([0-9]+)(?:,([0-9]+))? @@`)
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "+++ b/") {
+			file = strings.TrimPrefix(line, "+++ b/")
+			continue
+		}
+		m := hunk.FindStringSubmatch(line)
+		if m == nil || file == "" {
+			continue
+		}
+		start, _ := strconv.Atoi(m[1])
+		count := 1
+		if m[2] != "" {
+			count, _ = strconv.Atoi(m[2])
+		}
+		if changed[file] == nil {
+			changed[file] = map[int]bool{}
+		}
+		for n := start; n < start+count; n++ {
+			changed[file][n] = true
+		}
+	}
+	return changed, nil
 }
 
 // staleTriage names the entries in read.tsv that no longer describe a survivor

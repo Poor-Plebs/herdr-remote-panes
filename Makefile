@@ -41,9 +41,10 @@ test:
 ##
 ##   make mutants PKG=./internal/config
 ##   make mutants PKG=./internal/syncd FILES=daemon.go
+##   make mutants PKG=./internal/syncd SINCE=v0.3.0   # only what changed
 mutants:
 	@if [ -z "$(PKG)" ]; then echo "usage: make mutants PKG=./internal/config [FILES=one.go]"; exit 2; fi
-	go run ./tools/mutants $(PKG) $(FILES)
+	SINCE=$(SINCE) go run ./tools/mutants $(PKG) $(FILES)
 
 ## build: the binary Herdr runs
 build:

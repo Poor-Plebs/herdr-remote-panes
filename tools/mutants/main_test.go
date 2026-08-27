@@ -597,7 +597,7 @@ func TestASweepSaysWhichFilesItDidNotLookAt(t *testing.T) {
 	}
 
 	_, _, untouched, err := mutationsIn(work, "./internal/thing",
-		map[string]bool{"one.go": true}, map[string]map[int]bool{})
+		map[string]bool{"one.go": true}, map[string]map[int]bool{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -609,7 +609,7 @@ func TestASweepSaysWhichFilesItDidNotLookAt(t *testing.T) {
 
 	// A whole-package sweep leaves nothing, and saying so on every run would
 	// be noise on the runs that need none.
-	_, _, untouched, err = mutationsIn(work, "./internal/thing", nil, map[string]map[int]bool{})
+	_, _, untouched, err = mutationsIn(work, "./internal/thing", nil, map[string]map[int]bool{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
