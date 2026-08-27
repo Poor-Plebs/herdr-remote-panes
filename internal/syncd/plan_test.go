@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -3568,4 +3569,51 @@ func TestAReplacingDaemonKeepsItsOwnSocket(t *testing.T) {
 		t.Fatalf("nothing can reach the replacing daemon: %v", err)
 	}
 	conn.Close()
+}
+
+func TestEveryMapOnAMachineIsCleanedBySomething(t *testing.T) {
+	// forgetTerminals exists because each of these was cleared where it was
+	// most obviously needed, which left the ones nobody had thought about
+	// growing for as long as the daemon ran. Its comment says gathering them
+	// in one place "is the only way this stays true when the next one is
+	// added" -- and the test beside it names all six by hand, so a seventh
+	// would be added, never cleaned, and never noticed.
+	//
+	// This one asks the type instead. A new map has to be put in one of these
+	// lists, which is the moment somebody decides how it gets cleaned.
+	perPane := map[string]bool{ // by forgetPane, when its pane goes
+		"labels": true, "reportedAgents": true, "shellPanes": true,
+	}
+	perTerminal := map[string]bool{ // by forgetTerminals, when its terminal goes
+		"dismissed": true, "abandoned": true, "failures": true,
+		"retryAt": true, "pendingPlacement": true, "pendingFocus": true,
+	}
+	// mirrors is the record of what is mirrored rather than something
+	// remembered about it: an entry is removed as the mirror is.
+	theRecord := map[string]bool{"mirrors": true}
+
+	shape := reflect.TypeOf(hostSync{})
+	found := 0
+	for i := 0; i < shape.NumField(); i++ {
+		field := shape.Field(i)
+		if field.Type.Kind() != reflect.Map {
+			continue
+		}
+		found++
+		if !perPane[field.Name] && !perTerminal[field.Name] && !theRecord[field.Name] {
+			t.Errorf("hostSync.%s is remembered about a machine and nothing here says "+
+				"what clears it; add it to forgetTerminals or forgetPane, and to the "+
+				"list above", field.Name)
+		}
+	}
+	if found < 10 {
+		t.Fatalf("found %d maps on hostSync, which is fewer than there are -- this "+
+			"test has stopped looking at the type", found)
+	}
+
+	// That each of the per-terminal ones is actually cleared is the test above,
+	// which populates them and calls forgetTerminals. This is only about a map
+	// that appears later and is in neither place -- the failure that one
+	// cannot see, because a test naming six fields is happy with a seventh it
+	// has never heard of.
 }
