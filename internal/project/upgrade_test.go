@@ -135,3 +135,147 @@ func (s *saidWhat) String() string {
 	defer s.mu.Unlock()
 	return s.b.String()
 }
+
+// previousRelease is the newest release tag that is not the commit under test.
+//
+// A shallow clone has no tags, and a test that quietly skips when it cannot
+// find one is a test that never runs anywhere it matters. So this fails, and
+// says what the clone needs.
+func previousRelease(t *testing.T) string {
+	t.Helper()
+	// A particular jump can be asked for, which is how somebody several
+	// versions behind can be told whether their upgrade works rather than
+	// guessed at.
+	if from := os.Getenv("HRP_UPGRADE_FROM"); from != "" {
+		return from
+	}
+	out, err := exec.Command("git", "tag", "--sort=-v:refname").Output()
+	if err != nil {
+		t.Fatalf("could not list tags: %v", err)
+	}
+	head, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tag := range strings.Fields(string(out)) {
+		at, err := exec.Command("git", "rev-list", "-n1", tag).Output()
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(string(at)) != strings.TrimSpace(string(head)) {
+			return tag
+		}
+	}
+	t.Fatal("no release tag to upgrade from; this needs a clone with tags " +
+		"(actions/checkout wants fetch-depth: 0)")
+	return ""
+}
+
+func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
+	// The test above starts one build twice, which is a daemon replacing
+	// itself. A real upgrade is one version replacing another, and the half
+	// that has to cope is the new one: it meets a socket held by a daemon
+	// built before any of the handover code existed, and that daemon's idea of
+	// tidying up on the way out is whatever it was at the time.
+	//
+	// Three releases went out broken on exactly this difference, and none of
+	// them would have been caught by starting the same binary twice.
+	inRoot(t)
+	previous := previousRelease(t)
+
+	dir := t.TempDir()
+	build := func(from, name string) string {
+		t.Helper()
+		binary := filepath.Join(dir, name)
+		src := "."
+		if from != "" {
+			src = filepath.Join(dir, "src-"+name)
+			if err := os.MkdirAll(src, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			archive := exec.Command("git", "archive", from)
+			untar := exec.Command("tar", "-x", "-C", src)
+			pipe, err := archive.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			untar.Stdin = pipe
+			if err := archive.Start(); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := untar.CombinedOutput(); err != nil {
+				t.Fatalf("unpacking %s: %v\n%s", from, err, out)
+			}
+			if err := archive.Wait(); err != nil {
+				t.Fatalf("archiving %s: %v", from, err)
+			}
+		}
+		cmd := exec.Command("go", "build", "-o", binary, ".")
+		cmd.Dir = src
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("building %s: %v\n%s", name, err, out)
+		}
+		return binary
+	}
+
+	older := build(previous, "older")
+	current := build("", "current")
+
+	state := filepath.Join(dir, "state")
+	config := filepath.Join(dir, "config")
+	if err := os.MkdirAll(config, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(),
+		"HERDR_PLUGIN_STATE_DIR="+state,
+		"HERDR_PLUGIN_CONFIG_DIR="+config,
+		"HERDR_SESSION=upgrade-across")
+
+	start := func(binary string) (*exec.Cmd, *saidWhat) {
+		said := &saidWhat{}
+		cmd := exec.Command(binary, "daemon")
+		cmd.Env = env
+		cmd.Stderr = said
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		return cmd, said
+	}
+	answering := func(with string, within time.Duration) bool {
+		deadline := time.Now().Add(within)
+		for time.Now().Before(deadline) {
+			ask := exec.Command(with, "status")
+			ask.Env = env
+			if err := ask.Run(); err == nil {
+				return true
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		return false
+	}
+
+	old, oldSaid := start(older)
+	defer func() { _ = old.Process.Kill() }()
+	if !answering(older, 15*time.Second) {
+		t.Fatalf("the %s daemon never answered:\n%s", previous, oldSaid)
+	}
+
+	replacing, replacingSaid := start(current)
+	defer func() { _ = replacing.Process.Kill() }()
+	time.Sleep(time.Second)
+	if replacing.ProcessState != nil && replacing.ProcessState.Exited() {
+		t.Fatalf("the new daemon exited rather than waiting for the %s one to go; "+
+			"Herdr does not start it again, so nothing would be left serving:\n%s",
+			previous, replacingSaid)
+	}
+
+	if err := old.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	_ = old.Wait()
+
+	if !answering(current, 20*time.Second) {
+		t.Errorf("nothing answers after upgrading from %s.\nnew daemon said:\n%s\n%s daemon said:\n%s",
+			previous, replacingSaid, previous, oldSaid)
+	}
+}

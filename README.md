@@ -920,6 +920,20 @@ That check was opt-in at first, which put it in these steps and nowhere else.
 Forgetting these steps is how the thing it guards got out three times, so it
 runs every time now.
 
+It does it twice: once with one build starting twice, which is a daemon
+replacing itself, and once with the last release handing over to this one,
+which is what an upgrade actually is. Only the second meets a daemon built
+before any of the handover code existed. To check a particular jump — somebody
+several versions behind, wanting to know rather than guess:
+
+```bash
+HRP_UPGRADE_FROM=v0.1.0 go test -run TestAnUpgradeFromTheLastRelease ./internal/project/
+```
+
+That needs a clone with tags, which is why CI checks out with `fetch-depth: 0`.
+The test fails rather than skipping when it cannot find a release to upgrade
+from: one that quietly skips is one that never runs where it matters.
+
 Then the two places a version number is written down: the install line near the
 top of this README, and `version` in `herdr-plugin.toml`. A test holds them to
 each other, because neither can be held to the tag — at the moment they are

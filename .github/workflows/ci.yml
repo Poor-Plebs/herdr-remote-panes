@@ -19,6 +19,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Tags and history, so the upgrade check can build the release it is
+          # upgrading from. A shallow clone has neither, and that test fails
+          # rather than skipping: one that quietly skips is one that never runs
+          # where it matters.
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -62,6 +68,12 @@ jobs:
       GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Tags and history, so the upgrade check can build the release it is
+          # upgrading from. A shallow clone has neither, and that test fails
+          # rather than skipping: one that quietly skips is one that never runs
+          # where it matters.
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
