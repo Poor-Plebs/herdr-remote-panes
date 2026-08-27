@@ -158,3 +158,4 @@ internal/mirror/mousegate.go	> -> >=	if len(out) > 0 {	Write
 internal/mirror/mousegate.go	> -> >=	if len(g.held) > 0 {	flush
 internal/mirror/mousegate.go	< -> <=	if len(seq) < 5 || seq[0] != escape || seq[1] != '[' || seq[2] != '?' {	isMouseEnable
 internal/syncd/daemon.go	< -> <=	if scheduled == 0 || wait < soonest {	scheduleWholePassRetry
+internal/syncd/plan.go	< -> <=	if found == "" || paneID < found {	planFollowSibling
