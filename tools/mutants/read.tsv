@@ -145,3 +145,6 @@ internal/syncd/plan.go	>= -> >	if wait >= autoRetryCeiling {	planAutoRetryWait
 internal/cli/client.go	<= -> <	if width <= 0 || indent+text.Width(r.state) <= width || room < minWrapColumn {	statusLines
 internal/cli/client.go	|| -> &&	if width <= 0 || indent+text.Width(r.state) <= width || room < minWrapColumn {	statusLines
 internal/cli/client.go	<= -> <	if err != nil || cols <= 0 {	outputWidth
+internal/syncd/daemon.go	> -> >=	if time.Since(failingSince) > acceptGraceTime {	serveControl
+internal/syncd/daemon.go	< -> <=	if delay < acceptRetryFloor {	serveControl
+internal/syncd/daemon.go	> -> >=	} else if delay *= 2; delay > acceptRetryCeil {	serveControl

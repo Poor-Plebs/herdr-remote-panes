@@ -3571,7 +3571,7 @@ func TestAReplacingDaemonKeepsItsOwnSocket(t *testing.T) {
 	conn.Close()
 }
 
-func TestEveryMapOnAMachineIsCleanedBySomething(t *testing.T) {
+func TestEverythingRememberedAboutAMachineIsCleanedBySomething(t *testing.T) {
 	// forgetTerminals exists because each of these was cleared where it was
 	// most obviously needed, which left the ones nobody had thought about
 	// growing for as long as the daemon ran. Its comment says gathering them
@@ -3579,10 +3579,17 @@ func TestEveryMapOnAMachineIsCleanedBySomething(t *testing.T) {
 	// added" -- and the test beside it names all six by hand, so a seventh
 	// would be added, never cleaned, and never noticed.
 	//
-	// This one asks the type instead. A new map has to be put in one of these
+	// This one asks the type instead. A new one has to be put in one of these
 	// lists, which is the moment somebody decides how it gets cleaned.
+	//
+	// Maps and slices alike. It asked about maps only, and a placement kept
+	// per pane was moved from a map to a slice the same day -- the order was
+	// needed -- which took it out of here without anything saying so. What is
+	// remembered about a machine has to be forgotten about it; the shape it is
+	// remembered in has nothing to do with that.
 	perPane := map[string]bool{ // by forgetPane, when its pane goes
 		"labels": true, "reportedAgents": true, "shellPanes": true,
+		"shellPlacement": true,
 	}
 	perTerminal := map[string]bool{ // by forgetTerminals, when its terminal goes
 		"dismissed": true, "abandoned": true, "failures": true,
@@ -3592,22 +3599,29 @@ func TestEveryMapOnAMachineIsCleanedBySomething(t *testing.T) {
 	// mirrors is the record of what is mirrored rather than something
 	// remembered about it: an entry is removed as the mirror is.
 	theRecord := map[string]bool{"mirrors": true}
+	// Filled and emptied inside one piece of work rather than outliving it:
+	// strays are gathered in a pass and drained at the end of it, and the
+	// placements to restore are spent as the terminals come back and dropped
+	// with the count they belong to. Nothing else has to clean these, but
+	// something has to say that -- which is the point of naming them here.
+	spentAsItGoes := map[string]bool{"strays": true, "restoreShellsAs": true}
 
 	shape := reflect.TypeOf(hostSync{})
 	found := 0
 	for i := 0; i < shape.NumField(); i++ {
 		field := shape.Field(i)
-		if field.Type.Kind() != reflect.Map {
+		if field.Type.Kind() != reflect.Map && field.Type.Kind() != reflect.Slice {
 			continue
 		}
 		found++
-		if !perPane[field.Name] && !perTerminal[field.Name] && !theRecord[field.Name] {
+		if !perPane[field.Name] && !perTerminal[field.Name] &&
+			!theRecord[field.Name] && !spentAsItGoes[field.Name] {
 			t.Errorf("hostSync.%s is remembered about a machine and nothing here says "+
 				"what clears it; add it to forgetTerminals or forgetPane, and to the "+
 				"list above", field.Name)
 		}
 	}
-	if found < 10 {
+	if found < 14 {
 		t.Fatalf("found %d maps on hostSync, which is fewer than there are -- this "+
 			"test has stopped looking at the type", found)
 	}

@@ -271,3 +271,50 @@ func TestATabKeepsItsPlaceWhenItsLinkDrops(t *testing.T) {
 			len(got), len(wanted), got)
 	}
 }
+
+func TestForgettingOnePaneForgetsOnlyItsPlacement(t *testing.T) {
+	// A sweep found that inverting the test in this cleanup changes nothing
+	// any test would notice. Inverted it keeps the pane that went and drops
+	// every other one -- so closing a single terminal would lose the
+	// arrangement of all the terminals beside it, and a restart afterwards
+	// would put them wherever the machine's setting says.
+	d := New(machineConfig("bot"))
+	state := newTestHost()
+	state.shellPlacement = []shellPlace{
+		{"w1:p1", "tab"}, {"w1:p2", "split"}, {"w1:p3", "tab"},
+	}
+	state.shellPanes["w1:p1"] = true
+	state.shellPanes["w1:p2"] = true
+	state.shellPanes["w1:p3"] = true
+
+	d.forgetPane(state, "w1:p2")
+
+	var left []string
+	for _, shell := range state.shellPlacement {
+		left = append(left, shell.paneID)
+	}
+	if len(left) != 2 {
+		t.Fatalf("forgetting one pane left %d placements: %v", len(left), left)
+	}
+	for _, want := range []string{"w1:p1", "w1:p3"} {
+		found := false
+		for _, got := range left {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s lost its placement because a different pane went: %v", want, left)
+		}
+	}
+	for _, shell := range state.shellPlacement {
+		if shell.paneID == "w1:p2" {
+			t.Error("the pane that went kept its placement, which the next restore would spend")
+		}
+	}
+	// The order the rest were opened in is what makes them restorable, so
+	// removing one from the middle must not shuffle the others.
+	if state.shellPlacement[0].paneID != "w1:p1" {
+		t.Errorf("the remaining placements are out of order: %v", left)
+	}
+}
