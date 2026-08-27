@@ -1585,9 +1585,19 @@ func TestWhatTheToggleQuestionSays(t *testing.T) {
 			t.Errorf("the question does not say %q:\n%s", want, drawn)
 		}
 	}
-	for _, line := range strings.Split(drawn, "\r\n") {
-		if w := text.Width(line); w > 76 {
-			t.Errorf("a line is %d columns wide: %q", w, line)
+
+	// And it fits whatever the popup is. A question about losing work is a bad
+	// one to have wrapped mid-word by the terminal, and this is the longest
+	// thing the menu draws outside the machine list.
+	for _, cols := range []int{40, 54, 60, 76, 120} {
+		for _, line := range noticeLines(cols, "Turn mirroring on for bot?",
+			"Mirroring works differently, so its 3 terminals here are closed and the "+
+				"machine is connected again. They are plain SSH sessions, so whatever "+
+				"is running in them goes with them.",
+			"m to go ahead, any other key to leave it alone.") {
+			if w := text.Width(visible(line)); w > cols {
+				t.Errorf("at %d columns a line is %d wide: %q", cols, w, visible(line))
+			}
 		}
 	}
 }
