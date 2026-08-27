@@ -123,6 +123,16 @@ type hostSync struct {
 	// pendingPlacement overrides, per remote terminal, how its mirror is placed
 	// here, so a "new tab" key gives a tab even when the host normally splits.
 	pendingPlacement map[string]string
+	// placement is how each terminal's mirror was asked to be placed, kept for
+	// as long as the terminal is there rather than spent when its mirror opens.
+	//
+	// pendingPlacement above is the request and is consumed. This is the
+	// answer, and a mirror opened again -- the link dropped, Herdr restarted,
+	// the pane went -- is placed the way it was placed the first time. Without
+	// it the machine's ordinary setting applies instead, which defaults to
+	// split, and terminals somebody opened as tabs come back as one tab with
+	// all of them inside it.
+	placement map[string]string
 	// pendingFocus marks mirrors that should take focus when they open, so
 	// replacing a pane someone just created leaves them in the new terminal
 	// rather than back where they started.
@@ -829,6 +839,10 @@ func (d *Daemon) rememberPlacement(state *hostSync, result json.RawMessage, plac
 	}
 	if placement != "" {
 		state.pendingPlacement[made.RootPane.TerminalID] = placement
+		// The same note, kept rather than spent. Written here beside the
+		// request rather than where the request is read, so there is one place
+		// that writes it and reading it never has to have made the map.
+		state.placement[made.RootPane.TerminalID] = placement
 	}
 	if focus {
 		state.pendingFocus[made.RootPane.TerminalID] = true
@@ -1220,6 +1234,7 @@ func (d *Daemon) connect(host config.Host) error {
 
 			reportedAgents:   map[string]agentReport{},
 			pendingPlacement: map[string]string{},
+			placement:        map[string]string{},
 			pendingFocus:     map[string]bool{},
 			labels:           map[string]string{},
 			shellPanes:       map[string]bool{},
@@ -1256,6 +1271,9 @@ func restoreFromSnapshot(state *hostSync, saved hostSnapshot) {
 	}
 	for _, terminalID := range saved.Dismissed {
 		state.dismissed[terminalID] = true
+	}
+	for terminalID, where := range saved.Placement {
+		state.placement[terminalID] = where
 	}
 	state.restoreShells = saved.Shells
 }
@@ -1920,10 +1938,15 @@ func (d *Daemon) persist() {
 			dismissed = append(dismissed, terminalID)
 		}
 		sort.Strings(dismissed)
+		placement := make(map[string]string, len(state.placement))
+		for terminalID, where := range state.placement {
+			placement[terminalID] = where
+		}
 		current.Hosts[target] = hostSnapshot{
 			Mirrors:   mirrors,
 			Dismissed: dismissed,
 			Shells:    len(state.shellPanes),
+			Placement: placement,
 		}
 	}
 	// What the last daemon recorded about machines this one has not reached.
@@ -2012,6 +2035,12 @@ func forgetTerminals(state *hostSync, seen map[string]bool) {
 	for terminalID := range state.pendingPlacement {
 		if !seen[terminalID] {
 			delete(state.pendingPlacement, terminalID)
+		}
+	}
+	// Gone from the machine, so there is nothing left to place.
+	for terminalID := range state.placement {
+		if !seen[terminalID] {
+			delete(state.placement, terminalID)
 		}
 	}
 	for terminalID := range state.pendingFocus {
@@ -2674,6 +2703,10 @@ func (d *Daemon) label(host config.Host, rp herdrcli.Pane, name string) string {
 // that machine's usual placement is, and unfocused.
 func takeRequest(state *hostSync, terminalID, fallback string) (placement string, focus bool, done func()) {
 	placement = fallback
+	// What this terminal was placed as before, which outlasts the request.
+	if remembered, ok := state.placement[terminalID]; ok {
+		placement = remembered
+	}
 	if requested, ok := state.pendingPlacement[terminalID]; ok {
 		placement = requested
 	}

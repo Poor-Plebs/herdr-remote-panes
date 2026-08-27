@@ -3587,6 +3587,7 @@ func TestEveryMapOnAMachineIsCleanedBySomething(t *testing.T) {
 	perTerminal := map[string]bool{ // by forgetTerminals, when its terminal goes
 		"dismissed": true, "abandoned": true, "failures": true,
 		"retryAt": true, "pendingPlacement": true, "pendingFocus": true,
+		"placement": true,
 	}
 	// mirrors is the record of what is mirrored rather than something
 	// remembered about it: an entry is removed as the mirror is.

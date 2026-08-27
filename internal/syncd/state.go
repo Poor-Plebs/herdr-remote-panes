@@ -158,6 +158,10 @@ type hostSnapshot struct {
 	// Shells is how many plain SSH terminals this machine had open, so a
 	// restart restores the connection rather than leaving an empty sidebar.
 	Shells int `json:"shells,omitempty"`
+	// Placement is how a terminal's mirror was asked to be placed, for the
+	// terminals somebody asked about. Without it a restart places them by the
+	// machine's ordinary setting, and a tab comes back a split.
+	Placement map[string]string `json:"placement,omitempty"`
 }
 
 // snapshotPath is per session, matching the control socket.

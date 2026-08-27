@@ -19,6 +19,7 @@ func newTestHost() *hostSync {
 		reportedAgents:   map[string]agentReport{},
 		shellPanes:       map[string]bool{},
 		pendingPlacement: map[string]string{},
+		placement:        map[string]string{},
 		pendingFocus:     map[string]bool{},
 	}
 }
