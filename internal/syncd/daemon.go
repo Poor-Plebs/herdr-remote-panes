@@ -2854,6 +2854,19 @@ func takeRequest(state *hostSync, terminalID, fallback string) (placement string
 	}
 }
 
+// followSibling is the mirror a terminal should be opened beside, given what is
+// actually on the screen.
+//
+// Named rather than written into the call, because which panes may be split
+// beside is the decision here and it was held by nothing: taking the space out
+// of it left every test passing while a terminal could be put in a space its
+// machine had stopped using.
+func followSibling(state *hostSync, remoteTabOf map[string]string, tab, workspaceID string, index *paneIndex) string {
+	return planFollowSibling(state.mirrors, remoteTabOf, tab, func(paneID string) bool {
+		return index.alive[paneID] && index.workspaceOf[paneID] == workspaceID
+	})
+}
+
 // openMirror creates the local pane that bridges one remote terminal.
 func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, index *paneIndex, remoteTabOf map[string]string) error {
 	workspaceID, err := d.ensureWorkspace(state, index)
@@ -2882,8 +2895,7 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, ind
 		// Where the machine has it. Terminals sharing a tab over there share
 		// one here, and the first of a tab to arrive opens a tab of its own.
 		target = planFollowTarget(
-			planFollowSibling(state.mirrors, remoteTabOf, rp.TabID, index.alive),
-			workspaceID)
+			followSibling(state, remoteTabOf, rp.TabID, workspaceID, index), workspaceID)
 	}
 	opts := herdrcli.OpenOptions{
 		PluginID:   PluginID,

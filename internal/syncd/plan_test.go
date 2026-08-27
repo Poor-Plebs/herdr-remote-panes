@@ -3632,3 +3632,96 @@ func TestEverythingRememberedAboutAMachineIsCleanedBySomething(t *testing.T) {
 	// cannot see, because a test naming six fields is happy with a seventh it
 	// has never heard of.
 }
+
+func TestFollowingOnlySplitsBesideAPaneThatIsStillThere(t *testing.T) {
+	// The mirrors map holds what was opened, which is not the same as what is
+	// there now: a machine's space here is remade in several circumstances and
+	// a mirror left in the old one stays in the map. Splitting beside that puts
+	// the terminal in a space the machine no longer uses, on its own, where
+	// nothing will ever join it.
+	mirrors := map[string]string{
+		"term_gone":  "w1:p1", // its pane went
+		"term_stale": "w2:p2", // in the space this machine used to use
+		"term_here":  "w3:p3",
+	}
+	remoteTabOf := map[string]string{
+		"term_gone": "t1", "term_stale": "t1", "term_here": "t1",
+	}
+	usable := func(paneID string) bool { return paneID == "w3:p3" }
+
+	if got := planFollowSibling(mirrors, remoteTabOf, "t1", usable); got != "w3:p3" {
+		t.Errorf("split beside %q, want the one that is alive and in this space", got)
+	}
+
+	// None of them usable is the same as none of them existing: a tab of its
+	// own, which is where the machine has it.
+	none := func(string) bool { return false }
+	if got := planFollowSibling(mirrors, remoteTabOf, "t1", none); got != "" {
+		t.Errorf("split beside %q when nothing was usable, want a tab of its own", got)
+	}
+}
+
+func TestFollowingIsSteadyBetweenPasses(t *testing.T) {
+	// Any pane in the tab lands the terminal in the same tab, so which one is
+	// chosen decides only where the divider goes -- but map order is not order,
+	// and a layout that comes out differently on each pass would be its own
+	// report.
+	mirrors := map[string]string{
+		"a": "w1:p9", "b": "w1:p3", "c": "w1:p7", "d": "w1:p5",
+	}
+	remoteTabOf := map[string]string{"a": "t1", "b": "t1", "c": "t1", "d": "t1"}
+	always := func(string) bool { return true }
+
+	first := planFollowSibling(mirrors, remoteTabOf, "t1", always)
+	for i := 0; i < 50; i++ {
+		if got := planFollowSibling(mirrors, remoteTabOf, "t1", always); got != first {
+			t.Fatalf("two passes over the same panes chose %q and %q", first, got)
+		}
+	}
+	if first != "w1:p3" {
+		t.Errorf("chose %q, want the lowest so it is the same every time", first)
+	}
+}
+
+func TestFollowingATabTheMachineDoesNotName(t *testing.T) {
+	// A terminal the machine reports without a tab has nothing to be beside.
+	// Reading that as "matches every terminal whose tab is also unknown" would
+	// gather unrelated terminals into one tab.
+	mirrors := map[string]string{"other": "w1:p1"}
+	remoteTabOf := map[string]string{"other": ""}
+	always := func(string) bool { return true }
+
+	if got := planFollowSibling(mirrors, remoteTabOf, "", always); got != "" {
+		t.Errorf("a terminal with no tab was put beside %q", got)
+	}
+}
+
+func TestASiblingMustBeInTheSpaceTheMachineIsUsing(t *testing.T) {
+	// The decision the daemon actually makes, rather than the function it
+	// hands it to. Taking the space out of this left every test in the package
+	// passing -- the pure part was held, and what the pure part was asked was
+	// not.
+	state := newTestHost()
+	state.mirrors = map[string]string{
+		"term_old":  "wOld:p1", // a mirror left in the space this machine used to use
+		"term_here": "wNow:p2",
+	}
+	remoteTabOf := map[string]string{"term_old": "t1", "term_here": "t1"}
+
+	index := newPaneIndex([]herdrcli.Pane{
+		{PaneID: "wOld:p1", WorkspaceID: "wOld"},
+		{PaneID: "wNow:p2", WorkspaceID: "wNow"},
+	})
+
+	if got := followSibling(state, remoteTabOf, "t1", "wNow", index); got != "wNow:p2" {
+		t.Errorf("opened beside %q, want the mirror in the space being used", got)
+	}
+
+	// And with only the stale one to go on, a tab of its own beats joining a
+	// space the machine has left.
+	state.mirrors = map[string]string{"term_old": "wOld:p1"}
+	if got := followSibling(state, remoteTabOf, "t1", "wNow", index); got != "" {
+		t.Errorf("opened beside %q, which is in a space this machine no longer "+
+			"uses; want a tab of its own", got)
+	}
+}

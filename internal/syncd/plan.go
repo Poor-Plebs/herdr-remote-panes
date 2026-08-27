@@ -45,7 +45,13 @@ type paneTarget struct {
 // decides only where the divider goes. The lowest is taken so that two runs
 // over the same panes lay them out the same way -- map order is not order, and
 // a layout that shuffles between passes would be its own bug report.
-func planFollowSibling(mirrors map[string]string, remoteTabOf map[string]string, tab string, alive map[string]bool) string {
+//
+// usable says whether a pane may be split beside: alive, and in the space this
+// machine's terminals are going into. A machine's space here is remade in
+// several circumstances, and a mirror left in the previous one is still in the
+// map -- splitting beside that would put the new terminal in the space the
+// machine no longer uses, where nothing else of its is.
+func planFollowSibling(mirrors, remoteTabOf map[string]string, tab string, usable func(paneID string) bool) string {
 	if tab == "" {
 		// A machine that does not say which tab a terminal is in. Nothing to
 		// follow, so the caller opens a tab.
@@ -53,7 +59,7 @@ func planFollowSibling(mirrors map[string]string, remoteTabOf map[string]string,
 	}
 	found := ""
 	for terminalID, paneID := range mirrors {
-		if remoteTabOf[terminalID] != tab || !alive[paneID] {
+		if remoteTabOf[terminalID] != tab || !usable(paneID) {
 			continue
 		}
 		if found == "" || paneID < found {
