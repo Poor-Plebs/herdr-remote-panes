@@ -1,0 +1,14 @@
+# What has been swept, and when. One line per package or
+# partial sweep, replaced each time it runs.
+#
+# read.tsv says why a survivor was left. This says what was looked at,
+# which read.tsv cannot: a clean package leaves nothing in it.
+#
+# package	swept	mutations	caught	survived
+./internal/cli	2026-08-27	54	50	4
+./internal/config	2026-08-27	135	133	2
+./internal/logfile	2026-08-27	8	8	0
+./internal/project	2026-08-27	3	3	0
+./internal/sshconfig	2026-08-27	33	32	1
+./internal/text	2026-08-27	54	49	5
+./internal/version	2026-08-27	9	7	2

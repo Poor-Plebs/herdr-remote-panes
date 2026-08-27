@@ -157,6 +157,9 @@ func main() {
 	fmt.Printf("\n%d mutations: %d caught, %d survived, %d would not build, in %s\n",
 		len(muts), caught, len(survived), unusable, time.Since(started).Round(time.Second))
 
+	recordSweep(filepath.Join(root, "tools", "mutants", "swept.tsv"),
+		pkg, os.Args[2:], len(muts), caught, len(survived))
+
 	if stale := staleTriage(readPath, muts, survived); len(stale) > 0 {
 		fmt.Printf("\n%d in tools/mutants/read.tsv no longer describe a survivor. The line was\n"+
 			"edited, or a test now catches it. Drop them:\n", len(stale))
@@ -593,6 +596,57 @@ func wasRead(read map[string]string, m mutation) bool {
 	}
 	_, here := read[key+"\x00"+m.function]
 	return here
+}
+
+// recordSweep writes down that this package was looked at.
+//
+// read.tsv holds the survivors somebody read and left, so a package with no
+// survivors leaves no trace in it -- which makes a package swept and clean
+// indistinguishable from one nobody has ever swept. Both look like silence.
+// Working out which is which meant sweeping them again to find out, and the
+// answer to "has this been looked at" should not cost an hour of CPU.
+//
+// One line per package, replaced each time, so this says what is true now
+// rather than growing a history. The date is the useful part: a package swept
+// before the work that changed it has not really been swept.
+func recordSweep(path, pkg string, files []string, mutations, caught, survived int) {
+	what := pkg
+	if len(files) > 0 {
+		// A partial sweep is not the package, and recording it as though it
+		// were would claim more than was done.
+		what = pkg + " (" + strings.Join(files, " ") + ")"
+	}
+	line := fmt.Sprintf("%s\t%s\t%d\t%d\t%d", what, time.Now().Format("2006-01-02"),
+		mutations, caught, survived)
+
+	const header = "# What has been swept, and when. One line per package or\n" +
+		"# partial sweep, replaced each time it runs.\n" +
+		"#\n" +
+		"# read.tsv says why a survivor was left. This says what was looked at,\n" +
+		"# which read.tsv cannot: a clean package leaves nothing in it.\n" +
+		"#\n" +
+		"# package\tswept\tmutations\tcaught\tsurvived\n"
+
+	kept := []string{}
+	if raw, err := os.ReadFile(path); err == nil {
+		for _, existing := range strings.Split(string(raw), "\n") {
+			if existing == "" || strings.HasPrefix(existing, "#") {
+				continue
+			}
+			if strings.SplitN(existing, "\t", 2)[0] == what {
+				continue
+			}
+			kept = append(kept, existing)
+		}
+	}
+	kept = append(kept, line)
+	sort.Strings(kept)
+
+	if err := os.WriteFile(path, []byte(header+strings.Join(kept, "\n")+"\n"), 0o644); err != nil {
+		// Worth saying and not worth failing over: the sweep itself is done
+		// and its answer is on the screen.
+		fmt.Fprintf(os.Stderr, "could not record the sweep in %s: %v\n", path, err)
+	}
 }
 
 // staleTriage names the entries in read.tsv that no longer describe a survivor

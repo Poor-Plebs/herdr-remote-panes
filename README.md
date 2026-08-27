@@ -800,6 +800,14 @@ line that was there. A fourth field names the function, for a line that appears
 more than once in its file and does not mean the same thing both times — with
 only the line to go on, recording one of them says the other has been read too.
 
+What was *looked at* is a different question, and `read.tsv` cannot answer it: a
+package with no survivors leaves nothing in it, so swept-and-clean and
+never-swept are the same silence. `tools/mutants/swept.tsv` records each run —
+package, date, and the three counts — one line per package, replaced each time.
+The date is the useful part, since a package swept before the work that changed
+it has not really been swept. A run given file names is recorded as the partial
+sweep it was, not as the package.
+
 A record that can only grow ends up being trusted for code that is no longer
 there, so both directions are checked. A sweep names the entries whose file it
 mutated but which no longer describe a survivor -- the line was edited, or a
