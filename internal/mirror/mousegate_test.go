@@ -2,9 +2,13 @@ package mirror
 
 import (
 	"bytes"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
 )
 
 // realAttachStream is a recording of `herdr terminal attach` against a live
@@ -215,5 +219,65 @@ func TestAStreamOfNothingButEscapesGivesUpEventually(t *testing.T) {
 	if countSeq(got, "\x1b[?1000h") != 1 {
 		t.Errorf("the gate never gave up: %d enables got through, want the one "+
 			"sent after the limit", countSeq(got, "\x1b[?1000h"))
+	}
+}
+
+func TestAMirroredPaneIsNotLeftReportingTheMouse(t *testing.T) {
+	// The gate is tested above on its own, and attach is what has to be using
+	// it. Two correct pieces either side of a wiring nothing checks is the
+	// shape of bug this plugin has had before: the gate could be perfect and
+	// the pane still hand every drag to the far side.
+	//
+	// So this goes through attach itself, with an ssh that replays the
+	// recording, and looks at what reached the terminal.
+	fixture, err := filepath.Abs("testdata/attach-preamble.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"last=\"\"; for a in \"$@\"; do last=\"$a\"; done\n" +
+		"case \"$last\" in *command\\ -v\\ herdr*) echo /usr/bin/herdr; exit 0;; esac\n" +
+		"cat " + fixture + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdout
+	os.Stdout = write
+	attachErr := attach(remote.New("bot", ""), "term_1")
+	os.Stdout = saved
+	write.Close()
+	got, err := io.ReadAll(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attachErr != nil {
+		t.Fatalf("attach: %v", attachErr)
+	}
+
+	// Nothing arriving would pass every check below by never looking.
+	if len(got) == 0 {
+		t.Fatal("the pane received nothing at all")
+	}
+	for _, mode := range []string{"1000", "1002", "1003", "1006", "1015"} {
+		if n := countSeq(got, "\x1b[?"+mode+"h"); n != 0 {
+			t.Errorf("?%sh reached the pane %d times: a mirrored tab still gives "+
+				"every drag to the far side and cannot be selected from", mode, n)
+		}
+	}
+	// And the terminal's own output did arrive, so this is a pane that works
+	// rather than one nothing is writing to.
+	raw := realAttachStream(t)
+	for _, keep := range []string{"\x1b[?1049h", "\x1b[2J"} {
+		if countSeq(got, keep) != countSeq(raw, keep) {
+			t.Errorf("%q did not reach the pane: the gate is eating more than "+
+				"the mouse", keep)
+		}
 	}
 }
