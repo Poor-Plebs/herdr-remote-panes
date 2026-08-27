@@ -2433,8 +2433,17 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		d.syncAgent(state, paneID, rp)
 	}
 
+	// Which tab each of the machine's terminals is in, so a mirror can be put
+	// where the machine has it. Built from the listing this pass already
+	// fetched rather than remembered, so it cannot go stale and there is
+	// nothing to clean up when a terminal goes.
+	remoteTabOf := make(map[string]string, len(remotePanes))
+	for _, rp := range remotePanes {
+		remoteTabOf[rp.TerminalID] = rp.TabID
+	}
+
 	for _, rp := range plan.Open {
-		if err := d.openMirror(state, rp, labels[rp.TerminalID], index); err != nil {
+		if err := d.openMirror(state, rp, labels[rp.TerminalID], index, remoteTabOf); err != nil {
 			d.backOff(state, rp.TerminalID, err)
 			continue
 		}
@@ -2846,7 +2855,7 @@ func takeRequest(state *hostSync, terminalID, fallback string) (placement string
 }
 
 // openMirror creates the local pane that bridges one remote terminal.
-func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, index *paneIndex) error {
+func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, index *paneIndex, remoteTabOf map[string]string) error {
 	workspaceID, err := d.ensureWorkspace(state, index)
 	if err != nil {
 		return err
@@ -2869,6 +2878,13 @@ func (d *Daemon) openMirror(state *hostSync, rp herdrcli.Pane, label string, ind
 	placement, focus, asked := takeRequest(state, rp.TerminalID, d.config().PlacementFor(state.host))
 
 	target := planPaneTarget(placement, workspaceID, index.anyInWorkspace[workspaceID])
+	if placement == placementFollow {
+		// Where the machine has it. Terminals sharing a tab over there share
+		// one here, and the first of a tab to arrive opens a tab of its own.
+		target = planFollowTarget(
+			planFollowSibling(state.mirrors, remoteTabOf, rp.TabID, index.alive),
+			workspaceID)
+	}
 	opts := herdrcli.OpenOptions{
 		PluginID:   PluginID,
 		Entrypoint: paneEntrypoint,

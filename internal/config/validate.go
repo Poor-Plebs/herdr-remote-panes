@@ -25,7 +25,7 @@ func (c Config) Problems() []string {
 	}
 	if !knownPlacement(c.Placement) {
 		problems = append(problems, fmt.Sprintf(
-			"placement %q is not one of split, tab, zoomed or overlay; terminals will open as tabs", c.Placement))
+			"placement %q is not one of follow, split, tab, zoomed or overlay; terminals will open as tabs", c.Placement))
 	}
 	if c.Scope != ScopeShared && c.Scope != ScopeAll {
 		problems = append(problems, fmt.Sprintf(
@@ -147,7 +147,7 @@ func (c Config) Problems() []string {
 		}
 		if host.Placement != "" && !knownPlacement(host.Placement) {
 			problems = append(problems, fmt.Sprintf(
-				"host %q has placement %q, which is not one of split, tab, zoomed or overlay",
+				"host %q has placement %q, which is not one of follow, split, tab, zoomed or overlay",
 				host.Target, host.Placement))
 		}
 	}
@@ -164,7 +164,7 @@ func knownMode(mode Mode) bool {
 
 func knownPlacement(placement string) bool {
 	switch placement {
-	case "split", "tab", "zoomed", "overlay":
+	case "follow", "split", "tab", "zoomed", "overlay":
 		return true
 	}
 	return false

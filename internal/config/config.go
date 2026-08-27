@@ -171,7 +171,7 @@ func Defaults() Config {
 		Session:               DefaultSessionName,
 		Mode:                  ModeSSH,
 		Scope:                 ScopeShared,
-		Placement:             "split",
+		Placement:             "follow",
 		LabelFormat:           "{name}@{host}",
 		WorkspaceFormat:       "☁  {host}",
 		WorkspaceFormatDown:   "⚠  {host}",

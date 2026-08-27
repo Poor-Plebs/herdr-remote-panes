@@ -19,6 +19,11 @@ import (
 
 // Placement values Herdr accepts for a plugin pane.
 const (
+	// placementFollow puts a mirror where the machine has it: terminals that
+	// share a tab over there share one here, and a new tab there is a new tab
+	// here. The default, because it is what people expect of a mirror and the
+	// alternative needed a setting to get.
+	placementFollow  = "follow"
 	placementSplit   = "split"
 	placementZoomed  = "zoomed"
 	placementTab     = "tab"
@@ -33,6 +38,41 @@ type paneTarget struct {
 	TargetPane string
 }
 
+// planFollowSibling is a mirror already showing a terminal from the same tab on
+// the machine, or "" when this is the first of its tab to arrive here.
+//
+// Splitting beside any of them lands in the same tab, so which one is chosen
+// decides only where the divider goes. The lowest is taken so that two runs
+// over the same panes lay them out the same way -- map order is not order, and
+// a layout that shuffles between passes would be its own bug report.
+func planFollowSibling(mirrors map[string]string, remoteTabOf map[string]string, tab string, alive map[string]bool) string {
+	if tab == "" {
+		// A machine that does not say which tab a terminal is in. Nothing to
+		// follow, so the caller opens a tab.
+		return ""
+	}
+	found := ""
+	for terminalID, paneID := range mirrors {
+		if remoteTabOf[terminalID] != tab || !alive[paneID] {
+			continue
+		}
+		if found == "" || paneID < found {
+			found = paneID
+		}
+	}
+	return found
+}
+
+// planFollowTarget is where a mirror goes when it follows the machine.
+func planFollowTarget(sibling, workspaceID string) paneTarget {
+	if sibling == "" {
+		// The first of its tab to arrive: it gets a tab of its own, which is
+		// what the machine has.
+		return paneTarget{Placement: placementTab, Workspace: workspaceID}
+	}
+	return paneTarget{Placement: placementSplit, TargetPane: sibling}
+}
+
 // planPaneTarget decides which targeting fields to send with plugin.pane.open.
 //
 // Herdr treats them as mutually exclusive and rejects any other combination
@@ -42,6 +82,14 @@ type paneTarget struct {
 // from falls back to a tab, because a workspace always accepts one.
 func planPaneTarget(placement, workspaceID, paneInWorkspace string) paneTarget {
 	switch placement {
+	case placementFollow:
+		// Nothing to follow: this is a plain SSH terminal, which the machine
+		// has no arrangement for. Split, which is what these did before there
+		// was anything to follow.
+		if paneInWorkspace == "" {
+			return paneTarget{Placement: placementTab, Workspace: workspaceID}
+		}
+		return paneTarget{Placement: placementSplit, TargetPane: paneInWorkspace}
 	case placementSplit, placementZoomed:
 		if paneInWorkspace == "" {
 			return paneTarget{Placement: placementTab, Workspace: workspaceID}

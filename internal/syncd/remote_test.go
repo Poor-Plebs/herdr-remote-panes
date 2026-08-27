@@ -117,6 +117,27 @@ func addPaneOn(t *testing.T, statePath, workspace, title string) string {
 	return addAgentPaneOn(t, statePath, workspace, title, "", "")
 }
 
+// addPaneInTabOn is addPaneOn with a say in which of the machine's tabs the
+// terminal belongs to, for the placement that follows them.
+func addPaneInTabOn(t *testing.T, statePath, workspace, tab, title string) string {
+	t.Helper()
+	id := addAgentPaneOn(t, statePath, workspace, title, "", "")
+	var held fakeHerdr
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &held); err != nil {
+		t.Fatal(err)
+	}
+	held.Panes[id]["tab_id"] = tab
+	out, _ := json.Marshal(held)
+	if err := os.WriteFile(statePath, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 // addAgentPaneOn is addPaneOn for a terminal with an agent running in it.
 func addAgentPaneOn(t *testing.T, statePath, workspace, title, agent, status string) string {
 	t.Helper()
@@ -3089,23 +3110,24 @@ func tabsFor(held fakeHerdr, target string) []string {
 }
 
 func TestHowAMachinesTerminalsAreLaidOutHere(t *testing.T) {
-	// A machine with three tabs open on it does not arrive as three tabs. The
-	// mirrors are placed by `placement`, which defaults to splitting, so the
-	// first opens a tab and the rest split it -- and because each one splits
-	// in as it appears, it looks like something gradually rearranged them.
+	// Mirrors are placed by `placement`, which follows the machine: the three
+	// terminals here are across two tabs over there -- the one connecting made
+	// and the one the other two share -- so they arrive as two tabs.
 	//
-	// Both settings are held here because the difference between them is the
+	// Every setting is held here because the difference between them is the
 	// whole of what somebody is asking about when they say their tabs turned
-	// into one tab, and neither is written down anywhere the code would notice
-	// if it changed.
+	// into one tab, and none of it is written down anywhere the code would
+	// notice if it changed. The default used to be `split`, which is what
+	// turned three tabs into one and what the question was about.
 	for _, tt := range []struct {
 		placement string
 		wantTabs  int
 		what      string
 	}{
-		{"", 1, "the default splits them into one tab"},
-		{"split", 1, "and so does asking for that"},
-		{"tab", 3, "a tab each"},
+		{"", 2, "the default follows the machine's own tabs"},
+		{"follow", 2, "and so does asking for that"},
+		{"split", 1, "split puts them all in one tab"},
+		{"tab", 3, "a tab each regardless of the machine"},
 	} {
 		t.Run(tt.what, func(t *testing.T) {
 			here := withFakeHerdr(t)

@@ -203,9 +203,14 @@ here. For a tab each instead:
 }
 ```
 
-`zoomed` gives a tab each as well, with the newest filling the space. Either can
-be set per machine with `hosts[].placement`, which is worth doing when only one
-of your machines has enough open on it to matter.
+`split` puts everything in one tab, which is what this used to do, and `zoomed`
+gives a tab each with the newest filling the space. Any of them can be set per
+machine with `hosts[].placement`, which is worth doing when only one of your
+machines has enough open on it to matter.
+
+A machine in plain `ssh` mode has no arrangement to follow — its terminals are
+opened here rather than mirrored from there — so `follow` splits them, which is
+what they did before.
 
 A terminal *you* open with the new-tab action is different: it keeps the tab you
 asked for, including when its pane has to be opened again — a link that dropped,
@@ -357,7 +362,7 @@ All optional, in `$(herdr plugin config-dir poorplebs.remote-panes)/config.json`
 | `hosts[].workspace` | the global one | Which space *this* machine's terminals land in |
 | `hosts[].herdr_bin` | found automatically | Where `herdr` lives on *this* machine |
 | `mode` | `ssh` | Default mode for machines that do not set one |
-| `placement` | `split` | How terminals are placed here: `split`, `tab`, `zoomed` |
+| `placement` | `follow` | How terminals are placed here. `follow` puts them where the machine has them; `split`, `tab` and `zoomed` override that |
 | `workspace_format` | `☁  {host}` | How a machine's space is named |
 | `workspace_format_down` | `⚠  {host}` | How it is named while unreachable |
 | `workspace` | one per machine | Put every machine in one space instead |

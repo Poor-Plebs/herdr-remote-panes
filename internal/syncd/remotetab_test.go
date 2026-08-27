@@ -3,17 +3,14 @@ package syncd
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 )
 
-// openedOnTheMachine adds a terminal to a machine's Herdr without this plugin
-// having asked for it, which is what opening a tab over there is. Everything
-// else in these tests makes remote terminals by telling the plugin to, and
-// that is a different thing: it leaves a note saying how the mirror should be
-// placed, where this leaves none.
-func openedOnTheMachine(t *testing.T, statePath, tab string) string {
+// sharedSpaceOn is the space a machine's terminals are in.
+func sharedSpaceOn(t *testing.T, statePath string) string {
 	t.Helper()
 	raw, err := os.ReadFile(statePath)
 	if err != nil {
@@ -23,31 +20,13 @@ func openedOnTheMachine(t *testing.T, statePath, tab string) string {
 	if err := json.Unmarshal(raw, &held); err != nil {
 		t.Fatal(err)
 	}
-	// Whichever space the machine's own terminals are in.
-	workspace := ""
 	for _, pane := range held.Panes {
 		if id, _ := pane["workspace_id"].(string); id != "" {
-			workspace = id
+			return id
 		}
 	}
-	if workspace == "" {
-		t.Fatal("the machine has no space to open a tab in")
-	}
-	held.Next++
-	paneID := "wR:p" + tab
-	terminal := "term_on_machine_" + tab
-	held.Panes[paneID] = map[string]any{
-		"pane_id": paneID, "tab_id": "wR:t" + tab, "workspace_id": workspace,
-		"terminal_id": terminal, "label": "",
-	}
-	out, err := json.Marshal(held)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(statePath, out, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return terminal
+	t.Fatal("the machine has no space to open a tab in")
+	return ""
 }
 
 func TestATabOpenedOnTheMachineArrivesAsATab(t *testing.T) {
@@ -60,8 +39,7 @@ func TestATabOpenedOnTheMachineArrivesAsATab(t *testing.T) {
 	// The reporter's settings, rather than the defaults: scope and capture are
 	// the two that decide what is mirrored and what is taken over, and a test
 	// on defaults is a test of a configuration nobody is running.
-	cfg := config.Defaults()
-	cfg.Placement = "tab"
+	cfg := config.Defaults() // no placement set: the machine's shape is followed
 	cfg.Scope = "shared"
 	capture := true
 	cfg.CaptureNewPanes = &capture
@@ -80,7 +58,7 @@ func TestATabOpenedOnTheMachineArrivesAsATab(t *testing.T) {
 	}
 
 	// A tab opened over there, by somebody at that machine.
-	openedOnTheMachine(t, statePath, "9")
+	addPaneInTabOn(t, statePath, sharedSpaceOn(t, statePath), "wR:t9", "a new tab")
 	for i := 0; i < 4; i++ {
 		d.reconcileAll()
 	}
@@ -123,7 +101,7 @@ func TestEditingTheConfigTakesEffectWithoutARestart(t *testing.T) {
 	}
 
 	before := tabsFor(here(), "bot")
-	openedOnTheMachine(t, statePath, "9")
+	addPaneInTabOn(t, statePath, sharedSpaceOn(t, statePath), "wR:t9", "a new tab")
 	for i := 0; i < 4; i++ {
 		d.reconcileAll()
 	}
@@ -132,5 +110,52 @@ func TestEditingTheConfigTakesEffectWithoutARestart(t *testing.T) {
 		t.Errorf("after setting placement to tab, a terminal opened on the machine "+
 			"arrived in %d tabs and there were %d: %v — the edit was never read",
 			len(after), len(before), after)
+	}
+}
+
+func TestTerminalsSharingATabOnTheMachineShareOneHere(t *testing.T) {
+	// The other half of following the machine. A tab with two terminals in it
+	// over there is one tab with two panes here -- not two tabs, which would
+	// be just as wrong as the collapsing was, in the other direction.
+	here := withFakeHerdr(t)
+	_, statePath := withRemoteHerdr(t)
+
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{{Target: "bot", Mode: "attach"}}
+	d := New(cfg)
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	for i := 0; i < 4; i++ {
+		d.reconcileAll()
+	}
+	before := tabsFor(here(), "bot")
+
+	// Two terminals, one tab, the way somebody splits a pane over there.
+	space := sharedSpaceOn(t, statePath)
+	addPaneInTabOn(t, statePath, space, "wR:together", "left")
+	addPaneInTabOn(t, statePath, space, "wR:together", "right")
+	for i := 0; i < 6; i++ {
+		d.reconcileAll()
+	}
+
+	after := tabsFor(here(), "bot")
+	if len(after) != len(before)+1 {
+		t.Errorf("two terminals sharing one tab on the machine arrived in %d tabs, "+
+			"and there were %d before: %v — want one new tab holding both",
+			len(after), len(before), after)
+	}
+
+	// And both of them did arrive, rather than one being lost into the count.
+	panes := 0
+	for _, pane := range here().Panes {
+		if label, _ := pane["label"].(string); strings.HasSuffix(label, "@bot") {
+			panes++
+		}
+	}
+	if want := len(before) + 2; panes < want {
+		t.Errorf("%d panes are mirroring bot, want at least %d: one of the pair "+
+			"never opened", panes, want)
 	}
 }
