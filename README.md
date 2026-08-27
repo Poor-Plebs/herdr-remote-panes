@@ -154,6 +154,12 @@ Turn it on for a machine with `m` in the menu, or in the config:
 same terminal at once. `attach` is exclusive: two machines mirroring the same
 terminal will fight over it.
 
+Which is worth knowing before you use `m` on a machine set to `observe`. The key
+only knows two states, off and `attach`, so toggling such a machine off and on
+again leaves it attached — watching quietly becomes taking the terminal from
+whoever has it, and the menu has no way back. Set `observe` in the config and
+leave the key alone for those.
+
 ### What gets mirrored
 
 The terminals in one shared space, named after *your* machine, so both ends show
@@ -309,7 +315,7 @@ All optional, in `$(herdr plugin config-dir poorplebs.remote-panes)/config.json`
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `hosts[].target` | – | The machine, as you would type after `ssh` |
-| `hosts[].mode` | `ssh` | `ssh` plain terminal; `attach` or `observe` to mirror |
+| `hosts[].mode` | `ssh` | `ssh` plain terminal; `attach` or `observe` to mirror. The menu's `m` sets only `ssh` or `attach` |
 | `hosts[].label` | the target | How it is named here. Must differ from every other machine's: it names the machine's space, and two machines sharing one would take each other's terminals |
 | `hosts[].disabled` | `false` | Skip it without removing it |
 | `hosts[].session` | the global one | Which Herdr session on *this* machine |
