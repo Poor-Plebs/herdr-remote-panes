@@ -5,6 +5,7 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
 	"io"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -771,5 +772,50 @@ func TestHowWideStatusMayDraw(t *testing.T) {
 				t.Errorf("stty said %q, read as %d, want %d", tt.script, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestWhatTheCommandExitsWith(t *testing.T) {
+	// Herdr reads the exit status of an action, and the two failures mean
+	// different things to whoever is looking at a plugin log: 2 is being asked
+	// for something that is not a command, which is a keybinding or a manifest
+	// with a typo in it, and 1 is a command that was understood and did not
+	// work, which is about the machine or the daemon.
+	//
+	// Nothing held these. They are the whole of what a caller outside this
+	// process can see, and they were checked by hand twice while moving code
+	// around -- which is exactly the check worth writing down.
+	saved := os.Args
+	defer func() { os.Args = saved }()
+
+	// Somewhere quiet: Main writes usage and errors as it goes, and a test
+	// that fills the output with them is a test people stop reading.
+	quiet, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer quiet.Close()
+	savedOut, savedErr := os.Stdout, os.Stderr
+	savedLog := log.Writer()
+	os.Stdout, os.Stderr = quiet, quiet
+	log.SetOutput(quiet)
+	defer func() {
+		os.Stdout, os.Stderr = savedOut, savedErr
+		log.SetOutput(savedLog)
+	}()
+
+	for _, tt := range []struct {
+		what string
+		args []string
+		want int
+	}{
+		{"nothing to do", []string{"herdr-remote-panes"}, 2},
+		{"a command that is not one", []string{"herdr-remote-panes", "notacommand"}, 1},
+		{"one that is, and works", []string{"herdr-remote-panes", "version"}, 0},
+	} {
+		os.Args = tt.args
+		if got := Main(); got != tt.want {
+			t.Errorf("%s: exited %d, want %d", tt.what, got, tt.want)
+		}
 	}
 }
