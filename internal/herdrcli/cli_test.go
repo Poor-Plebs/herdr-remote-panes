@@ -165,3 +165,45 @@ echo 'Run herdr upgrade to install it.'`)
 		t.Errorf("panes = %+v, want the one in the answer", panes)
 	}
 }
+
+func TestWhichCallsTreatAMissingThingAsDone(t *testing.T) {
+	// The daemon reconciles against a listing that is a moment old, and Herdr
+	// removes things too. So the two race over which of them closes a pane
+	// first, and the loser is told it is not there — which is the outcome it
+	// asked for, not a failure. Reporting it as one filled the log with the
+	// daemon complaining that something it wanted gone was gone.
+	//
+	// Which calls forgive it is a decision, not a property of the error: a
+	// rename that finds nothing is a pane that went while being named, and
+	// worth hearing about. Nothing held the split.
+	fakeHerdr(t, refuses("pane_not_found", "pane w1:p2 not found"))
+
+	for _, tt := range []struct {
+		what    string
+		run     func() error
+		forgive bool
+	}{
+		{"closing a pane", func() error { return ClosePane("w1:p2") }, true},
+		{"closing one by id", func() error { return ClosePaneByID("w1:p2") }, true},
+		{"releasing an agent", func() error {
+			return ReleaseAgent("w1:p2", "poorplebs.remote-panes", "claude")
+		}, true},
+		{"focusing a space", func() error { return FocusWorkspace("w1") }, true},
+
+		// Not asking for a thing to be gone, so its being gone is news.
+		{"renaming a pane", func() error { return RenamePane("w1:p2", "shell@bot") }, false},
+		{"reporting an agent", func() error {
+			return ReportAgent("w1:p2", "poorplebs.remote-panes", "claude", AgentState("working"))
+		}, false},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			err := tt.run()
+			if tt.forgive && err != nil {
+				t.Errorf("%s reported a failure for a thing already gone: %v", tt.what, err)
+			}
+			if !tt.forgive && err == nil {
+				t.Errorf("%s said nothing about a pane that was not there", tt.what)
+			}
+		})
+	}
+}
