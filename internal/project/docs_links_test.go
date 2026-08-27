@@ -1,4 +1,4 @@
-package main
+package project
 
 import (
 	"os"
@@ -23,6 +23,8 @@ var markdownLink = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
 // Only relative links are followed. A URL would need the network, which would
 // make the suite fail for reasons that have nothing to do with the change.
 func TestEveryLinkBetweenTheDocsPointsAtSomething(t *testing.T) {
+	inRoot(t)
+
 	pages, err := filepath.Glob("docs/*.md")
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +82,8 @@ func TestTheProseInTheDocsStaysWrapped(t *testing.T) {
 	// The line this was written for ran to 117 columns in the middle of a
 	// paragraph wrapped at 80: an edit that added a clause and never re-flowed
 	// what followed. Nothing reads markdown for shape, so it sat there.
+	inRoot(t)
+
 	for _, page := range docPagesFor(t) {
 		raw, err := os.ReadFile(page)
 		if err != nil {

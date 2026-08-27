@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"encoding/json"
@@ -23,7 +23,7 @@ import (
 
 func commandsInSource(t *testing.T) map[string]bool {
 	t.Helper()
-	raw, err := os.ReadFile("main.go")
+	raw, err := os.ReadFile("cli.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func keysOf(m map[string]bool) []string {
 }
 
 func TestUsageListsEveryCommand(t *testing.T) {
-	raw, err := os.ReadFile("main.go")
+	raw, err := os.ReadFile("cli.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestUsageListsEveryCommand(t *testing.T) {
 }
 
 func TestUsageDoesNotOfferWhatIsNotThere(t *testing.T) {
-	raw, err := os.ReadFile("main.go")
+	raw, err := os.ReadFile("cli.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestUsageDoesNotOfferWhatIsNotThere(t *testing.T) {
 }
 
 func TestUsageDoesNotCallMirroringTheUsualThing(t *testing.T) {
-	raw, err := os.ReadFile("main.go")
+	raw, err := os.ReadFile("cli.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,11 +185,7 @@ func TestTheREADMEShowsWhatVersionActuallyPrints(t *testing.T) {
 	// The README shows the two-line answer with its columns lined up. Written
 	// out by hand it agrees with the code until either label changes, and then
 	// it quietly shows a layout the command has never produced.
-	readme, err := os.ReadFile("README.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(readme)
+	body := readmeText(t)
 	const marker = "$ herdr-remote-panes version\n"
 	i := strings.Index(body, marker)
 	if i < 0 {
@@ -438,14 +434,10 @@ func TestTheREADMEShowsTheVersionOutputThatIsPrinted(t *testing.T) {
 	// only reads if the second column lines up under the first. Padding is the
 	// easiest thing here to change without noticing, and the least likely to
 	// be checked against a README afterwards.
-	readme, err := os.ReadFile("README.md")
-	if err != nil {
-		t.Fatal(err)
-	}
 	// The revisions the README happens to use, taken from what it shows rather
 	// than repeated here, so rewriting the example does not need this changed.
 	shown := regexp.MustCompile(`herdr-remote-panes ([0-9a-f]{7})\ndaemon +([0-9a-f]{7})`).
-		FindStringSubmatch(string(readme))
+		FindStringSubmatch(readmeText(t))
 	if shown == nil {
 		t.Fatal("the README no longer shows the two lines `version` prints")
 	}

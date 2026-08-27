@@ -1,4 +1,4 @@
-package main
+package project
 
 import (
 	"go/ast"
@@ -23,6 +23,8 @@ import (
 // looks fine -- the mistake is only visible from the pair.
 
 func TestEveryDocCommentNamesItsOwnFunction(t *testing.T) {
+	inRoot(t)
+
 	checked := 0
 	err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -88,6 +90,8 @@ func TestEveryPackageSaysWhatItIsFor(t *testing.T) {
 	//
 	// This package had that: the words were written, in the right file, saying
 	// the right thing, and separated from the clause by the import block.
+	inRoot(t)
+
 	seen := map[string]bool{}
 	documented := map[string]bool{}
 

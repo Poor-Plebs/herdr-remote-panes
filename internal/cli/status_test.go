@@ -1,11 +1,13 @@
-package main
+package cli
 
 import (
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/project"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 )
@@ -543,7 +545,14 @@ func TestEveryStateAMachineCanBeInIsInTheREADME(t *testing.T) {
 // readmeText is the README, for tests about what it says.
 func readmeText(t *testing.T) string {
 	t.Helper()
-	raw, err := os.ReadFile("README.md")
+	// From the top of the repository rather than beside this package: the
+	// README is one file for the whole tree, and this test moved out of the
+	// root it used to sit in.
+	root, err := project.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

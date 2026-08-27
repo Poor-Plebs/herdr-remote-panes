@@ -1,4 +1,4 @@
-package main
+package project
 
 import (
 	"os"
@@ -18,6 +18,8 @@ import (
 // fails with "No such file or directory" before anything of ours runs, which
 // reads like the plugin is broken rather than like a missing dependency.
 func TestTheBuildSaysWhenGoIsMissing(t *testing.T) {
+	inRoot(t)
+
 	script, err := os.ReadFile("build.sh")
 	if err != nil {
 		t.Fatal(err)

@@ -1,4 +1,4 @@
-package main
+package project
 
 import (
 	"os"
@@ -31,6 +31,8 @@ import (
 // that would have run it, and forgetting the release steps is how the thing it
 // guards got out three times.
 func TestAnUpgradeHandsTheSocketOver(t *testing.T) {
+	inRoot(t)
+
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "herdr-remote-panes")
 	build := exec.Command("go", "build", "-o", binary, ".")

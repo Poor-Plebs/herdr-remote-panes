@@ -6,7 +6,29 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/project"
 )
+
+// cliSource is where the argument a command was invoked with is dispatched.
+// Named once because these tests read it to find out which commands exist, and
+// it has moved out of the repository root once already.
+const cliSource = "internal/cli/cli.go"
+
+// repoFile names a file at the top of the repository.
+//
+// These tests are about files that live there -- the manifest, the README, the
+// build script -- read from a package two levels down. Asking where the top is
+// rather than counting ".." means moving this package does not silently start
+// reading nothing.
+func repoFile(t *testing.T, name string) string {
+	t.Helper()
+	root, err := project.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(root, name)
+}
 
 // TestManifestDescriptionsDoNotClaimMirroring guards a surface that has no
 // other check on it.
@@ -18,7 +40,7 @@ import (
 // "its mirror panes", which was an accurate description of a bug: it left a
 // plain SSH machine's terminals open.
 func TestManifestDescriptionsDoNotClaimMirroring(t *testing.T) {
-	raw, err := os.ReadFile("../../herdr-plugin.toml")
+	raw, err := os.ReadFile(repoFile(t, "herdr-plugin.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,11 +75,11 @@ func TestManifestListsWhatTheCodeImplements(t *testing.T) {
 	// Every action in the manifest runs this binary with its id as the
 	// argument, so an id here that main does not handle is a menu entry that
 	// fails when picked.
-	manifest, err := os.ReadFile("../../herdr-plugin.toml")
+	manifest, err := os.ReadFile(repoFile(t, "herdr-plugin.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	main, err := os.ReadFile("../../main.go")
+	source, err := os.ReadFile(repoFile(t, cliSource))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +97,7 @@ func TestManifestListsWhatTheCodeImplements(t *testing.T) {
 		// Looked for as a quoted word rather than as "case X", because several
 		// share a case: open and open-tab differ only in the placement they
 		// ask for.
-		if !strings.Contains(string(main), `"`+id+`"`) {
+		if !strings.Contains(string(source), `"`+id+`"`) {
 			t.Errorf("the manifest offers %q but nothing handles it", id)
 		}
 	}
@@ -90,11 +112,11 @@ func TestTheREADMEOnlyBindsActionsThatExist(t *testing.T) {
 	// The README shows keybindings to copy into config.toml. An action id that
 	// does not exist produces a binding that does nothing, and Herdr will not
 	// say why -- the same silence as a keybinding that clashes with a built-in.
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := os.ReadFile("../../herdr-plugin.toml")
+	manifest, err := os.ReadFile(repoFile(t, "herdr-plugin.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +138,7 @@ func TestTheREADMEOnlyBindsActionsThatExist(t *testing.T) {
 // as the argument list it would run.
 func manifestCommands(t *testing.T) (build []string, rest [][]string) {
 	t.Helper()
-	raw, err := os.ReadFile("../../herdr-plugin.toml")
+	raw, err := os.ReadFile(repoFile(t, "herdr-plugin.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +186,7 @@ func TestEveryCommandTheManifestRunsIsOneThisBinaryHas(t *testing.T) {
 	// ours runs -- so the -o is one level down, in what that script does.
 	buildSource := strings.Join(build, " ")
 	if len(build) > 1 && build[0] == "sh" {
-		script, err := os.ReadFile(filepath.Join("..", "..", build[1]))
+		script, err := os.ReadFile(repoFile(t, build[1]))
 		if err != nil {
 			t.Fatalf("the manifest builds with %q and there is no such script: %v", build[1], err)
 		}
@@ -179,13 +201,13 @@ func TestEveryCommandTheManifestRunsIsOneThisBinaryHas(t *testing.T) {
 		t.Fatal("the build does not say where it puts the binary")
 	}
 
-	main, err := os.ReadFile("../../main.go")
+	source, err := os.ReadFile(repoFile(t, cliSource))
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The words main dispatches on, taken from its switch rather than guessed.
 	handled := map[string]bool{}
-	for _, line := range strings.Split(string(main), "\n") {
+	for _, line := range strings.Split(string(source), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if !strings.HasPrefix(trimmed, "case \"") {
 			continue
@@ -216,7 +238,7 @@ func TestTheVersionIsTheSameInBothPlacesItIsWritten(t *testing.T) {
 	// wrong: v0.2.0 was tagged and released with the manifest still saying
 	// 0.1.0, because the release notes had it written down that the README was
 	// the only place a version appears.
-	manifest, err := os.ReadFile("../../herdr-plugin.toml")
+	manifest, err := os.ReadFile(repoFile(t, "herdr-plugin.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +247,7 @@ func TestTheVersionIsTheSameInBothPlacesItIsWritten(t *testing.T) {
 		t.Fatal("the manifest no longer declares a version")
 	}
 
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
