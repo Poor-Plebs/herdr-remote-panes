@@ -54,6 +54,15 @@ type Daemon struct {
 	mu    sync.Mutex
 	hosts map[string]*hostSync
 
+	// configStamp is when the config file was last read, so an edit to it is
+	// noticed. configReadErr is the last complaint about rereading it, so a
+	// file that stays broken is not said every couple of seconds.
+	//
+	// Not configErr below, which is a different thing: that one is the config
+	// this daemon started with being unreadable, and the menu says so.
+	configStamp   time.Time
+	configReadErr string
+
 	// configErr records a configuration that could not be read. The daemon
 	// still runs, so the menu and actions work and can say what is wrong,
 	// rather than everything failing with no visible reason.
@@ -333,6 +342,66 @@ func (d *Daemon) config() config.Config {
 		return *cfg
 	}
 	return config.Config{}
+}
+
+// rereadConfig picks up an edited configuration.
+//
+// The daemon read the file twice in its life: once at startup, and once as a
+// side effect of pressing m, which rereads the whole file to change one
+// machine's mode. So every other setting -- placement, scope, the label format
+// -- was read once and then fixed for the session, while the file said
+// otherwise and the settings table invited people to edit it. Somebody who set
+// placement to "tab" watched terminals keep arriving as splits, and nothing
+// anywhere said why.
+//
+// A mode changed this way needs no special handling: a machine that stops
+// mirroring is already something a pass knows how to deal with, because
+// pressing m does exactly that.
+func (d *Daemon) rereadConfig() {
+	path, err := config.Path()
+	if err != nil {
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		// Gone, or unreadable. What was last read beats nothing, and the next
+		// pass looks again.
+		return
+	}
+
+	d.mu.Lock()
+	changed := info.ModTime().After(d.configStamp)
+	d.mu.Unlock()
+	if !changed {
+		return
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		// Half a file, most likely: saving is not atomic in every editor and a
+		// pass comes round every couple of seconds. Keeping what is loaded and
+		// looking again beats falling back to defaults because somebody was
+		// mid-keystroke. Said once per distinct complaint, since this asks on
+		// every pass.
+		d.mu.Lock()
+		newly := d.configReadErr != err.Error()
+		d.configReadErr = err.Error()
+		d.mu.Unlock()
+		if newly {
+			log.Printf("could not reread the config, keeping the one in use: %v", err)
+		}
+		return
+	}
+
+	d.mu.Lock()
+	d.configStamp = info.ModTime()
+	d.configReadErr = ""
+	d.mu.Unlock()
+	d.setConfig(cfg)
+	for _, problem := range cfg.Problems() {
+		log.Printf("config: %s", problem)
+	}
+	log.Print("the config changed on disk and has been reread")
 }
 
 // setConfig replaces the configuration, for when a mode is toggled.
@@ -1823,6 +1892,9 @@ func (d *Daemon) reconcileAll() {
 }
 
 func (d *Daemon) reconcileOnce() {
+	// Before anything is decided from it.
+	d.rereadConfig()
+
 	d.mu.Lock()
 	states := make([]*hostSync, 0, len(d.hosts))
 	for _, state := range d.hosts {
