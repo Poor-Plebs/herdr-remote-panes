@@ -298,3 +298,32 @@ func TestATabListWithoutTabsIsTakenAsGiven(t *testing.T) {
 		t.Errorf("parsed %v, %v; want the tab it lists", order, err)
 	}
 }
+
+func TestAHerdrThatWillNotStopTalkingIsCutOff(t *testing.T) {
+	// The same bound as the ssh side, and nearer to home: a Herdr printing
+	// without stopping was read into a buffer that grows to fit, until the
+	// command timed out. The daemon runs all day.
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "herdr")
+	script := "#!/bin/sh\nexec yes 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_BIN_PATH", bin)
+
+	started := time.Now()
+	_, err := Run("pane", "list")
+	if err == nil {
+		t.Fatal("a Herdr that never stopped printing was read as an answer")
+	}
+	if !strings.Contains(err.Error(), "cut off") {
+		t.Errorf("failed with %v; want it saying it was cut off", err)
+	}
+	// And gave up when it had enough rather than reading to the deadline. That
+	// half is invisible to the check above, which is how the ssh version of
+	// this passed while doing nothing of the sort.
+	if took := time.Since(started); took > commandTimeout/3 {
+		t.Errorf("took %s out of a %s timeout: it read to the deadline rather "+
+			"than stopping", took, commandTimeout)
+	}
+}

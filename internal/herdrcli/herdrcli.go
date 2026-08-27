@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/capped"
 	"path"
 	"sort"
 	"strings"
@@ -208,19 +210,28 @@ func Run(args ...string) (json.RawMessage, error) {
 	// deadline passed, the process was killed, and this went on waiting.
 	// WaitDelay closes them and gives up shortly after.
 	cmd.WaitDelay = waitDelay
-	var stdout, stderr bytes.Buffer
+	// Bounded for the same reason the ssh side is, and by the same thing: what
+	// is asked for here is a pane listing or an acknowledgement, and a Herdr
+	// printing without stopping would otherwise be held in memory until the
+	// timeout. Nearer to home than a machine on the end of an ssh, and no
+	// better a thing to run out of memory over.
+	stdout, stderr := capped.Writer{Stop: cancel}, capped.Writer{Stop: cancel}
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
+	if stdout.Overran || stderr.Overran {
+		return nil, fmt.Errorf("herdr %s: sent more than %d bytes and was cut off",
+			strings.Join(args, " "), capped.Max)
+	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return nil, fmt.Errorf("herdr %s: timed out after %s",
 			strings.Join(args, " "), commandTimeout)
 	}
 	if err != nil {
-		return nil, RunError(err, args, stderr.Bytes(), stdout.Bytes())
+		return nil, RunError(err, args, stderr.Buf.Bytes(), stdout.Buf.Bytes())
 	}
-	return Decode(stdout.Bytes(), args)
+	return Decode(stdout.Buf.Bytes(), args)
 }
 
 // Decode unwraps a Herdr CLI JSON envelope, surfacing API errors as errors.

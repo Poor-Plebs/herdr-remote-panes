@@ -1,11 +1,12 @@
 package remote
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os/exec"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/capped"
 	"strings"
 	"time"
 )
@@ -32,53 +33,6 @@ var waitDelay = 2 * time.Second
 // system's own timeout.
 const connectTimeout = 10
 
-// maxCommandOutput bounds what one invocation may print back.
-//
-// Everything asked for here is small -- a pane listing, a path, an
-// acknowledgement -- and the buffers it is read into grow to fit whatever
-// arrives. A machine whose Herdr prints without stopping would be held in
-// memory here until the timeout, at whatever rate the link carries, and the
-// daemon is a long-lived process on somebody's laptop.
-//
-// The same size the mirror allows one frame, which is the other place bytes
-// arrive from a machine.
-const maxCommandOutput = 8 * 1024 * 1024
-
-// capped collects up to a limit and counts the rest away.
-//
-// Not an error at the point of writing: the command is still running, and what
-// has already arrived is usually the useful part -- Herdr's refusals are short
-// and come first. The caller is told after.
-type capped struct {
-	buf bytes.Buffer
-	// stop ends the command once there is no point reading more of it.
-	// Without it the cap saves the memory and not the half minute: the command
-	// runs to its timeout while everything it says is counted and thrown away.
-	stop    func()
-	overran bool
-}
-
-func (c *capped) Write(p []byte) (int, error) {
-	if room := maxCommandOutput - c.buf.Len(); room > 0 {
-		if len(p) <= room {
-			return c.buf.Write(p)
-		}
-		if _, err := c.buf.Write(p[:room]); err != nil {
-			return 0, err
-		}
-	}
-	if !c.overran {
-		c.overran = true
-		if c.stop != nil {
-			c.stop()
-		}
-	}
-	// Reported as written, because it was dealt with. Saying otherwise is a
-	// short write, which ends the command with an error about this rather than
-	// about the machine.
-	return len(p), nil
-}
-
 // runCommand runs one SSH invocation and returns what it printed.
 //
 // Both streams come back even when the command failed: Herdr signals a refusal
@@ -96,29 +50,29 @@ func runCommand(argv []string) (stdout, stderr []byte, err error) {
 	// deadline passed, the process was killed, and this went on waiting.
 	// WaitDelay closes them and gives up shortly after.
 	cmd.WaitDelay = waitDelay
-	out, errOut := capped{stop: cancel}, capped{stop: cancel}
+	out, errOut := capped.Writer{Stop: cancel}, capped.Writer{Stop: cancel}
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
 
 	runErr := cmd.Run()
-	if out.overran || errOut.overran {
+	if out.Overran || errOut.Overran {
 		// Before the deadline is considered, because stopping it is what made
 		// the deadline irrelevant and this is the more particular reason.
 		// Whatever it was, it was not an answer: everything asked for here
 		// fits in a fraction of the limit, and the first megabytes of a flood
 		// parse no better than the rest.
-		return out.buf.Bytes(), errOut.buf.Bytes(), fmt.Errorf(
-			"the machine sent more than %d bytes and was cut off", maxCommandOutput)
+		return out.Buf.Bytes(), errOut.Buf.Bytes(), fmt.Errorf(
+			"the machine sent more than %d bytes and was cut off", capped.Max)
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return out.buf.Bytes(), errOut.buf.Bytes(), fmt.Errorf("timed out after %s", commandTimeout)
+		return out.Buf.Bytes(), errOut.Buf.Bytes(), fmt.Errorf("timed out after %s", commandTimeout)
 	}
 	if runErr != nil {
-		msg := strings.TrimSpace(errOut.buf.String())
+		msg := strings.TrimSpace(errOut.Buf.String())
 		if msg == "" {
 			msg = runErr.Error()
 		}
-		return out.buf.Bytes(), errOut.buf.Bytes(), fmt.Errorf("%w: %s", runErr, msg)
+		return out.Buf.Bytes(), errOut.Buf.Bytes(), fmt.Errorf("%w: %s", runErr, msg)
 	}
-	return out.buf.Bytes(), errOut.buf.Bytes(), nil
+	return out.Buf.Bytes(), errOut.Buf.Bytes(), nil
 }
