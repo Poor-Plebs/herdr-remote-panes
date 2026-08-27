@@ -2,6 +2,7 @@ package syncd
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -209,5 +210,72 @@ func TestAMachineGivenUpOnAloneIsNeverRetriedByThePass(t *testing.T) {
 	defer d.mu.Unlock()
 	if !alone.gaveUp {
 		t.Error("a machine with no retry scheduled was tried anyway")
+	}
+}
+
+func TestTheRetrySaysItIsGoingToHappen(t *testing.T) {
+	// The machines still show as unreachable while they wait, so the log line
+	// is the only thing that distinguishes "coming back on its own in five
+	// seconds" from "sitting there until you press something". Nothing held
+	// it: a sweep found that inverting when it is said changes no test.
+	logged := captureLog(t)
+	d := New(machineConfig("bot", "workbox"))
+	states := []*hostSync{downHost("bot"), downHost("workbox")}
+	for _, state := range states {
+		d.hosts[state.host.Target] = state
+	}
+
+	d.scheduleWholePassRetry(states)
+
+	said := logged.String()
+	if !strings.Contains(said, "went down together") {
+		t.Errorf("scheduling a retry said nothing about it: %q", said)
+	}
+	if !strings.Contains(said, "5s") {
+		t.Errorf("the log does not say when it will try again: %q", said)
+	}
+	// Once for the pass, not once per machine: every machine is the case this
+	// is about, so a line each is the same sentence n times.
+	if n := strings.Count(said, "went down together"); n != 1 {
+		t.Errorf("said it %d times for one pass, want once", n)
+	}
+
+	// And nothing more on the passes that follow, which run every couple of
+	// seconds while the machines are still waiting. Saying it again each time
+	// would bury it, and would also be untrue: nothing new was scheduled.
+	before := len(logged.String())
+	for i := 0; i < 3; i++ {
+		d.scheduleWholePassRetry(states)
+	}
+	if got := logged.String(); len(got) != before {
+		t.Errorf("later passes said it again: %q", got[before:])
+	}
+}
+
+func TestTheRetryNamesTheSoonestWait(t *testing.T) {
+	// Machines need not be waiting the same length of time: one that answered
+	// since the last outage starts its backoff again, so it can be waiting five
+	// seconds while another that has been down all along waits five minutes.
+	// Naming whichever came last in the loop would report a wait nothing is
+	// doing -- and the order machines come in is not something a reader
+	// controls.
+	logged := captureLog(t)
+	d := New(machineConfig("bot", "workbox"))
+	fresh, weathered := downHost("bot"), downHost("workbox")
+	weathered.linkRetryStep = 4 // at the ceiling
+	states := []*hostSync{weathered, fresh}
+	for _, state := range states {
+		d.hosts[state.host.Target] = state
+	}
+
+	d.scheduleWholePassRetry(states)
+
+	said := logged.String()
+	if !strings.Contains(said, "in 5s") {
+		t.Errorf("with one machine due in 5s and another in 5m, the log says %q", said)
+	}
+	// Each still gets its own wait; only what is said is the soonest.
+	if wait := time.Until(weathered.linkRetryAt); wait < 4*time.Minute {
+		t.Errorf("the machine at the ceiling was rescheduled for %s, want its own wait", wait)
 	}
 }

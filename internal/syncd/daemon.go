@@ -1749,14 +1749,22 @@ func (d *Daemon) scheduleWholePassRetry(states []*hostSync) {
 	// Only the ones not already waiting. This runs every pass, so rescheduling
 	// a machine that is already counting down would push the retry further
 	// away every couple of seconds and it would never arrive.
-	var wait time.Duration
+	// The soonest of them, which is what "trying again in" means to somebody
+	// reading it. They need not agree: a machine that answered since the last
+	// outage starts its backoff again, so one can be waiting five seconds
+	// while another is waiting five minutes. Reporting whichever happened to
+	// come last would name a wait nothing is actually doing.
+	soonest := time.Duration(0)
 	scheduled := 0
 	now := time.Now()
 	for _, state := range states {
 		if !state.linkRetryAt.IsZero() {
 			continue
 		}
-		wait = planAutoRetryWait(state.linkRetryStep)
+		wait := planAutoRetryWait(state.linkRetryStep)
+		if scheduled == 0 || wait < soonest {
+			soonest = wait
+		}
 		state.linkRetryAt = now.Add(wait)
 		state.linkRetryStep++
 		scheduled++
@@ -1767,7 +1775,7 @@ func (d *Daemon) scheduleWholePassRetry(states []*hostSync) {
 	// Once for the pass rather than once per machine: every machine is the
 	// case this is about, so a line each is the same sentence n times.
 	log.Printf("all %d machines went down together, which is usually this end "+
-		"rather than them; trying again in %s", len(states), wait)
+		"rather than them; trying again in %s", len(states), soonest)
 }
 
 // recordReconcile updates a machine's health from one reconcile pass, and
