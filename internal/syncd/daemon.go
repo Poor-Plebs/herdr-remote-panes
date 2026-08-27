@@ -16,6 +16,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -173,6 +174,20 @@ type hostSync struct {
 	// restoreShells is how many plain SSH terminals this host had before the
 	// daemon restarted, used to bring the connection back.
 	restoreShells int
+	// restoreShellsAs is how each of those terminals was placed, consumed one
+	// at a time as they come back. Empty means place them the machine's usual
+	// way, which is what a snapshot from a daemon that did not record this
+	// leaves behind.
+	restoreShellsAs []string
+	// shellPlacement is how each live plain terminal was placed, in the order
+	// they were opened, so the list above can be written at all.
+	//
+	// In order, and a slice rather than a map, because the order is the whole
+	// point: the first terminal restored goes into an empty space and becomes
+	// a tab whatever it asked for, so restoring a split before the tab it
+	// belonged in puts them in the wrong places. A map gives no order, and
+	// sorting by pane id is not the order they were opened in.
+	shellPlacement []shellPlace
 
 	// adopted marks that the first reconcile after a restart has run. Until it
 	// does, mirrors restored from the snapshot whose panes are gone are stale
@@ -1094,6 +1109,7 @@ func (d *Daemon) openShellPane(state *hostSync, placement string, focus bool) er
 	}
 	index.add(pane)
 	state.shellPanes[pane.PaneID] = true
+	state.shellPlacement = append(state.shellPlacement, shellPlace{pane.PaneID, placement})
 	d.retitle(state, pane.PaneID, label)
 	d.retireRootPane(workspaceID, index)
 	return nil
@@ -1276,6 +1292,7 @@ func restoreFromSnapshot(state *hostSync, saved hostSnapshot) {
 		state.placement[terminalID] = where
 	}
 	state.restoreShells = saved.Shells
+	state.restoreShellsAs = append([]string(nil), saved.ShellPlacements...)
 }
 
 // prepareRemote makes sure the host has a Herdr session answering, starting one
@@ -1915,7 +1932,15 @@ func (d *Daemon) reconcileOnce() {
 			// Never focused: a link coming back is not a request to go
 			// there, and somebody may be working elsewhere.
 			d.mu.Lock()
-			err := d.openShellPane(state, "", false)
+			// However this one was placed before the restart. Without it every
+			// restored terminal takes the machine's usual placement, and a set
+			// of tabs comes back as one tab with all of them split inside it.
+			where := ""
+			if len(state.restoreShellsAs) > 0 {
+				where = state.restoreShellsAs[0]
+				state.restoreShellsAs = state.restoreShellsAs[1:]
+			}
+			err := d.openShellPane(state, where, false)
 			d.mu.Unlock()
 			if err != nil {
 				log.Printf("reopen terminal on %s: %v", host.Target, err)
@@ -1942,11 +1967,18 @@ func (d *Daemon) persist() {
 		for terminalID, where := range state.placement {
 			placement[terminalID] = where
 		}
+		// In the order they were opened, which is the order they have to come
+		// back in.
+		shellPlacements := make([]string, 0, len(state.shellPlacement))
+		for _, shell := range state.shellPlacement {
+			shellPlacements = append(shellPlacements, shell.where)
+		}
 		current.Hosts[target] = hostSnapshot{
-			Mirrors:   mirrors,
-			Dismissed: dismissed,
-			Shells:    len(state.shellPanes),
-			Placement: placement,
+			Mirrors:         mirrors,
+			Dismissed:       dismissed,
+			Shells:          len(state.shellPanes),
+			ShellPlacements: shellPlacements,
+			Placement:       placement,
 		}
 	}
 	// What the last daemon recorded about machines this one has not reached.
@@ -2625,10 +2657,18 @@ func (d *Daemon) retitle(state *hostSync, paneID, label string) {
 
 // forgetPane drops everything remembered about a pane that has gone, so a
 // recycled id starts clean.
+// shellPlace is one plain terminal and how it was placed.
+type shellPlace struct {
+	paneID string
+	where  string
+}
+
 func (d *Daemon) forgetPane(state *hostSync, paneID string) {
 	delete(state.labels, paneID)
 	delete(state.reportedAgents, paneID)
 	delete(state.shellPanes, paneID)
+	state.shellPlacement = slices.DeleteFunc(state.shellPlacement,
+		func(s shellPlace) bool { return s.paneID == paneID })
 	delete(d.seenStray, paneID)
 	mirror.ClearLive(paneID)
 	mirror.ClearFailed(paneID)

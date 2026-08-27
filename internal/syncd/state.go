@@ -157,7 +157,15 @@ type hostSnapshot struct {
 	Dismissed []string `json:"dismissed,omitempty"`
 	// Shells is how many plain SSH terminals this machine had open, so a
 	// restart restores the connection rather than leaving an empty sidebar.
+	//
+	// Kept for the snapshots older daemons wrote, which have this and no
+	// ShellPlacements. A count is all they can say.
 	Shells int `json:"shells,omitempty"`
+	// ShellPlacements is how each of those terminals was placed, one entry per
+	// terminal, so a restart restores the arrangement and not only the number.
+	// A plain SSH machine has no Herdr on it and so no terminal ids: there is
+	// nothing to key these against, and a list in open order is what there is.
+	ShellPlacements []string `json:"shell_placements,omitempty"`
 	// Placement is how a terminal's mirror was asked to be placed, for the
 	// terminals somebody asked about. Without it a restart places them by the
 	// machine's ordinary setting, and a tab comes back a split.
