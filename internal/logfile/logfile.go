@@ -20,6 +20,9 @@ type File struct {
 	max     int64
 	file    *os.File
 	written int64
+	// closed is set by Close, so a log shut on purpose is not reopened by
+	// the next write the way one that failed to open is.
+	closed bool
 }
 
 // Open prepares a log at path, continuing an existing one.
@@ -34,6 +37,11 @@ func Open(path string, max int64) (*File, error) {
 func (f *File) open() error {
 	file, err := os.OpenFile(f.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
+		// Nothing to write to, and say so. Leaving the handle that was there
+		// means writing to a closed file for the rest of the session -- the
+		// nil check below passes, every write fails, and nothing says why.
+		// That is the silent death this package exists to avoid.
+		f.file = nil
 		return err
 	}
 	f.file = file
@@ -48,8 +56,20 @@ func (f *File) Write(p []byte) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if f.file == nil {
+	if f.closed {
 		return len(p), nil
+	}
+	if f.file == nil {
+		// Opening failed at some point. Try again rather than never: a full
+		// disk empties, a directory comes back, and a log that gives up the
+		// first time is one that is missing for the rest of the session --
+		// which is exactly when somebody goes looking for it.
+		if err := f.open(); err != nil {
+			// Still nothing. Drop the message rather than fail the caller:
+			// this is a log, and what writes to it has better things to do
+			// than deal with the log's problems.
+			return len(p), nil
+		}
 	}
 	if f.written+int64(len(p)) > f.max {
 		if err := f.rotate(); err != nil {
@@ -90,5 +110,9 @@ func (f *File) Close() error {
 	}
 	err := f.file.Close()
 	f.file = nil
+	// Deliberately, which is different from having nothing to write to: a
+	// closed log stays closed rather than reopening itself on the next line
+	// somebody logs.
+	f.closed = true
 	return err
 }
