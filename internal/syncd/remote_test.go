@@ -3322,3 +3322,45 @@ func labelsHere(state fakeHerdr, target string) string {
 	sort.Strings(out)
 	return strings.Join(out, " ")
 }
+
+func TestReconnectingEverythingRevivesMachinesThatGaveUp(t *testing.T) {
+	// The shape of a laptop coming back from sleep, or a VPN reconnecting:
+	// every machine goes at once, each is retried, each fails the same way,
+	// and all of them are given up on within a few seconds. Nothing is wrong
+	// with any of them by the time somebody looks.
+	//
+	// Connecting with no machine named is the way back for all of them at
+	// once, rather than picking each from the menu in turn -- which is what
+	// the README used to say, and is one press per machine.
+	withFakeHerdr(t)
+	dialled := withUnreachableMachine(t)
+
+	d := New(machineConfig("bot", "prod", "ci"))
+	d.dispatch(Command{Cmd: "connect"})
+	for i := 0; i < 10; i++ {
+		d.reconcileAll()
+	}
+
+	given := 0
+	for _, h := range d.status() {
+		if h.GaveUp {
+			given++
+		}
+	}
+	if given != 3 {
+		t.Fatalf("%d machines gave up, want all 3 so there is something to revive", given)
+	}
+	settled := dialled()
+
+	d.dispatch(Command{Cmd: "connect"})
+
+	for _, h := range d.status() {
+		if h.GaveUp {
+			t.Errorf("%s is still given up on after reconnecting everything", h.Target)
+		}
+	}
+	// And each was actually tried again, rather than only being marked as if.
+	if tried := dialled() - settled; tried < 3 {
+		t.Errorf("reconnecting everything dialled %d times for 3 machines", tried)
+	}
+}

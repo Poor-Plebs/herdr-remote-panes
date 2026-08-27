@@ -451,9 +451,17 @@ this is quick on purpose: a machine that is genuinely gone stops being asked
 about within a few seconds rather than filling the log for the rest of the
 session. The cost is that a network away for longer than that — a laptop coming
 back from sleep, a VPN reconnecting — is long enough for its machines to stop
-too. They are not lost: pick each from the menu and press enter, which is what
-"connect again to retry" means. Raising `poll_interval` lengthens the fuse if
-you would rather wait than reconnect.
+too. They are not lost, and after a sleep it is usually all of them, so there is a
+way back for all of them at once — the connect action with no machine named
+reconnects every one you have configured, given up on or not:
+
+```bash
+herdr plugin action invoke poorplebs.remote-panes.connect
+```
+
+Worth binding to a key if you close the lid often. For one machine, pick it from
+the menu and press enter, which is what "connect again to retry" means. Raising
+`poll_interval` lengthens the fuse if you would rather wait than reconnect.
 
 The most common of them is a changed host key:
 
