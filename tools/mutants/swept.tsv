@@ -19,7 +19,7 @@
 ./internal/mirror (mousegate.go)	2026-08-27	31	25	6	0
 ./internal/picker	2026-08-27	5	5	0	0
 ./internal/project	2026-08-27	3	3	0	0
-./internal/remote	2026-08-27	51	50	1	0
+./internal/remote	2026-08-28	6	5	1	1
 ./internal/sshconfig	2026-08-27	2	2	0	0
 ./internal/syncd	2026-08-27	14	14	0	0
 ./internal/syncd (daemon.go)	2026-08-27	6	5	1	0
