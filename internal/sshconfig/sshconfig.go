@@ -4,6 +4,8 @@ package sshconfig
 
 import (
 	"bufio"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,6 +21,31 @@ func Path() string {
 		return ""
 	}
 	return filepath.Join(home, ".ssh", "config")
+}
+
+// Unreadable reports why the SSH config could not be read, when it is there and
+// cannot be.
+//
+// Hosts returns nothing in that case, which is also what it returns for the
+// ordinary case of somebody having no SSH config at all -- so a file that is
+// there and unreadable emptied the menu of every machine it knows about and
+// said nothing. A file that is not there is not a problem and this stays quiet
+// about it.
+func Unreadable() string {
+	path := Path()
+	if path == "" {
+		return ""
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// No SSH config, which is ordinary.
+			return ""
+		}
+		return err.Error()
+	}
+	_ = file.Close()
+	return ""
 }
 
 // Hosts returns the concrete host aliases declared in the SSH config, in the

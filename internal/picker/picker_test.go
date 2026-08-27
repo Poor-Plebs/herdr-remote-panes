@@ -936,3 +936,38 @@ func TestStatusWarnsWhenNothingIsAnswering(t *testing.T) {
 		t.Errorf("the menu does not say the daemon is not running: %q", warning)
 	}
 }
+
+func TestTheMenuSaysWhenItCouldNotReadTheSSHConfig(t *testing.T) {
+	// A machine missing from the menu because a file could not be read looks
+	// exactly like a machine somebody deleted. The reading side knows the
+	// difference; whether the menu shows it was held by nothing, so taking the
+	// line out again left every test here passing.
+	if os.Geteuid() == 0 {
+		t.Skip("needs a file the running user cannot read")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"),
+		[]byte("Host bot\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", t.TempDir())
+
+	entries, warning := collect()
+
+	// The premise: it really is unreadable, so bot is not in the list.
+	for _, e := range entries {
+		if e.Target == "bot" {
+			t.Fatal("the config was readable after all; this proves nothing")
+		}
+	}
+	if !strings.Contains(warning, ".ssh/config") {
+		t.Errorf("the menu does not say the SSH config could not be read: %q", warning)
+	}
+	if !strings.Contains(warning, "permission denied") {
+		t.Errorf("the warning does not say what stopped it: %q", warning)
+	}
+}

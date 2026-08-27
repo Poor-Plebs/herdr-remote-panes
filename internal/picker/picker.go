@@ -424,6 +424,13 @@ func collect() ([]Entry, string) {
 		}
 	}
 
+	// A machine missing from this list because a file could not be read looks
+	// exactly like a machine somebody deleted. Said here rather than left to be
+	// worked out from an emptier menu than yesterday's.
+	if why := sshconfig.Unreadable(); why != "" {
+		warning = bothWarnings(warning, "could not read "+sshconfig.Path()+": "+why)
+	}
+
 	hosts, stale := status()
 	// Worth saying where machines are picked: an update that has not taken
 	// effect looks exactly like a fix that did not work.
