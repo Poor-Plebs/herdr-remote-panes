@@ -218,6 +218,18 @@ a Herdr that restarted. It used to keep it only until then, and came back placed
 the machine's usual way, so a set of tabs turned into one tab with all of them
 split inside it some time after you made them.
 
+**A mirror that dies without saying why is read as a tab you closed.** The
+bridge behind a mirrored pane records a failure on its way out, which is how a
+dropped connection is told from a tab somebody shut — but a process killed
+outright records nothing, and neither does one Herdr stops without warning. That
+looks exactly like a close, so with `close_propagates` on the terminal goes on
+the machine too.
+
+It takes a `kill -9` of a mirror pane's process, or something equivalent, to get
+there. The protection against the larger version — every pane vanishing at once,
+because Herdr restarted — is that a new daemon does not treat panes it has never
+seen as closed, and a Herdr restart takes the daemon with it.
+
 **Closing a mirrored tab closes the terminal on the machine.** Mirroring is
 two-way, and closing is part of it: the tab goes here and the terminal goes
 there, with whatever was running in it. That is `close_propagates`, and it is
