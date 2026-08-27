@@ -1,6 +1,6 @@
 id = "poorplebs.remote-panes"
 name = "Remote Panes"
-version = "0.4.0"
+version = "0.4.1"
 min_herdr_version = "0.8.0"
 description = "Work on other machines from one Herdr: pick a machine, get a terminal on it. Optional two-way mirroring."
 platforms = ["linux", "macos"]
