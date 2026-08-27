@@ -178,6 +178,18 @@ type hostSync struct {
 	// be reached at all.
 	failCount int
 	gaveUp    bool
+	// linkRetryAt is when a machine given up on may try again by itself, and is
+	// only ever set when every machine went down together. Zero means it waits
+	// to be connected to, which is what a machine that failed on its own does.
+	//
+	// Not the retryAt above: that one backs off a single terminal whose mirror
+	// will not start, and is per terminal. This is the whole machine, and is
+	// about the link to it.
+	linkRetryAt time.Time
+	// linkRetryStep is how many automatic retries this machine has already had,
+	// so a link that stays down backs off instead of retrying every few seconds
+	// for as long as it lasts.
+	linkRetryStep int
 	// lastReopen is when a terminal was last opened again, which is how long
 	// the current one has had to stay up.
 	lastReopen time.Time
@@ -1228,6 +1240,8 @@ func (d *Daemon) connect(host config.Host) error {
 	state.shellFailures = 0
 	state.lastReopen = time.Time{}
 	state.gaveUp = false
+	state.linkRetryAt = time.Time{}
+	state.linkRetryStep = 0
 	return connectErr
 }
 
@@ -1680,6 +1694,47 @@ func (c *coalescer) run(job func()) {
 	}
 }
 
+// scheduleWholePassRetry gives every machine another go, later, when they all
+// went down in the same pass.
+func (d *Daemon) scheduleWholePassRetry(states []*hostSync) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	pass := make([]passResult, 0, len(states))
+	for _, state := range states {
+		pass = append(pass, passResult{
+			gaveUp:  state.gaveUp,
+			settled: settledFailure(state.lastErr),
+		})
+	}
+	if !planWholePassRetry(pass) {
+		return
+	}
+
+	// Only the ones not already waiting. This runs every pass, so rescheduling
+	// a machine that is already counting down would push the retry further
+	// away every couple of seconds and it would never arrive.
+	var wait time.Duration
+	scheduled := 0
+	now := time.Now()
+	for _, state := range states {
+		if !state.linkRetryAt.IsZero() {
+			continue
+		}
+		wait = planAutoRetryWait(state.linkRetryStep)
+		state.linkRetryAt = now.Add(wait)
+		state.linkRetryStep++
+		scheduled++
+	}
+	if scheduled == 0 {
+		return
+	}
+	// Once for the pass rather than once per machine: every machine is the
+	// case this is about, so a line each is the same sentence n times.
+	log.Printf("all %d machines went down together, which is usually this end "+
+		"rather than them; trying again in %s", len(states), wait)
+}
+
 // recordReconcile updates a machine's health from one reconcile pass, and
 // reports whether that pass was the one that gave up on it.
 //
@@ -1699,6 +1754,11 @@ func recordReconcile(state *hostSync, err error) (gaveUp bool) {
 		}
 		return false
 	}
+	// Whatever else this pass meant, the machine answered: the next time the
+	// link goes it starts at five seconds again rather than wherever the last
+	// outage left the backoff.
+	state.linkRetryStep = 0
+	state.linkRetryAt = time.Time{}
 	if !state.sshOnly {
 		state.lastErr = nil
 		state.failCount = 0
@@ -1767,7 +1827,16 @@ func (d *Daemon) reconcileOnce() {
 				return
 			}
 			if state.gaveUp {
-				return
+				if state.linkRetryAt.IsZero() || time.Now().Before(state.linkRetryAt) {
+					return
+				}
+				// Due. Given up on when everything was down, which says the
+				// link here was the trouble rather than the machine -- so it
+				// gets another go without being asked, with a full budget of
+				// attempts as though it had just been connected to.
+				state.linkRetryAt = time.Time{}
+				state.gaveUp = false
+				state.failCount = 0
 			}
 			err := d.reconcileHost(state, index)
 			if err != nil && (state.lastErr == nil || state.lastErr.Error() != err.Error()) {
@@ -1788,6 +1857,8 @@ func (d *Daemon) reconcileOnce() {
 		}(state)
 	}
 	wg.Wait()
+
+	d.scheduleWholePassRetry(states)
 
 	// Outside the lock: capturing a stray opens a terminal on the machine,
 	// which takes the lock again.

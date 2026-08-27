@@ -266,6 +266,15 @@ that does not resolve, a key the machine will not take — gets none, because th
 second try would fail in exactly the same way. Fix whatever is wrong and pick
 the machine from the menu, which is how you say "try now".
 
+**Unless every machine goes at once**, which is not about the machines. A lid
+closing or a VPN dropping fails all of them in the same pass, so that case
+retries itself: 5s, then 15s, 45s, and on up to every 5 minutes for as long as
+it takes. They still show as unreachable in the meantime, and you can still
+press enter on one to try it now. A machine that fails while the others are
+fine has something wrong with *it* and waits for you, as above — and if any of
+them failed for a reason that will not clear on its own, none of it retries,
+because that is not a link that went away.
+
 **Who else can see your space on a machine.** The space this plugin makes there
 is named after *your* machine, so two people mirroring the same remote each get
 their own and neither mirrors the other's — that is what `scope` being `shared`
@@ -485,9 +494,13 @@ this is quick on purpose: a machine that is genuinely gone stops being asked
 about within a few seconds rather than filling the log for the rest of the
 session. The cost is that a network away for longer than that — a laptop coming
 back from sleep, a VPN reconnecting — is long enough for its machines to stop
-too. They are not lost, and after a sleep it is usually all of them, so there is a
-way back for all of them at once — the connect action with no machine named
-reconnects every one you have configured, given up on or not:
+too. After a sleep it is usually all of them, and that is the case the daemon
+retries on its own — 5s, 15s, 45s, up to every 5 minutes — so a lid closing
+mostly sorts itself out while you are opening it.
+
+To not wait, there is a way back for all of them at once: the connect action
+with no machine named reconnects every one you have configured, given up on or
+not:
 
 ```bash
 herdr plugin action invoke poorplebs.remote-panes.connect

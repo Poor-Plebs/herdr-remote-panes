@@ -379,6 +379,62 @@ const maxHostAttempts = 2
 // costs another DNS wait, and a changed host key another fifteen-line banner in
 // the log -- and it delays saying the one thing worth saying, which is what to
 // go and fix.
+// passResult is what one machine did in one reconcile pass, reduced to the two
+// things that decide whether the pass says something about the machines or
+// about the link to them.
+type passResult struct {
+	gaveUp  bool
+	settled bool
+}
+
+// planWholePassRetry reports whether a pass failed in the way that means the
+// trouble is at this end.
+//
+// A laptop waking up fails every machine in the same pass, because the link is
+// not back yet. Each one counted its own failures, reached the limit, and was
+// given up on -- so closing a lid cost every machine at once, and each of them
+// needed an explicit connect to come back.
+//
+// One machine failing while others are fine says something about that machine
+// and is left alone. Every machine failing together says something about here.
+//
+// A settled failure anywhere makes it neither: a changed host key does not
+// clear on its own, so a pass holding one is not the link going away and
+// retrying it would spin.
+func planWholePassRetry(hosts []passResult) bool {
+	if len(hosts) == 0 {
+		return false
+	}
+	for _, host := range hosts {
+		if !host.gaveUp || host.settled {
+			return false
+		}
+	}
+	return true
+}
+
+// planAutoRetryWait is how long to wait before the nth automatic retry.
+//
+// Tripling, because the two things it has to cover are far apart: a link that
+// is back in seconds, and one that is not back for an hour. Starting short
+// catches the first without making the second a machine that reconnects every
+// five seconds all afternoon.
+func planAutoRetryWait(step int) time.Duration {
+	wait := autoRetryFirst
+	for i := 0; i < step; i++ {
+		wait *= 3
+		if wait >= autoRetryCeiling {
+			return autoRetryCeiling
+		}
+	}
+	return wait
+}
+
+const (
+	autoRetryFirst   = 5 * time.Second
+	autoRetryCeiling = 5 * time.Minute
+)
+
 func planGiveUp(consecutiveFailures int, err error) bool {
 	if settledFailure(err) {
 		return true
