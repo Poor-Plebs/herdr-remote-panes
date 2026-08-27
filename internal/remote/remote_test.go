@@ -588,3 +588,49 @@ func TestStartingASessionThatWorksSaysNothing(t *testing.T) {
 		t.Errorf("starting a session on a machine that accepted it failed: %v", err)
 	}
 }
+
+func TestAMachineThatWillNotStopTalkingIsCutOff(t *testing.T) {
+	// Everything asked over ssh here is small, and what it prints was read
+	// into a buffer that grows to fit. A machine printing without stopping
+	// would be held in memory until the timeout, at whatever rate the link
+	// carries -- and this is a long-lived process on somebody's laptop.
+	dir := t.TempDir()
+	// More than the limit, as fast as the shell will produce it.
+	script := "#!/bin/sh\n" +
+		"last=\"\"; for a in \"$@\"; do last=\"$a\"; done\n" +
+		"case \"$last\" in *command\\ -v\\ herdr*) echo /usr/bin/herdr; exit 0;; esac\n" +
+		"exec yes 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	done := make(chan error, 1)
+	started := time.Now()
+	go func() {
+		_, err := New("bot", "").PaneList()
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a machine that never stopped printing was read as an answer")
+		}
+		if !strings.Contains(err.Error(), "cut off") {
+			t.Errorf("failed with %v; want it saying the machine was cut off", err)
+		}
+	case <-time.After(commandTimeout + 15*time.Second):
+		t.Fatal("still reading; the output is not bounded and neither is the memory")
+	}
+
+	// And it stopped when it had enough, rather than reading and discarding
+	// until the deadline. Capping the memory without ending the command leaves
+	// the daemon's lock held for the whole timeout on a machine that is saying
+	// nothing useful -- which is the cost this is really about, and it is
+	// invisible to an assertion about the error alone.
+	if took := time.Since(started); took > commandTimeout/3 {
+		t.Errorf("took %s to give up on a machine that overran, out of a %s "+
+			"timeout: it read to the deadline rather than stopping", took, commandTimeout)
+	}
+}
