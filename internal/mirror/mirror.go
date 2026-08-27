@@ -316,7 +316,12 @@ func attach(client *remote.Client, terminal string) error {
 
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
+	// Through the gate: the attach client turns mouse reporting on for itself
+	// in its handshake, which leaves the pane unable to select text. What the
+	// far side asks for afterwards is its own business and passes through.
+	gate := newMouseGate(os.Stdout)
+	defer gate.flush()
+	cmd.Stdout = gate
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("%w running: %s", err, describeCommand(argv))

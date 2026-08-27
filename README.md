@@ -589,20 +589,31 @@ says so if it finds one of the other two.
   bot  2 ssh  mirroring off: no herdr found on the machine — set herdr_bin if it is installed elsewhere there
 ```
 
-**The mouse selects no text in a mirrored tab.** Those tabs are a terminal on
-the other machine, and its Herdr asks for mouse events the way yours does — so
-your terminal hands every click and drag to the far side instead of selecting
-with them. The far side does have a selection; you just cannot see it, because
-it belongs to a Herdr you are not looking at.
+**The mouse selects no text in a mirrored tab.** Fixed — but if you are on a
+version before this was, here is what it was and why it looked so odd.
 
-Hold **shift** while dragging. Most terminals, Ghostty included, take the mouse
-back for their own selection while it is held, and that selection is the one
-you can copy. It is not particular to this plugin: any full-screen program that
-asks for the mouse — over ssh, in tmux, in vim — behaves the same way.
+`herdr terminal attach`, which is how a mirrored tab is fed, turns mouse
+reporting on for itself in its opening handshake: `?1000h`, `?1002h`, `?1003h`,
+`?1015h`, `?1006h`, all five, before anything on the machine has asked for any
+of them. `?1003h` is the worst of them, reporting every movement. With those on
+your terminal gives every drag to the far side, so a drag that was only ever
+going to be a selection never reaches your terminal at all — and you have to
+hold whatever key it uses to take the mouse back, Ctrl in Ghostty, shift in
+most others.
 
-Only mirrored tabs do this, because only they are handed to a Herdr on another
-machine. A plain SSH terminal from this plugin selects normally unless
-something you ran in it asks for the mouse itself.
+Which is why the same machine behaved one way through this plugin and another
+way through a terminal: ssh to it and run `herdr` and you are in Herdr's own
+interface, which does not do this. Only `terminal attach` does.
+
+The plugin now drops those five, and only those five, and only from the
+handshake. Anything the far side asks for afterwards is passed through
+untouched — run vim or htop over there and its mouse works as it always did,
+because it turns the mouse on in its own output rather than in Herdr's
+handshake. So the mouse belongs to whatever is using it, and to your terminal
+when nothing is.
+
+A plain SSH terminal from this plugin was never affected: nothing sits between
+it and the machine.
 
 A pane is not left that way once the mirror ends, whichever way it ends.
 
