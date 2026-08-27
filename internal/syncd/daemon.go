@@ -2163,7 +2163,14 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 			// Restored. Forgetting the count matters: without it, closing one
 			// of them afterwards would look like another to restore, and it
 			// would come back.
+			//
+			// The placements go with it. They are consumed one per terminal
+			// opened, and a terminal that was still there is counted without
+			// opening one -- so finishing can leave placements nobody used.
+			// Kept, the next restore starts by placing a terminal the way
+			// something else was placed, before whatever it did itself.
 			state.restoreShells = 0
+			state.restoreShellsAs = nil
 		}
 
 		for paneID := range state.shellPanes {

@@ -162,3 +162,39 @@ func TestASnapshotFromAnOlderDaemonStillRestoresItsTerminals(t *testing.T) {
 			state.restoreShellsAs)
 	}
 }
+
+func TestFinishingARestoreForgetsThePlacementsWithTheCount(t *testing.T) {
+	// The count and the list are two records of one thing and can disagree.
+	// Placements are spent one per terminal opened, and a terminal that was
+	// still there is counted without opening one -- so a restore can finish
+	// with placements nobody used. planShellsToRestore takes the count from
+	// zero back to one when a machine that had panes stops mirroring, and the
+	// next terminal would then be placed the way something else was.
+	held := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+
+	d.mu.Lock()
+	state := d.hosts["bot"]
+	// A restore that will finish with one of its terminals already there.
+	state.restoreShells = 1
+	state.restoreShellsAs = []string{"tab", "tab"}
+	d.mu.Unlock()
+
+	for i := 0; i < 4; i++ {
+		d.reconcileAll()
+	}
+	_ = held()
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if state.restoreShells != 0 {
+		t.Fatalf("the restore did not finish: %d left", state.restoreShells)
+	}
+	if len(state.restoreShellsAs) != 0 {
+		t.Errorf("a finished restore still holds %q, which the next one would spend "+
+			"on a terminal that never asked for it", state.restoreShellsAs)
+	}
+}
