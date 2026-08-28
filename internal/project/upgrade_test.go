@@ -154,8 +154,17 @@ func previousRelease(t *testing.T) string {
 	// a clone that cannot answer the question rather than a tree that was
 	// never asked to.
 	if err := exec.Command("git", "rev-parse", "--git-dir").Run(); err != nil {
-		t.Skip("not a git repository, so there is no release to upgrade from; " +
-			"CI checks out with fetch-depth: 0 and does run this")
+		if os.Getenv("CI") != "" {
+			// The claim that CI runs this has to be enforceable, or it is the
+			// same silent skip in a better disguise: nothing in a test run
+			// without -v distinguishes a check that passed from one that was
+			// not run. A checkout there without a repository is the checkout
+			// being wrong, not a tree with nothing to answer.
+			t.Fatal("no git repository in CI, so the upgrade check did not run; " +
+				"actions/checkout needs fetch-depth: 0")
+		}
+		t.Skip("not a git repository, so there is no release to upgrade from " +
+			"(this is the mutation sweep's copy of the tree; CI fails instead)")
 	}
 	// A particular jump can be asked for, which is how somebody several
 	// versions behind can be told whether their upgrade works rather than
