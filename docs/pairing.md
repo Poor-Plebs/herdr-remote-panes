@@ -58,6 +58,14 @@ type, and swapping means both of you editing config. If you both choose
 `takeover`, which is a takeover war rather than a handover. And nothing on
 either side shows who is driving.
 
+One more thing the watcher gives up, which is not obvious from the setting's
+name: `observe` streams the screen as rendered rather than the bytes that drew
+it. Mode changes are applied on the machine and never travel, so a program that
+asks for the mouse -- vim, htop, anything with a pane to click in -- does not
+get it on the watching side, where the attached side does. Measured against
+Herdr 0.8.2: running `printf '\e[?1000h'` in an observed terminal echoes its
+output and the sequence itself never appears in the stream.
+
 What the watcher can still do, today, is push into a terminal without taking it:
 `herdr pane run <pane-id> <command>` on the machine itself. That is the piece
 the design is built around.
