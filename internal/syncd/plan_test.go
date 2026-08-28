@@ -2174,7 +2174,7 @@ func TestSharedPanesFilterOutEverythingWhenTheSpaceIsWrong(t *testing.T) {
 	}
 }
 
-// perTerminalMaps names what hostSync remembers per terminal, which
+// perTerminalFields names what hostSync remembers per terminal, which
 // forgetTerminals has to clear when that terminal goes. One list, read by the
 // test that checks each one is cleared and by the guard that checks a newly
 // added field is in some list at all.
@@ -2184,9 +2184,17 @@ func TestSharedPanesFilterOutEverythingWhenTheSpaceIsWrong(t *testing.T) {
 // added to the fixture -- so forgetTerminals was never once called with a
 // placement in it. Inverting its loop, to keep what is gone and drop what is
 // still there, passed the entire suite.
-var perTerminalMaps = []string{
+var perTerminalFields = []string{
 	"dismissed", "abandoned", "failures", "retryAt",
 	"pendingPlacement", "pendingFocus", "placement",
+}
+
+// perPaneFields is the same for what is remembered per pane, which forgetPane
+// clears. A slice is in here with the maps: where the order was needed one of
+// these was moved from a map to a slice, and the shape a thing is remembered
+// in has nothing to do with whether it has to be forgotten.
+var perPaneFields = []string{
+	"labels", "reportedAgents", "shellPanes", "shellPlacement",
 }
 
 func TestNothingIsRememberedAboutATerminalThatIsGone(t *testing.T) {
@@ -2211,10 +2219,10 @@ func TestNothingIsRememberedAboutATerminalThatIsGone(t *testing.T) {
 	// left out of it. That is the failure that hid placement: a map nobody
 	// puts a terminal into is a map forgetTerminals is never asked about.
 	value := reflect.ValueOf(state).Elem()
-	for _, name := range perTerminalMaps {
+	for _, name := range perTerminalFields {
 		field := value.FieldByName(name)
 		if !field.IsValid() || field.Kind() != reflect.Map {
-			t.Fatalf("perTerminalMaps names %s, which is not a map on hostSync", name)
+			t.Fatalf("perTerminalFields names %s, which is not a map on hostSync", name)
 		}
 		if field.Len() != 2 {
 			t.Fatalf("the fixture never puts a terminal in %s, so forgetTerminals "+
@@ -2225,7 +2233,7 @@ func TestNothingIsRememberedAboutATerminalThatIsGone(t *testing.T) {
 	forgetTerminals(state, map[string]bool{"here": true})
 
 	gone, here := reflect.ValueOf("gone"), reflect.ValueOf("here")
-	for _, name := range perTerminalMaps {
+	for _, name := range perTerminalFields {
 		field := value.FieldByName(name)
 		if field.MapIndex(gone).IsValid() {
 			t.Errorf("%s still remembers a terminal that is gone", name)
@@ -3608,15 +3616,15 @@ func TestEverythingRememberedAboutAMachineIsCleanedBySomething(t *testing.T) {
 	// needed -- which took it out of here without anything saying so. What is
 	// remembered about a machine has to be forgotten about it; the shape it is
 	// remembered in has nothing to do with that.
-	perPane := map[string]bool{ // by forgetPane, when its pane goes
-		"labels": true, "reportedAgents": true, "shellPanes": true,
-		"shellPlacement": true,
+	perPane := map[string]bool{} // by forgetPane, when its pane goes
+	for _, name := range perPaneFields {
+		perPane[name] = true
 	}
 	// The same list the test above fills and checks, so a map named here is a
 	// map something actually calls forgetTerminals with. A second copy of the
 	// list is what let placement be named in one and missing from the other.
 	perTerminal := map[string]bool{} // by forgetTerminals, when its terminal goes
-	for _, name := range perTerminalMaps {
+	for _, name := range perTerminalFields {
 		perTerminal[name] = true
 	}
 	// mirrors is the record of what is mirrored rather than something

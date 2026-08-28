@@ -1,6 +1,7 @@
 package syncd
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
@@ -113,6 +114,44 @@ func TestPaneIndexIgnoresPanesWithoutAWorkspace(t *testing.T) {
 	}
 	if !index.alive["w1:p1"] {
 		t.Error("the pane should still count as alive")
+	}
+}
+
+func TestEveryPerPaneThingIsClearedWhenThePaneGoes(t *testing.T) {
+	// The other half of what perTerminalFields does for forgetTerminals. Three
+	// tests cover these four today, each written for its own reason, and none
+	// of them would notice a fifth field being added: the guard that reads
+	// perPaneFields only asks whether a new field is named somewhere, not
+	// whether anything ever puts a pane in it. Naming it is the easy half.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+
+	state := newTestHost()
+	state.labels["w1:p2"] = "build@bot"
+	state.reportedAgents["w1:p2"] = agentReport{agent: "claude", state: "idle"}
+	state.shellPanes["w1:p2"] = true
+	state.shellPlacement = []shellPlace{{"w1:p2", "tab"}}
+
+	value := reflect.ValueOf(state).Elem()
+	for _, name := range perPaneFields {
+		field := value.FieldByName(name)
+		switch {
+		case !field.IsValid():
+			t.Fatalf("perPaneFields names %s, which hostSync does not have", name)
+		case field.Kind() != reflect.Map && field.Kind() != reflect.Slice:
+			t.Fatalf("perPaneFields names %s, which is neither a map nor a slice", name)
+		case field.Len() == 0:
+			t.Fatalf("the fixture never puts a pane in %s, so forgetPane is not "+
+				"asked about it -- put w1:p2 in it", name)
+		}
+	}
+
+	d := &Daemon{seenStray: map[string]bool{}}
+	d.forgetPane(state, "w1:p2")
+
+	for _, name := range perPaneFields {
+		if field := value.FieldByName(name); field.Len() != 0 {
+			t.Errorf("%s still remembers a pane that is gone", name)
+		}
 	}
 }
 
