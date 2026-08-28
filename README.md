@@ -187,14 +187,24 @@ other spaces.
 
 ## Things worth knowing
 
-**A machine's tabs are not tabs here.** Mirrored terminals are placed by
-`placement`, which defaults to `split`: the first opens a tab in the machine's
-space and every one after it splits that tab. So a machine you have three tabs
-open on arrives as one tab here with three panes in it, and it looks like it
-happened gradually because it does — each terminal splits in as it appears.
+**A machine's tabs are tabs here.** Mirrored terminals are placed where the
+machine has them: terminals sharing a tab over there share one here, and a tab
+opened over there arrives as a tab. That is `placement`, and it defaults to
+`follow`.
 
-The order is kept even though the shape is not: what is first there is first
-here. For a tab each instead:
+It did not until v0.4.0, when it defaulted to `split` — the first terminal
+opened a tab in the machine's space and every one after it split that tab, so a
+machine with three tabs open arrived as one tab here with three panes in it.
+That needed a setting to fix, and a mirror that does not mirror the shape is not
+something anybody should have to discover a setting for.
+
+What cannot be followed is the arrangement *inside* a tab. Herdr says which tab
+a terminal on the machine is in, not how the panes there are divided, so a tab
+split left and right over there is a tab with two panes here, in the machine's
+order, laid out however Herdr lays them out.
+
+To override it — everything in one tab, or a tab each regardless of the
+machine:
 
 ```json
 {

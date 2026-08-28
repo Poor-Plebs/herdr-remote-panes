@@ -174,3 +174,65 @@ func TestTheREADMESaysHowSoonAMachineStops(t *testing.T) {
 			"which is what the poll interval makes it", poll)
 	}
 }
+
+func TestTheProseAgreesWithTheTableAboutDefaults(t *testing.T) {
+	// The settings table is held to the code, and the prose around it is not.
+	// So the paragraph explaining placement went on saying it defaults to
+	// "split" for twenty commits after the code stopped -- while the table two
+	// hundred lines below said "follow" and passed its own check.
+	//
+	// A reader meets the paragraph first, and it is the half that explains
+	// what the setting means rather than listing it.
+	raw, err := os.ReadFile(repoFile(t, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	actual := map[string]string{}
+	body, err := json.Marshal(Defaults().normalized())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range fields {
+		if text, ok := value.(string); ok {
+			actual[name] = text
+		}
+	}
+
+	// Every "defaults to `value`" the prose makes, matched back to the nearest
+	// setting named before it. Written this way round because the two are
+	// often in different clauses and across a line break -- "That is
+	// `placement`, and it defaults to\n`follow`" -- so a pattern that wants
+	// them adjacent matches neither of the two claims in the file, and passes
+	// by finding nothing.
+	prose := string(raw)
+	claim := regexp.MustCompile("defaults to\\s+`([^`]+)`")
+	named := regexp.MustCompile("`([a-z_]+)`")
+	checked := 0
+	for _, m := range claim.FindAllStringSubmatchIndex(prose, -1) {
+		claimed := prose[m[2]:m[3]]
+		from := max(0, m[0]-300)
+		var setting string
+		for _, back := range named.FindAllStringSubmatch(prose[from:m[0]], -1) {
+			if _, known := actual[back[1]]; known {
+				setting = back[1]
+			}
+		}
+		if setting == "" {
+			continue
+		}
+		checked++
+		if want := actual[setting]; claimed != want {
+			t.Errorf("the prose says %s defaults to %q and it defaults to %q",
+				setting, claimed, want)
+		}
+	}
+	if checked == 0 {
+		t.Error("no claim about a default was found in the prose, so this is " +
+			"checking nothing; the wording it looks for has changed")
+	}
+}
