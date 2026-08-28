@@ -2174,6 +2174,21 @@ func TestSharedPanesFilterOutEverythingWhenTheSpaceIsWrong(t *testing.T) {
 	}
 }
 
+// perTerminalMaps names what hostSync remembers per terminal, which
+// forgetTerminals has to clear when that terminal goes. One list, read by the
+// test that checks each one is cleared and by the guard that checks a newly
+// added field is in some list at all.
+//
+// It was two lists. The guard's named seven and the fixture beside it built
+// six: placement was added to the guard, which was then satisfied, and never
+// added to the fixture -- so forgetTerminals was never once called with a
+// placement in it. Inverting its loop, to keep what is gone and drop what is
+// still there, passed the entire suite.
+var perTerminalMaps = []string{
+	"dismissed", "abandoned", "failures", "retryAt",
+	"pendingPlacement", "pendingFocus", "placement",
+}
+
 func TestNothingIsRememberedAboutATerminalThatIsGone(t *testing.T) {
 	// Each of these was cleared where it was most obviously needed, which left
 	// the ones nobody had thought about growing for as long as the daemon ran.
@@ -2188,37 +2203,43 @@ func TestNothingIsRememberedAboutATerminalThatIsGone(t *testing.T) {
 		retryAt:          map[string]time.Time{"gone": time.Now(), "here": time.Now()},
 		pendingPlacement: map[string]string{"gone": "tab", "here": "tab"},
 		pendingFocus:     map[string]bool{"gone": true, "here": true},
+		placement:        map[string]string{"gone": "tab", "here": "tab"},
+	}
+
+	// The fixture is written out above because reflection cannot fill an
+	// unexported field, so this asks the list whether anything it names was
+	// left out of it. That is the failure that hid placement: a map nobody
+	// puts a terminal into is a map forgetTerminals is never asked about.
+	value := reflect.ValueOf(state).Elem()
+	for _, name := range perTerminalMaps {
+		field := value.FieldByName(name)
+		if !field.IsValid() || field.Kind() != reflect.Map {
+			t.Fatalf("perTerminalMaps names %s, which is not a map on hostSync", name)
+		}
+		if field.Len() != 2 {
+			t.Fatalf("the fixture never puts a terminal in %s, so forgetTerminals "+
+				"is not asked about it -- give it a \"gone\" and a \"here\"", name)
+		}
 	}
 
 	forgetTerminals(state, map[string]bool{"here": true})
 
-	if _, ok := state.dismissed["gone"]; ok {
-		t.Error("dismissed remembered a terminal that is gone")
-	}
-	if _, ok := state.abandoned["gone"]; ok {
-		t.Error("abandoned remembered a terminal that is gone")
-	}
-	if _, ok := state.failures["gone"]; ok {
-		t.Error("the failure count outlived the terminal it counted")
-	}
-	if _, ok := state.retryAt["gone"]; ok {
-		t.Error("a retry was still scheduled for a terminal that is gone")
-	}
-	if _, ok := state.pendingPlacement["gone"]; ok {
-		t.Error("a placement was still waiting for a terminal that is gone")
-	}
-	if _, ok := state.pendingFocus["gone"]; ok {
-		t.Error("focus was still waiting for a terminal that is gone")
+	gone, here := reflect.ValueOf("gone"), reflect.ValueOf("here")
+	for _, name := range perTerminalMaps {
+		field := value.FieldByName(name)
+		if field.MapIndex(gone).IsValid() {
+			t.Errorf("%s still remembers a terminal that is gone", name)
+		}
+		if !field.MapIndex(here).IsValid() {
+			t.Errorf("%s forgot a terminal that is still there", name)
+		}
 	}
 
-	// Everything about the terminal that is still there survives.
-	if !state.dismissed["here"] || !state.abandoned["here"] ||
-		state.failures["here"] != 2 || state.pendingPlacement["here"] != "tab" ||
-		!state.pendingFocus["here"] {
-		t.Error("forgetting one terminal disturbed another")
-	}
-	if _, ok := state.retryAt["here"]; !ok {
-		t.Error("the retry for a live terminal was dropped")
+	// Presence is what the loops above decide; that they leave the value alone
+	// is separate, and cheaper to read written out.
+	if state.failures["here"] != 2 || state.pendingPlacement["here"] != "tab" ||
+		state.placement["here"] != "tab" {
+		t.Error("forgetting one terminal changed what is known about another")
 	}
 }
 
@@ -3591,10 +3612,12 @@ func TestEverythingRememberedAboutAMachineIsCleanedBySomething(t *testing.T) {
 		"labels": true, "reportedAgents": true, "shellPanes": true,
 		"shellPlacement": true,
 	}
-	perTerminal := map[string]bool{ // by forgetTerminals, when its terminal goes
-		"dismissed": true, "abandoned": true, "failures": true,
-		"retryAt": true, "pendingPlacement": true, "pendingFocus": true,
-		"placement": true,
+	// The same list the test above fills and checks, so a map named here is a
+	// map something actually calls forgetTerminals with. A second copy of the
+	// list is what let placement be named in one and missing from the other.
+	perTerminal := map[string]bool{} // by forgetTerminals, when its terminal goes
+	for _, name := range perTerminalMaps {
+		perTerminal[name] = true
 	}
 	// mirrors is the record of what is mirrored rather than something
 	// remembered about it: an entry is removed as the mirror is.
