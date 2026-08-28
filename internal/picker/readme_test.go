@@ -249,3 +249,78 @@ func TestEveryStateTheMenuCanShowIsInTheREADME(t *testing.T) {
 		}
 	}
 }
+
+func TestTheREADMEShowsLinesTheMenuCanActuallyDraw(t *testing.T) {
+	// The illustration at the top of the README is the first thing anybody
+	// sees of this plugin, and it is hand-written. The check next door holds
+	// the other direction -- that every phrase the menu can show is explained
+	// somewhere -- which says nothing about a line in the picture that the
+	// menu stopped being able to produce.
+	//
+	// It nearly did: "mirrored" in one of these lines is the word an observe
+	// machine stopped using this week.
+	raw, err := os.ReadFile(readmePath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Everything the menu can say about a machine, from the states there are.
+	shape := reflect.TypeOf(Entry{})
+	var fields []string
+	for i := 0; i < shape.NumField(); i++ {
+		switch name := shape.Field(i).Name; name {
+		case "Target", "Label", "Reason":
+		default:
+			fields = append(fields, name)
+		}
+	}
+	possible := map[string]bool{}
+	for mask := 0; mask < 1<<uint(len(fields)); mask++ {
+		var entry Entry
+		holder := reflect.ValueOf(&entry).Elem()
+		for i, name := range fields {
+			if mask&(1<<uint(i)) == 0 {
+				continue
+			}
+			switch value := holder.FieldByName(name); value.Kind() {
+			case reflect.Bool:
+				value.SetBool(true)
+			case reflect.Int:
+				value.SetInt(2)
+			}
+		}
+		possible[plainOf(statusSpans(entry))] = true
+	}
+
+	// The illustration's machine lines: "  N. name    status".
+	line := regexp.MustCompile(`^\s*>?\s*\d+\.\s+\S+\s\s+(\S.*?)\s*$`)
+	digits := regexp.MustCompile(`\d+`)
+	checked := 0
+	for _, text := range strings.Split(string(raw), "\n") {
+		m := line.FindStringSubmatch(text)
+		if m == nil {
+			continue
+		}
+		shown := m[1]
+		// A reason is whatever a machine said, so those lines are held only up
+		// to the part the menu chooses.
+		if strings.Contains(shown, "unreachable · ") {
+			continue
+		}
+		checked++
+		matched := false
+		for could := range possible {
+			if digits.ReplaceAllString(could, "N") == digits.ReplaceAllString(shown, "N") {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Errorf("the README shows a machine as %q and the menu cannot draw that", shown)
+		}
+	}
+	if checked < 2 {
+		t.Fatalf("found %d machine lines in the illustration, which is fewer than "+
+			"it has -- the picture or this pattern has changed", checked)
+	}
+}
