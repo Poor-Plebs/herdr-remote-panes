@@ -147,6 +147,22 @@ bytes twice gives the same answer — so they keep working when the wording of
 something changes. `go test ./...` runs their seed corpus; the fuzzing itself is
 opt-in, like the two above.
 
+What a reconcile pass costs is measurable the same way:
+
+```bash
+HRP_TIMING=1 go test ./internal/syncd/ -run PassCostsEveryMachine -v
+```
+
+A goroutine is started per machine, which reads as polling them at the same
+time. Each takes the daemon's lock first and holds it for the whole of its
+work, and that work includes asking the machine over SSH for its panes — so
+they run one after another with the lock held across every round trip. With a
+stand-in ssh that takes 300ms, one machine is 610ms and three are 1.83s.
+
+That lock is what answers the menu, the status listing and every command, so
+the cost of a pass is what the menu waits for: the sum over machines rather
+than the slowest of them.
+
 ## Cutting a release
 
 A release is an annotated tag carrying its own notes, and a GitHub release made

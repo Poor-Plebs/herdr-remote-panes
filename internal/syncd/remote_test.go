@@ -3626,3 +3626,77 @@ func TestATabYouClosedStaysClosedAcrossARestart(t *testing.T) {
 		t.Errorf("the machine has %d terminals, want the 2 it had", got)
 	}
 }
+
+// TestAPassCostsEveryMachineAddedTogether measures what a reconcile pass costs
+// as machines are added.
+//
+//	HRP_TIMING=1 go test ./internal/syncd/ -run PassCostsEveryMachine -v
+//
+// A goroutine is started per machine, which reads as polling them at the same
+// time. Each one takes d.mu first and holds it for the whole of its work, and
+// that work includes asking the machine over SSH for its panes -- so they run
+// strictly one after another, and the daemon's lock is held across every one
+// of those round trips.
+//
+// It matters because that lock is what answers the menu, the status listing
+// and every command. The cost of a pass is the sum over machines rather than
+// the slowest of them, and a machine that is merely slow rather than broken
+// adds its whole latency to how long the menu takes to open.
+//
+// Opt-in: it sleeps in a stand-in ssh to make the difference legible, so it
+// takes seconds, and timing on a shared CI runner is not a thing to fail a
+// build over.
+func TestAPassCostsEveryMachineAddedTogether(t *testing.T) {
+	if os.Getenv("HRP_TIMING") == "" {
+		t.Skip("set HRP_TIMING=1 to run; it sleeps to make the difference visible")
+	}
+
+	pass := func(t *testing.T, targets ...string) time.Duration {
+		t.Helper()
+		withFakeHerdr(t)
+		withRemoteHerdrRunning(t, true)
+
+		cfg := machineConfig(targets...)
+		for i := range cfg.Hosts {
+			cfg.Hosts[i].Mode = "attach"
+		}
+		d := New(cfg)
+		for _, target := range targets {
+			if reply := d.dispatch(Command{Cmd: "connect", Host: target}); !reply.OK {
+				t.Fatalf("connect %s: %s", target, reply.Message)
+			}
+		}
+
+		// Every call to a machine takes about this long, from here on.
+		bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
+		path := filepath.Join(bin, "ssh")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		slow := strings.Replace(string(raw), "#!/bin/sh\n", "#!/bin/sh\nsleep 0.3\n", 1)
+		if err := os.WriteFile(path, []byte(slow), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		start := time.Now()
+		d.reconcileAll()
+		return time.Since(start)
+	}
+
+	var one, three time.Duration
+	t.Run("one machine", func(t *testing.T) { one = pass(t, "bot") })
+	t.Run("three machines", func(t *testing.T) { three = pass(t, "bot", "prod", "web") })
+
+	t.Logf("one machine: %v", one.Round(10*time.Millisecond))
+	t.Logf("three machines: %v", three.Round(10*time.Millisecond))
+	t.Logf("polled at the same time this would be about %v; one after another, about %v",
+		one.Round(10*time.Millisecond), (3 * one).Round(10*time.Millisecond))
+
+	// Reported rather than failed. What the right arrangement is has not been
+	// decided, and a test that fails until it is would only be turned off.
+	if three < 2*one {
+		t.Logf("NOTE: a pass is no longer the sum of its machines -- if the pass " +
+			"has been restructured, this comment and the ones on d.mu want revisiting")
+	}
+}
