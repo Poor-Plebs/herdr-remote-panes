@@ -1685,3 +1685,65 @@ func TestNoStateIsWiderThanTheColumnReservedForIt(t *testing.T) {
 		}
 	}
 }
+
+func TestOnlyMGoesAheadWithClosingTerminals(t *testing.T) {
+	// The question is the last thing between somebody and losing what is
+	// running in three terminals, and the half of it that had never been run
+	// was the answering: worthAskingBeforeToggle is held everywhere, and what
+	// happens once it has asked was reached by no test, because reading a key
+	// wants a terminal.
+	//
+	// Anything other than m has to leave it alone. A question that proceeds on
+	// a stray keypress is not a safeguard, and the keys people press to escape
+	// a prompt they did not expect -- escape, enter, q -- are exactly the ones
+	// that must not.
+	entry := Entry{Target: "bot", Connected: true, Terminals: 3}
+	if !worthAskingBeforeToggle(entry, "attach") {
+		t.Fatal("this entry does not ask, so the test below proves nothing")
+	}
+
+	quiet, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer quiet.Close()
+	savedOut := os.Stdout
+	os.Stdout = quiet
+	defer func() { os.Stdout = savedOut }()
+
+	for _, tt := range []struct {
+		what  string
+		keys  string
+		ahead bool
+	}{
+		{"m", "m", true},
+		{"M, which is the same key", "M", true},
+		{"enter", "\r", false},
+		{"escape", "\x1b", false},
+		{"q", "q", false},
+		{"a digit, which elsewhere picks a machine", "3", false},
+		{"d, which elsewhere disconnects", "d", false},
+		{"nothing, because the terminal went", "", false},
+	} {
+		read, write, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		go func(keys string) {
+			if keys != "" {
+				_, _ = write.WriteString(keys)
+			}
+			write.Close()
+		}(tt.keys)
+
+		savedIn := os.Stdin
+		os.Stdin = read
+		got := confirmToggle(entry, "attach")
+		os.Stdin = savedIn
+		read.Close()
+
+		if got != tt.ahead {
+			t.Errorf("%s: went ahead = %v, want %v", tt.what, got, tt.ahead)
+		}
+	}
+}
