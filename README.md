@@ -821,6 +821,31 @@ That is exactly what CI runs — formatting, vet, staticcheck, the tests with th
 race detector in a shuffled order, and the build — and the workflow runs the
 same targets, so the two cannot drift apart.
 
+A test written for a fix should be run against the code without the fix, or it
+is a test of nothing in particular. That is the single most useful habit here
+and most of the tests in this repository were written that way: break the thing
+on purpose, watch the test fail, put it back.
+
+The trap is that the breaking is itself a change, and it can fail to happen
+while looking exactly as though it did. Four ways it has, all of them here:
+
+- **The mutation did not compile.** The run printed nothing, which reads like a
+  clean pass. Replace a whole function rather than snipping lines out of one,
+  and print something on success — `go build ./... && echo COMPILES` — so that
+  silence is visibly not a result.
+- **The build result was thrown away.** `go build ./... | head -3 && echo ok`
+  prints `ok` whatever the compiler said, because `head` succeeded. Do not put
+  a check behind a pipe.
+- **The copy under test was the wrong one.** `git archive HEAD` gives the
+  committed tree, so an uncommitted change is not in it. It skipped, which is
+  what the old code did and what I was hoping to see. Copy the working tree.
+- **The cleanup killed the shell.** `pkill -f "HOME=/tmp/x"` matches the command
+  containing that string, which is the one running it. Read `/proc/<pid>/environ`
+  instead.
+
+Each of those produced a result that agreed with what was expected, which is
+when to ask what actually ran.
+
 Coverage says which lines a test ran. It does not say whether anything would
 have failed had those lines been wrong, and that gap is worth checking
 directly:
