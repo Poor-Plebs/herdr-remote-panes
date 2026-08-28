@@ -28,4 +28,4 @@
 ./internal/syncd (since v0.4.1)	2026-08-28	1	1	0	0
 ./internal/text	2026-08-28	60	55	5	0
 ./internal/version	2026-08-28	9	7	2	0
-./tools/mutants	2026-08-28	95	91	4	0
+./tools/mutants	2026-08-28	103	99	4	0

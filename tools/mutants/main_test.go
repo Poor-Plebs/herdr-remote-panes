@@ -980,3 +980,95 @@ func TestSurvivorsAreKeptWhereATerminalCannotLoseThem(t *testing.T) {
 		t.Errorf("a clean sweep wrote %q", got)
 	}
 }
+
+// TestTryTellsCaughtFromSurvived holds the judgement every sweep rests on.
+//
+// try decides whether a mutation was caught, and every "0 unexplained
+// survivors" reported by this tool is that decision repeated a few hundred
+// times. It had no test: a version of it that called everything caught would
+// have swept clean all week and said nothing was wrong anywhere.
+//
+// Against a module of its own rather than this one, so the mutations are
+// small enough to reason about and the run is seconds rather than minutes.
+func TestTryTellsCaughtFromSurvived(t *testing.T) {
+	work := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", "module probe\n\ngo 1.25\n")
+	// Bigger is tested at 2>1 and 1>2 and not at equality, which is what makes
+	// one of the mutations below survive and the other not.
+	const source = "package probe\n\nfunc Bigger(a, b int) bool { return a > b }\n"
+	write("probe.go", source)
+	write("probe_test.go", "package probe\n\nimport \"testing\"\n\n"+
+		"func TestBigger(t *testing.T) {\n"+
+		"\tif !Bigger(2, 1) || Bigger(1, 2) {\n\t\tt.Fatal(\"wrong\")\n\t}\n}\n")
+
+	at := strings.Index(source, "a > b") + len("a ")
+	if at < len("a ") {
+		t.Fatal("the probe source no longer contains the operator this mutates")
+	}
+
+	for _, tt := range []struct {
+		what string
+		m    mutation
+		want string
+	}{
+		{
+			// Reverses the comparison, which the test notices at once.
+			what: "a change the tests fail on",
+			m:    mutation{file: "probe.go", offset: at, old: ">", new: "<"},
+			want: "caught",
+		},
+		{
+			// True at equality instead of false, and nothing asks about equality.
+			what: "a change nothing asks about",
+			m:    mutation{file: "probe.go", offset: at, old: ">", new: ">="},
+			want: "survived",
+		},
+		{
+			// Shifting two ints is not a bool, so the package does not build.
+			// This is the one that matters most: a build failure read as a pass
+			// would report a mutation as caught by tests that never ran.
+			what: "a change that does not compile",
+			m:    mutation{file: "probe.go", offset: at, old: ">", new: ">>"},
+			want: "unusable",
+		},
+		{
+			// The offsets come from the copy being mutated, so this means
+			// something else wrote to the file underneath.
+			//
+			// The replacement is one that compiles and that the tests fail on,
+			// so refusing it is the only way to reach "unusable". Written the
+			// other way first -- replacing with something that does not build
+			// -- this passed with the offset check taken out, because the
+			// answer arrived from the build instead.
+			what: "an offset that no longer says what it did",
+			m:    mutation{file: "probe.go", offset: at, old: "+", new: "<"},
+			want: "unusable",
+		},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			got, err := try(work, "./...", tt.m)
+			if err != nil {
+				t.Fatalf("try: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("try said %q, want %q", got, tt.want)
+			}
+			// Put back afterwards, always: a sweep runs hundreds of these
+			// against one copy, and one left mutated poisons every later
+			// answer about that file.
+			raw, err := os.ReadFile(filepath.Join(work, "probe.go"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(raw) != source {
+				t.Errorf("the file was left mutated:\n%s", raw)
+			}
+		})
+	}
+}
