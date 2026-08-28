@@ -68,6 +68,58 @@ func TestEveryLinkBetweenTheDocsPointsAtSomething(t *testing.T) {
 	}
 }
 
+// TestEveryPageUnderDocsIsLinkedFromAnother holds the intent the test above
+// states and leaves unchecked.
+//
+// Its comment says "a page nothing links to is invisible, so the docs link to
+// each other", and it then only follows the links that exist -- so a page
+// nobody links to passes it by being absent from every page it reads. The two
+// pages here that were split out of the README were linked by hand as they
+// were written, which is the arrangement that works until somebody adds a
+// third.
+func TestEveryPageUnderDocsIsLinkedFromAnother(t *testing.T) {
+	inRoot(t)
+
+	pages, err := filepath.Glob("docs/*.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) == 0 {
+		t.Fatal("no pages under docs/, so this test proves nothing")
+	}
+
+	linked := map[string]bool{}
+	for _, page := range append(append([]string{}, pages...), "README.md") {
+		raw, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range markdownLink.FindAllStringSubmatch(string(raw), -1) {
+			target := m[1]
+			if i := strings.Index(target, "#"); i >= 0 {
+				target = target[:i]
+			}
+			if target == "" || strings.Contains(target, "://") ||
+				strings.HasPrefix(target, "mailto:") {
+				continue
+			}
+			to := filepath.Clean(filepath.Join(filepath.Dir(page), target))
+			// A page linking to itself is still a page nobody arrives at.
+			if to == filepath.Clean(page) {
+				continue
+			}
+			linked[to] = true
+		}
+	}
+
+	for _, page := range pages {
+		if !linked[filepath.Clean(page)] {
+			t.Errorf("%s is linked from no other page, so the only way to it is "+
+				"knowing it is there", page)
+		}
+	}
+}
+
 // proseWidth is the column the prose in these pages is wrapped at. Not a rule
 // about taste: every paragraph here is already wrapped to roughly this, so one
 // that is not stands out as a paragraph somebody edited and did not re-flow,
