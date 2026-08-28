@@ -99,3 +99,72 @@ func cacheDependsOnTheTree(t *testing.T, root string, wanted func(name string) b
 
 // goSource is every Go file, which is what a build of the daemon depends on.
 func goSource(name string) bool { return strings.HasSuffix(name, ".go") }
+
+// TestTheDocumentationIsEveryPageAndTheREADMEFirst holds what DocPages names.
+//
+// Five packages read the documentation through this to check that a phrase in
+// the prose agrees with what the code does. Which page carries the phrase is
+// the thing they are deliberately not about, so returning fewer pages than
+// there are would not fail any of them: the phrase would simply be missing,
+// and a test looking for it would say the docs no longer make the claim.
+func TestTheDocumentationIsEveryPageAndTheREADMEFirst(t *testing.T) {
+	inRoot(t)
+
+	pages, err := DocPages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) < 2 {
+		t.Fatalf("DocPages returned %d pages; there is a README and a docs/", len(pages))
+	}
+	if filepath.Base(pages[0]) != "README.md" {
+		t.Errorf("the first page is %q, want the README", filepath.Base(pages[0]))
+	}
+
+	under, err := filepath.Glob(filepath.Join("docs", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != len(under)+1 {
+		t.Errorf("DocPages returned %d pages and there are %d under docs/ plus the "+
+			"README; a page it does not name is a page nothing checks",
+			len(pages), len(under)+1)
+	}
+	for _, page := range pages {
+		if _, err := os.Stat(page); err != nil {
+			t.Errorf("DocPages names %q, which is not there", page)
+		}
+	}
+}
+
+// TestTheDocumentationReadsAsOne holds the joining, which is the whole point.
+//
+// Returning only the README would pass every caller that happens to look for
+// something the README still says, and quietly stop covering the pages split
+// out of it -- which is how this helper came to exist at all.
+func TestTheDocumentationReadsAsOne(t *testing.T) {
+	inRoot(t)
+
+	text, err := DocsText()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A heading from the README and one from a page that is not the README, so
+	// a join that dropped either half is a failure rather than a shorter
+	// string nobody looks at.
+	for _, want := range []string{"## Install", "# When something looks wrong"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the documentation read as one does not contain %q", want)
+		}
+	}
+
+	readme, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(text) <= len(readme) {
+		t.Errorf("the whole documentation is %d bytes and the README alone is %d, "+
+			"so nothing beyond it was read", len(text), len(readme))
+	}
+}
