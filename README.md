@@ -303,17 +303,15 @@ A file caught half-written is not read — saving is not atomic in every editor,
 and a pass comes round every couple of seconds — so the settings in use stay
 the ones that last parsed, and the log says so.
 
-**The menu waits for a slow machine.** A reconcile pass holds the daemon's lock
-while it asks each machine what it has open, and answering the menu needs that
-same lock — so opening the menu, or invoking any action, waits for whatever the
-pass is doing. Measured: a machine taking two seconds to answer made a status
-request take 5.7. The machines are asked one after another rather than at once,
-so it grows with how many you have, and `ssh` is given `ConnectTimeout=10`,
-which is the worst case per machine.
+**A slow machine does not hold up the menu.** Machines are asked what they have
+open at the same time as each other, and without the lock the daemon answers on
+— so opening the menu, or invoking any action, does not wait for a machine that
+has stopped answering. It used to wait for all of them, one after another: two
+machines taking two seconds each made a status request take 3.7.
 
-A machine that has been given up on is skipped, so this settles down on its own
-once an unreachable one stops being retried. It is worst in the seconds after a
-machine goes.
+Connecting to a machine, or opening a terminal on one, is different: those talk
+to the machine while holding the daemon, because that is the thing you asked
+for and the answer is what you are waiting for anyway.
 
 **An unreachable machine is left alone** rather than retried forever in the
 background. How soon depends on the cause: something that might pass on its own
