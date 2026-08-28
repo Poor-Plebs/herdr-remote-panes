@@ -83,6 +83,27 @@ type Daemon struct {
 	// open a terminal of its own for it.
 	seenStray map[string]bool
 
+	// unclosed is panes Herdr refused to close, to be tried again.
+	//
+	// Every close here logged a refusal and then forgot the pane. That reads
+	// as harmless -- one line in a log, and a close that fails because the
+	// pane has already gone comes back as success anyway. A refusal therefore
+	// means the pane is still there, and forgetting it leaves a dead mirror
+	// wearing a live name in a machine's space with nothing left that knows it
+	// exists. The paths that would revisit it all run once: adoption after a
+	// mode change, and the orphan sweep beside it.
+	//
+	// Not cleared by forgetPane, though it is keyed by a pane: every site that
+	// records a refusal here calls that immediately afterwards, having decided
+	// the pane is gone, which is exactly the belief being recorded as wrong.
+	// retryUnclosed owns it instead and drops an entry when the pane really has
+	// gone from the listing.
+	//
+	// Retried silently, because the refusal is logged where it happens and a
+	// pane Herdr will not close would otherwise say so every couple of seconds
+	// for as long as the daemon runs.
+	unclosed map[string]bool
+
 	// reconciles folds overlapping reconcile requests into one.
 	reconciles coalescer
 
@@ -423,6 +444,7 @@ func NewWithConfigError(cfg config.Config, configErr error) *Daemon {
 		touched:          map[string]bool{},
 		markedWorkspaces: map[string]workspaceMark{},
 		seenStray:        map[string]bool{},
+		unclosed:         map[string]bool{},
 		snapshot:         loadSnapshot(),
 		configErr:        configErr,
 	}
@@ -1508,7 +1530,7 @@ func (d *Daemon) disconnect(target string) error {
 	// hostSync, writing the maps that panesToClose reads.
 	for _, paneID := range panesToClose(state) {
 		if err := herdrcli.ClosePane(paneID); err != nil {
-			log.Printf("close %s: %v", paneID, err)
+			d.closeRefused(paneID, "close", err)
 		}
 	}
 	state.client.Close()
@@ -1780,6 +1802,38 @@ func (d *Daemon) status() []HostInfo {
 // is how a stale mark meets a reused pane id.
 const pruneInterval = time.Minute
 
+// closeRefused reports a pane Herdr would not close, and keeps it to try
+// again. Both in one call so that a close site stays the length it was: the
+// listing has to be corrected within a few lines of the close, and a guard
+// holds every one of them to that.
+func (d *Daemon) closeRefused(paneID, what string, err error) {
+	log.Printf("%s %s: %v", what, paneID, err)
+	d.unclosed[paneID] = true
+}
+
+// retryUnclosed closes again what Herdr refused to close before.
+//
+// Silent: the refusal was reported where it happened, and one that will not
+// clear would otherwise be reported on every pass. An entry whose pane is no
+// longer there is dropped -- it went by some other route, which is the outcome
+// this wanted.
+func (d *Daemon) retryUnclosed(index *paneIndex) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	for paneID := range d.unclosed {
+		if !index.alive[paneID] {
+			delete(d.unclosed, paneID)
+			continue
+		}
+		if err := herdrcli.ClosePaneByID(paneID); err != nil {
+			continue
+		}
+		delete(d.unclosed, paneID)
+		index.remove(paneID)
+	}
+}
+
 func (d *Daemon) maybePrune(alive map[string]bool) {
 	now := time.Now()
 	if last := d.lastPrune.Load(); last != 0 && now.Sub(time.Unix(0, last)) < pruneInterval {
@@ -1946,6 +2000,11 @@ func (d *Daemon) reconcileOnce() {
 	// and Herdr reuses pane ids, so a stale one would be read as belonging to
 	// whatever lands on that id next.
 	d.maybePrune(index.alive)
+
+	// Panes Herdr would not close, tried again now that it may. A refusal used
+	// to be final: the close sites log it and forget the pane, and the passes
+	// that would find it again by its label all run once.
+	d.retryUnclosed(index)
 
 	defer d.persist()
 
@@ -2219,7 +2278,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 					log.Printf("%s: closing mirror %s, no longer mirroring this machine",
 						state.host.Target, paneID)
 					if err := herdrcli.ClosePaneByID(paneID); err != nil {
-						log.Printf("close mirror %s: %v", paneID, err)
+						d.closeRefused(paneID, "close mirror", err)
 					}
 					index.remove(paneID)
 				}
@@ -2244,7 +2303,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 						continue
 					}
 					if err := herdrcli.ClosePaneByID(paneID); err != nil {
-						log.Printf("close stale terminal %s: %v", paneID, err)
+						d.closeRefused(paneID, "close stale terminal", err)
 					}
 					d.forgetPane(state, paneID)
 					index.remove(paneID)
@@ -2487,7 +2546,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	for _, terminalID := range plan.Gone {
 		paneID := state.mirrors[terminalID]
 		if err := herdrcli.ClosePane(paneID); err != nil {
-			log.Printf("close mirror %s: %v", paneID, err)
+			d.closeRefused(paneID, "close mirror", err)
 		}
 		// Struck from the listing this pass works from, as every other place
 		// that closes a pane does. Without it the pane stayed in the listing,
@@ -2550,7 +2609,7 @@ func (d *Daemon) closeOrphans(state *hostSync, index *paneIndex) {
 		log.Printf("%s: closing %s, a leftover %q with nothing behind it",
 			state.host.Target, paneID, label)
 		if err := herdrcli.ClosePaneByID(paneID); err != nil {
-			log.Printf("close leftover %s: %v", paneID, err)
+			d.closeRefused(paneID, "close leftover", err)
 		}
 		d.forgetPane(state, paneID)
 		index.remove(paneID)

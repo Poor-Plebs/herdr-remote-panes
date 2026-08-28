@@ -3841,6 +3841,13 @@ func TestEverythingTheDaemonRemembersIsCleanedBySomething(t *testing.T) {
 	// lastSaved is the bytes last written, held to avoid writing them again.
 	// One value, replaced rather than added to.
 	notACollection := map[string]bool{"lastSaved": true}
+	// unclosed is drained by retryUnclosed, which is the only thing that reads
+	// it: an entry goes when the pane is closed or has left the listing. Keyed
+	// by a pane and still not perPane above, because forgetPane cannot be what
+	// clears it -- every site that records a refusal calls forgetPane straight
+	// afterwards, having concluded the pane is gone, which is the conclusion
+	// the entry exists to contradict.
+	drainedByItsOwnWork := map[string]bool{"unclosed": true}
 
 	shape := reflect.TypeOf(Daemon{})
 	found := 0
@@ -3851,14 +3858,15 @@ func TestEverythingTheDaemonRemembersIsCleanedBySomething(t *testing.T) {
 		}
 		found++
 		if !perPane[field.Name] && !perWorkspace[field.Name] && !theRecord[field.Name] &&
-			!bounded[field.Name] && !notACollection[field.Name] {
+			!bounded[field.Name] && !notACollection[field.Name] &&
+			!drainedByItsOwnWork[field.Name] {
 			t.Errorf("Daemon.%s is remembered for as long as the daemon runs and "+
 				"nothing here says what clears it, or why it needs no clearing; "+
 				"add it to one of the lists above and to whatever forgets it",
 				field.Name)
 		}
 	}
-	if found < 6 {
+	if found < 7 {
 		t.Fatalf("found %d things the daemon remembers, which is fewer than there "+
 			"are -- this is checking nothing", found)
 	}

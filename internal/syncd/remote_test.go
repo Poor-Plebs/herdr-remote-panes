@@ -2325,6 +2325,70 @@ func refuseOnMachine(t *testing.T, path, verbs string) {
 	t.Cleanup(func() { _ = os.Remove(path + ".refuse") })
 }
 
+func TestAPaneHerdrWouldNotCloseIsClosedOnceItWill(t *testing.T) {
+	// Turning mirroring off closes the mirrors and opens a plain terminal.
+	// Every close site logged a refusal and forgot the pane, which reads as
+	// harmless because a close that fails for a pane that has already gone
+	// comes back as success -- a refusal means it is still open.
+	//
+	// Nothing revisited it. The mode change disconnects the machine, so the
+	// bookkeeping naming that pane is thrown away; the sweeps that would find
+	// it again by its label run once, on adoption. What was left was a dead
+	// mirror wearing a live name in the machine's space, for as long as the
+	// daemon ran.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+	withConfigFile(t, `{"hosts":[{"target":"bot","mode":"attach"}]}`)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	// Both spellings of "close this pane", so the fallback from one to the
+	// other does not quietly do the work this is about.
+	refuseOnMachine(t, os.Getenv(fakeHerdrState), "plugin pane close,pane close")
+	asked := here().Calls["plugin pane close"]
+
+	if reply := d.dispatch(Command{Cmd: "set-mode", Host: "bot", Mode: "ssh"}); !reply.OK {
+		t.Fatalf("set-mode: %s", reply.Message)
+	}
+
+	// Before anything below: if the toggle never tried to close a pane then
+	// the refusal was never reached and the rest of this is about nothing.
+	if here().Calls["plugin pane close"] == asked {
+		t.Fatalf("nothing tried to close a pane, so the refusal this is about "+
+			"was never reached: %+v", here().Calls)
+	}
+	if got := panesFor(here(), "bot"); got != 2 {
+		t.Fatalf("want the refused mirror still open beside the new terminal, "+
+			"got %d panes", got)
+	}
+
+	// Herdr goes on refusing: the pane stays, and nothing says so every pass.
+	for i := 0; i < 2; i++ {
+		d.reconcileAll()
+	}
+	if got := panesFor(here(), "bot"); got != 2 {
+		t.Fatalf("while the close is refused the pane should still be there, got %d", got)
+	}
+
+	// It stops refusing. The next pass closes what it would not close before.
+	if err := os.Remove(os.Getenv(fakeHerdrState) + ".refuse"); err != nil {
+		t.Fatal(err)
+	}
+	d.reconcileAll()
+
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Errorf("after Herdr stopped refusing, %d panes for bot, want the one "+
+			"terminal SSH mode gives -- the mirror was left behind", got)
+	}
+}
+
 func TestTurningMirroringOnSaysWhenNoTerminalOpened(t *testing.T) {
 	// The sibling of the unreachable case: the machine answers, the setting is
 	// written, and then opening a terminal on it fails anyway. The change has
