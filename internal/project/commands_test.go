@@ -19,6 +19,13 @@ import (
 func TestEveryCommandTheDocsGiveStillWorks(t *testing.T) {
 	inRoot(t)
 
+	// The names of tests come from `go test -list`, a subprocess, so nothing
+	// the tool records ties this result to the tests it is about: renaming one
+	// the docs name left this passing from cache.
+	cacheDependsOnTheTree(t, ".", func(name string) bool {
+		return strings.HasSuffix(name, "_test.go")
+	})
+
 	docs := []string{"README.md"}
 	pages, err := filepath.Glob(filepath.Join("docs", "*.md"))
 	if err != nil {

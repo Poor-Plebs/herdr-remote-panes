@@ -204,6 +204,11 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 	// Three releases went out broken on exactly this difference, and none of
 	// them would have been caught by starting the same binary twice.
 	inRoot(t)
+
+	// The daemon under test is built from the tree by a subprocess, so nothing
+	// here records that the result depends on it: breaking the socket handover
+	// on purpose and running this by hand reported "ok (cached)".
+	cacheDependsOnTheTree(t, ".", goSource)
 	previous := previousRelease(t)
 
 	dir := t.TempDir()

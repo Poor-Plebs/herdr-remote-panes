@@ -207,20 +207,27 @@ That needs a clone with tags, which is why CI checks out with `fetch-depth: 0`.
 The test fails rather than skipping when it cannot find a release to upgrade
 from: one that quietly skips is one that never runs where it matters.
 
-It builds the tree rather than importing it, so **the test cache does not know
-when the daemon has changed**. Editing `internal/syncd` and running this by
-hand answers from the cache, because `internal/project` does not import that
-package and nothing else about the run has changed:
+It builds the tree rather than importing it, so the test cache had no idea
+when the daemon changed: `internal/project` does not import `internal/syncd`,
+nothing a subprocess reads is recorded, and running this by hand after editing
+the daemon answered
 
 ```
 ok  github.com/Poor-Plebs/herdr-remote-panes/internal/project  (cached)
 ```
 
-Which is a pass reporting on the code as it was before the edit. Use `-count=1`
-whenever checking an upgrade against a change. `make check` is not affected:
-`-shuffle=on` is not a cacheable flag, so it disables the cache for the whole
-run. The environment variable is part of the cache key, so sweeping several
-versions does run each of them.
+— a pass reporting on the code as it was before the edit. Breaking the socket
+handover deliberately, to check the test would notice, produced exactly that.
+
+The tests that reach their subject through a subprocess now read the files they
+depend on, which is what tells the tool those files are the input: the upgrade
+reads every Go file, and the check on commands the docs give reads every test
+file, since it asks `go test -list` for the names. Both now fail on the change
+they are about without `-count=1`, and both still cache when nothing has moved.
+
+`make check` was never affected, for a reason worth knowing rather than
+assuming: `-shuffle=on` is not a cacheable flag, so it disables the cache for
+the whole run.
 
 Then the two places a version number is written down: the install line near the
 top of the README, and `version` in `herdr-plugin.toml`. A test holds them to
