@@ -182,18 +182,19 @@ Host workbox
   IdentitiesOnly yes
 ```
 
-**The menu takes a moment to open while a machine is dropping out.** A poll
-talks to each machine in turn and holds the daemon while it does, so a machine
-that has stopped answering — one that swallows packets rather than refusing,
-which takes the operating system's own timeout to fail — makes everything else
-wait for it. The wait is bounded: ten seconds for a connection to be given up
-on, thirty for a command, and after two failed passes the machine is given up
-on and stops being polled at all. So it clears by itself; it is not something
-to wait out for long.
+**A machine is dropping out and the menu still opens.** It did not use to. A
+poll talked to each machine in turn while holding the daemon, so a machine that
+had stopped answering — one that swallows packets rather than refusing, which
+takes the operating system's own timeout to fail — took the menu with it for as
+long as that lasted. Measured at 3.7 seconds behind two such machines.
 
-Connecting to a slow machine does not do this. That path talks to the machine
-before it takes the daemon, so the menu stays usable while you connect to
-something that is not answering.
+The poll gives the daemon up for the round trip now, so the menu, the status
+listing and every command are answered while a machine is being waited for. The
+machine itself is still given up on the same way: ten seconds for a connection,
+thirty for a command, and after two failed passes it stops being polled at all.
+
+Connecting to a slow machine never did this. That path talks to the machine
+before it takes the daemon, so the menu stayed usable even then.
 
 **The menu takes a moment to open every time, with nothing wrong.** The same
 mechanism without a machine misbehaving. Machines are polled at the same time,

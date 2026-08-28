@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -3699,6 +3700,79 @@ func TestATabYouClosedStaysClosedAcrossARestart(t *testing.T) {
 	}
 	if got := len(there().Panes); got != 2 {
 		t.Errorf("the machine has %d terminals, want the 2 it had", got)
+	}
+}
+
+// TestTheMenuAnswersWhileAMachineIsBeingWaitedFor is the thing all of that was
+// for.
+//
+//	HRP_TIMING=1 go test ./internal/syncd/ -run MenuAnswersWhile -v
+//
+// The daemon answers the menu, the status listing and every command on d.mu.
+// It used to hold that lock across the SSH round trip to each machine, so a
+// machine that had stopped answering -- one that swallows packets rather than
+// refusing it, which takes the operating system's own timeout to fail -- took
+// the menu with it for as long as it lasted.
+//
+// Measured against two machines whose every call takes two seconds: the menu
+// waited 3.71s before, and does not wait at all now.
+//
+// Opt-in with the other timing measurement, and generous for the same reason:
+// it is meant to tell "does not wait" from "waits for a machine", not to
+// police jitter.
+func TestTheMenuAnswersWhileAMachineIsBeingWaitedFor(t *testing.T) {
+	if os.Getenv("HRP_TIMING") == "" {
+		t.Skip("set HRP_TIMING=1 to run; it sleeps to make the difference visible")
+	}
+
+	here := withFakeHerdr(t)
+	withRemoteHerdrRunning(t, true)
+
+	cfg := machineConfig("bot", "prod")
+	for i := range cfg.Hosts {
+		cfg.Hosts[i].Mode = "attach"
+	}
+	d := New(cfg)
+	for _, target := range []string{"bot", "prod"} {
+		if reply := d.dispatch(Command{Cmd: "connect", Host: target}); !reply.OK {
+			t.Fatalf("connect %s: %s", target, reply.Message)
+		}
+	}
+	settle(t, d, here, 2)
+
+	// From here every call to a machine takes two seconds: both dropping out.
+	bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
+	path := filepath.Join(bin, "ssh")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slow := strings.Replace(string(raw), "#!/bin/sh\n", "#!/bin/sh\nsleep 2\n", 1)
+	if err := os.WriteFile(path, []byte(slow), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); d.reconcileAll() }()
+	// Long enough that the pass is inside the round trip rather than still
+	// setting up, and far short of the two seconds that round trip takes.
+	time.Sleep(300 * time.Millisecond)
+
+	start := time.Now()
+	reply := d.dispatch(Command{Cmd: "status"})
+	waited := time.Since(start)
+	wg.Wait()
+
+	if !reply.OK {
+		t.Fatalf("status while a machine was being waited for: %s", reply.Message)
+	}
+	t.Logf("the menu waited %v", waited.Round(10*time.Millisecond))
+	if waited > time.Second {
+		t.Errorf("the menu waited %v while a machine was being polled, so the pass "+
+			"is holding the daemon across the round trip again -- a machine that "+
+			"stops answering takes the menu with it",
+			waited.Round(10*time.Millisecond))
 	}
 }
 
