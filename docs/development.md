@@ -207,6 +207,21 @@ That needs a clone with tags, which is why CI checks out with `fetch-depth: 0`.
 The test fails rather than skipping when it cannot find a release to upgrade
 from: one that quietly skips is one that never runs where it matters.
 
+It builds the tree rather than importing it, so **the test cache does not know
+when the daemon has changed**. Editing `internal/syncd` and running this by
+hand answers from the cache, because `internal/project` does not import that
+package and nothing else about the run has changed:
+
+```
+ok  github.com/Poor-Plebs/herdr-remote-panes/internal/project  (cached)
+```
+
+Which is a pass reporting on the code as it was before the edit. Use `-count=1`
+whenever checking an upgrade against a change. `make check` is not affected:
+`-shuffle=on` is not a cacheable flag, so it disables the cache for the whole
+run. The environment variable is part of the cache key, so sweeping several
+versions does run each of them.
+
 Then the two places a version number is written down: the install line near the
 top of the README, and `version` in `herdr-plugin.toml`. A test holds them to
 each other, because neither can be held to the tag — at the moment they are
