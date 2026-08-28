@@ -1444,7 +1444,11 @@ func (d *Daemon) prepareRemote(client *remote.Client) error {
 
 // remoteStartTimeout bounds how long a freshly launched remote session is
 // given to come up.
-const remoteStartTimeout = 10 * time.Second
+//
+// A variable rather than a constant, as the accept grace above: what wants
+// holding is that waiting stops, and a test proving that against ten seconds
+// spends ten seconds doing it.
+var remoteStartTimeout = 10 * time.Second
 
 // waitForRemote polls a just-started remote session until it answers. The
 // server is launched detached over SSH, so it is not listening yet when Start
