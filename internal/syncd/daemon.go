@@ -1814,6 +1814,13 @@ const pruneInterval = time.Minute
 // holds every one of them to that.
 func (d *Daemon) closeRefused(paneID, label, what string, err error) {
 	log.Printf("%s %s: %v", what, paneID, err)
+	if label == "" {
+		// Nothing to tell this pane from the next one to take its id, so it is
+		// left alone rather than closed again on a guess. The pane stays where
+		// a labelled one would have been closed, which is the outcome before
+		// any of this and is the safe half of the trade.
+		return
+	}
 	d.unclosed[paneID] = label
 }
 

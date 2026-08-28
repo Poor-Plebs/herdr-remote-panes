@@ -2325,6 +2325,25 @@ func refuseOnMachine(t *testing.T, path, verbs string) {
 	t.Cleanup(func() { _ = os.Remove(path + ".refuse") })
 }
 
+func TestAnUnlabelledPaneIsNotQueuedForAnotherClose(t *testing.T) {
+	// The label is what tells a refused pane from whatever takes its id next,
+	// so a pane that had none cannot be told apart at all. Queueing it anyway
+	// means the next pane on that id gets closed for it -- the empty string
+	// matching the empty string.
+	//
+	// Not closing it leaves a pane that a labelled one would have had closed,
+	// which is what happened to every refused pane before any of this. Losing
+	// that is the safe half of the trade.
+	withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+
+	d.closeRefused("w1:p6", "", "close", errors.New("herdr said no"))
+
+	if label, ok := d.unclosed["w1:p6"]; ok {
+		t.Errorf("queued a pane with nothing to recognise it by (label %q)", label)
+	}
+}
+
 func TestARecycledPaneIdIsNotClosedByAnOldRefusal(t *testing.T) {
 	// The list of panes to try closing again is a list of ids, and Herdr reuses
 	// ids. A pane that goes by some other route between two passes -- somebody
