@@ -26,6 +26,36 @@ func readmePath(t *testing.T) string {
 	return filepath.Join(root, "README.md")
 }
 
+// docsText is every page of documentation joined together. The picture of the
+// menu and the keys it offers are held to the README itself, because those are
+// about that page; what a state can say is held to the documentation as a
+// whole, since a reader goes looking for the phrase and not for the file --
+// and troubleshooting, which explains most of them, is its own page now.
+func docsText(t *testing.T) string {
+	t.Helper()
+	root, err := project.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, err := filepath.Glob(filepath.Join(root, "docs", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var all strings.Builder
+	for _, page := range append([]string{filepath.Join(root, "README.md")}, pages...) {
+		raw, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all.Write(raw)
+		all.WriteString("\n")
+	}
+	if all.Len() == 0 {
+		t.Fatal("no documentation was read, so this test proves nothing")
+	}
+	return all.String()
+}
+
 // TestTheREADMEShowsTheKeysTheMenuOffers holds the illustration to the menu.
 //
 // The two lines at the foot of it list every key, which is the interface: they
@@ -185,11 +215,7 @@ func TestTheREADMEShowsTheMenuThatIsDrawn(t *testing.T) {
 // here is a list that stops being complete. Counts vary, so a number stands
 // for any number.
 func TestEveryStateTheMenuCanShowIsInTheREADME(t *testing.T) {
-	raw, err := os.ReadFile(readmePath(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	prose := strings.Join(strings.Fields(string(raw)), " ")
+	prose := strings.Join(strings.Fields(docsText(t)), " ")
 
 	shape := reflect.TypeOf(Entry{})
 	var fields []string

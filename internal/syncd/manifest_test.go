@@ -30,6 +30,37 @@ func repoFile(t *testing.T, name string) string {
 	return filepath.Join(root, name)
 }
 
+// docsText is every page of documentation joined together: the README and the
+// pages under docs/. These tests are about something the documentation shows
+// agreeing with what the code does, and which page shows it is a decision that
+// has already changed twice -- the troubleshooting and contributor sections
+// both moved out of the README. Reading the set rather than one file keeps the
+// check about the agreement rather than about where the prose currently sits.
+func docsText(t *testing.T) string {
+	t.Helper()
+	root, err := project.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, err := filepath.Glob(filepath.Join(root, "docs", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var all strings.Builder
+	for _, page := range append([]string{filepath.Join(root, "README.md")}, pages...) {
+		raw, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all.Write(raw)
+		all.WriteString("\n")
+	}
+	if all.Len() == 0 {
+		t.Fatal("no documentation was read, so this test proves nothing")
+	}
+	return all.String()
+}
+
 // TestManifestDescriptionsDoNotClaimMirroring guards a surface that has no
 // other check on it.
 //
@@ -112,24 +143,21 @@ func TestTheREADMEOnlyBindsActionsThatExist(t *testing.T) {
 	// The README shows keybindings to copy into config.toml. An action id that
 	// does not exist produces a binding that does nothing, and Herdr will not
 	// say why -- the same silence as a keybinding that clashes with a built-in.
-	readme, err := os.ReadFile(repoFile(t, "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	readme := docsText(t)
 	manifest, err := os.ReadFile(repoFile(t, "herdr-plugin.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	referenced := regexp.MustCompile(`poorplebs\.remote-panes\.([a-z-]+)`).
-		FindAllStringSubmatch(string(readme), -1)
+		FindAllStringSubmatch(readme, -1)
 	if len(referenced) == 0 {
-		t.Fatal("the README references no actions; this test needs rewriting")
+		t.Fatal("the documentation references no actions; this test needs rewriting")
 	}
 
 	for _, m := range referenced {
 		if !strings.Contains(string(manifest), `id = "`+m[1]+`"`) {
-			t.Errorf("the README binds %q, which is not an action this offers", m[0])
+			t.Errorf("the documentation binds %q, which is not an action this offers", m[0])
 		}
 	}
 }

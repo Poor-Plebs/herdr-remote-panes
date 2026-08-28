@@ -510,7 +510,7 @@ func TestEveryStateAMachineCanBeInIsInTheREADME(t *testing.T) {
 	// Matched on a phrase rather than the whole line: the line carries a
 	// machine's name and a count, and the README quotes the part that is the
 	// same for everyone.
-	prose := strings.Join(strings.Fields(readmeText(t)), " ")
+	prose := strings.Join(strings.Fields(docsText(t)), " ")
 
 	for _, tt := range []struct {
 		host   syncd.HostInfo
@@ -542,21 +542,35 @@ func TestEveryStateAMachineCanBeInIsInTheREADME(t *testing.T) {
 	}
 }
 
-// readmeText is the README, for tests about what it says.
-func readmeText(t *testing.T) string {
+// docsText is every page of documentation joined together: the README and the
+// pages under docs/. These tests are about something the documentation shows
+// agreeing with what the code does, and which page shows it is a decision that
+// has already changed twice -- the troubleshooting and contributor sections
+// both moved out of the README. Reading the set rather than one file keeps the
+// check about the agreement rather than about where the prose currently sits.
+func docsText(t *testing.T) string {
 	t.Helper()
-	// From the top of the repository rather than beside this package: the
-	// README is one file for the whole tree, and this test moved out of the
-	// root it used to sit in.
 	root, err := project.Root()
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(filepath.Join(root, "README.md"))
+	pages, err := filepath.Glob(filepath.Join(root, "docs", "*.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(raw)
+	var all strings.Builder
+	for _, page := range append([]string{filepath.Join(root, "README.md")}, pages...) {
+		raw, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all.Write(raw)
+		all.WriteString("\n")
+	}
+	if all.Len() == 0 {
+		t.Fatal("no documentation was read, so this test proves nothing")
+	}
+	return all.String()
 }
 
 func TestTheREADMEQuotesAStatusLineTheCodeWouldPrint(t *testing.T) {
@@ -570,7 +584,7 @@ func TestTheREADMEQuotesAStatusLineTheCodeWouldPrint(t *testing.T) {
 	want := "  bot  2 ssh  mirroring off: no herdr found on the machine — " +
 		"set herdr_bin if it is installed elsewhere there"
 
-	if !strings.Contains(readmeText(t), want) {
+	if !strings.Contains(docsText(t), want) {
 		t.Errorf("the README does not show this line, which is what status prints "+
 			"for a machine that could not mirror:\n%s", want)
 	}

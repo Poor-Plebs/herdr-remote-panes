@@ -10,19 +10,35 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/project"
 )
 
-// repoFile names a file at the top of the repository.
-//
-// Asked for rather than counted to with "..": a path that is merely wrong
-// reads no file, and a test that reads no file passes every check it makes
-// about what is missing from it. This repository has moved a package once
-// already.
-func repoFile(t *testing.T, name string) string {
+// docsText is every page of documentation joined together: the README and the
+// pages under docs/. These tests are about something the documentation shows
+// agreeing with what the code does, and which page shows it is a decision that
+// has already changed twice -- the troubleshooting and contributor sections
+// both moved out of the README. Reading the set rather than one file keeps the
+// check about the agreement rather than about where the prose currently sits.
+func docsText(t *testing.T) string {
 	t.Helper()
 	root, err := project.Root()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return filepath.Join(root, name)
+	pages, err := filepath.Glob(filepath.Join(root, "docs", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var all strings.Builder
+	for _, page := range append([]string{filepath.Join(root, "README.md")}, pages...) {
+		raw, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all.Write(raw)
+		all.WriteString("\n")
+	}
+	if all.Len() == 0 {
+		t.Fatal("no documentation was read, so this test proves nothing")
+	}
+	return all.String()
 }
 
 func TestShortIsAlwaysSomethingPrintable(t *testing.T) {
@@ -155,16 +171,13 @@ func TestTheREADMEQuotesTheWarningTheCodeActuallyPrints(t *testing.T) {
 	// recognises it when it appears. Written out by hand it agrees with the
 	// code until the wording changes, and then it describes a message nobody
 	// has ever seen.
-	readme, err := os.ReadFile(repoFile(t, "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	readme := docsText(t)
 	const marker = "warning: the running daemon is "
-	i := strings.Index(string(readme), marker)
+	i := strings.Index(readme, marker)
 	if i < 0 {
-		t.Fatalf("the README no longer quotes %q", strings.TrimSpace(marker))
+		t.Fatalf("the documentation no longer quotes %q", strings.TrimSpace(marker))
 	}
-	block := string(readme)[i:]
+	block := readme[i:]
 	block = block[:strings.Index(block, "```")]
 
 	// The README wraps it across two lines to fit the page; the message is one.

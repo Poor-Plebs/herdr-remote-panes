@@ -9,8 +9,10 @@ import (
 	"testing"
 )
 
-// readmeProse is the README with the line breaks taken out, so a test looking
-// for a sentence finds it wherever the text happens to wrap.
+// readmeProse is the documentation with the line breaks taken out, so a test
+// looking for a sentence finds it wherever the text happens to wrap -- and on
+// whichever page it currently sits, since the troubleshooting and contributor
+// sections have both moved out of the README.
 //
 // Matching the file as it is written means a test can fail for a paragraph
 // being reflowed while the sentence it is about is still there and still true.
@@ -24,11 +26,7 @@ import (
 // the thing being checked.
 func readmeProse(t *testing.T) string {
 	t.Helper()
-	raw, err := os.ReadFile(repoFile(t, "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return strings.Join(strings.Fields(string(raw)), " ")
+	return strings.Join(strings.Fields(docsText(t)), " ")
 }
 
 // TestTheREADMESortsFailuresTheWayTheCodeDoes holds a claim in prose to the
@@ -59,7 +57,7 @@ func TestTheREADMESortsFailuresTheWayTheCodeDoes(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.said, func(t *testing.T) {
 			if !strings.Contains(text, tt.said) {
-				t.Fatalf("the README no longer says %q; this test is describing a "+
+				t.Fatalf("the documentation no longer says %q; this test is describing a "+
 					"document that has moved on", tt.said)
 			}
 			if got := planGiveUp(0, errors.New(tt.message)); got != tt.settled {

@@ -26,6 +26,31 @@ func repoFile(t *testing.T, name string) string {
 	return filepath.Join(root, name)
 }
 
+// docsText is every page of documentation joined together: the README and the
+// pages under docs/. For a check about the documentation agreeing with the
+// code, which page carries the sentence is not the point -- and it has already
+// changed twice, when troubleshooting and the contributor notes moved out.
+func docsText(t *testing.T) string {
+	t.Helper()
+	pages, err := filepath.Glob(repoFile(t, filepath.Join("docs", "*.md")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var all strings.Builder
+	for _, page := range append([]string{repoFile(t, "README.md")}, pages...) {
+		raw, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all.Write(raw)
+		all.WriteString("\n")
+	}
+	if all.Len() == 0 {
+		t.Fatal("no documentation was read, so this test proves nothing")
+	}
+	return all.String()
+}
+
 // TestTheREADMEShowsAWarningThisCanProduce guards an example against the code
 // it claims to be an example of.
 //
@@ -33,10 +58,7 @@ func repoFile(t *testing.T, name string) string {
 // somebody can recognise it. An example that has drifted from the wording is
 // worse than none: it is recognisable as something this never says.
 func TestTheREADMEShowsAWarningThisCanProduce(t *testing.T) {
-	readme, err := os.ReadFile(repoFile(t, "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	readme := []byte(docsText(t))
 	source, err := os.ReadFile("validate.go")
 	if err != nil {
 		t.Fatal(err)
@@ -158,10 +180,7 @@ func TestTheREADMEQuotesTheCollisionWarningWordForWord(t *testing.T) {
 	// The README quotes this so it can be recognised when it appears. Written
 	// out by hand it agrees with the code until the wording changes, and then
 	// it describes a message nobody has ever seen.
-	readme, err := os.ReadFile(repoFile(t, "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	readme := []byte(docsText(t))
 	const marker = "hosts \"bot\" and \"ci\" are both called"
 	i := strings.Index(string(readme), marker)
 	if i < 0 {

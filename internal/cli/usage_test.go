@@ -186,7 +186,7 @@ func TestTheREADMEShowsWhatVersionActuallyPrints(t *testing.T) {
 	// The README shows the two-line answer with its columns lined up. Written
 	// out by hand it agrees with the code until either label changes, and then
 	// it quietly shows a layout the command has never produced.
-	body := readmeText(t)
+	body := docsText(t)
 	const marker = "$ herdr-remote-panes version\n"
 	i := strings.Index(body, marker)
 	if i < 0 {
@@ -438,7 +438,7 @@ func TestTheREADMEShowsTheVersionOutputThatIsPrinted(t *testing.T) {
 	// The revisions the README happens to use, taken from what it shows rather
 	// than repeated here, so rewriting the example does not need this changed.
 	shown := regexp.MustCompile(`herdr-remote-panes ([0-9a-f]{7})\ndaemon +([0-9a-f]{7})`).
-		FindStringSubmatch(readmeText(t))
+		FindStringSubmatch(docsText(t))
 	if shown == nil {
 		t.Fatal("the README no longer shows the two lines `version` prints")
 	}

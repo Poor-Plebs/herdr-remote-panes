@@ -161,10 +161,7 @@ func TestTheREADMESaysHowSoonAMachineStops(t *testing.T) {
 	// machines have all stopped after a laptop woke up. The number is the poll
 	// interval, and a poll interval changed here would leave the page saying
 	// something that used to be true.
-	readme, err := os.ReadFile(repoFile(t, "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	readme := []byte(docsText(t))
 	poll := Defaults().PollInterval
 	if poll == "" {
 		t.Fatal("there is no default poll interval")
