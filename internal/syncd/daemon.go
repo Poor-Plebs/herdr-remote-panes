@@ -1004,7 +1004,13 @@ func (d *Daemon) closeRemoteTerminals(state *hostSync, terminalIDs []string, rem
 			// listing this works from is a moment old, and somebody may have
 			// closed it there in between.
 			if !herdrcli.IsNotFound(err) {
-				log.Printf("close %s on %s: %s", paneID, state.host.Target, summarizeError(err))
+				// Said as what it means rather than as what failed. The tab is
+				// gone from here and the work is still running over there, and
+				// nothing else will say so: the terminal is recorded as one
+				// somebody closed, so it is not mirrored again either.
+				log.Printf("%s: could not close terminal %s, so it is still "+
+					"running there while its tab here has gone: %s",
+					state.host.Target, paneID, summarizeError(err))
 				continue
 			}
 		}

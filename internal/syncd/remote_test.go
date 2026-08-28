@@ -458,6 +458,64 @@ func TestClosingAMirroredTabClosesItOnTheMachine(t *testing.T) {
 	}
 }
 
+func TestATerminalThatWouldNotCloseOnTheMachineSaysSo(t *testing.T) {
+	// Closing a mirrored tab closes the terminal on the machine, and that is a
+	// call to the machine like any other: it can be refused. The tab has gone
+	// here by then and the work is still running there.
+	//
+	// Nothing else says so. The terminal is recorded as one somebody closed,
+	// so it is not mirrored again and does not come back on its own -- the
+	// divergence is silent, and the log line is the whole of what anyone gets.
+	// So it says what it means rather than which call failed.
+	here := withFakeHerdr(t)
+	there, remoteState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+	if reply := d.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
+		t.Fatalf("open: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+	if got := len(there().Panes); got != 2 {
+		t.Fatalf("the machine has %d terminals, want 2 to start from", got)
+	}
+
+	// The machine will not close anything from here on.
+	refuseOnMachine(t, remoteState, "pane close")
+
+	var said strings.Builder
+	log.SetOutput(&said)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	var mirror string
+	for id := range here().Panes {
+		mirror = id
+	}
+	closePaneByHand(t, mirror)
+	settle(t, d, here, 3, there)
+
+	// Checked before the message: if nothing tried to close it, the message
+	// below would be right about a different thing.
+	if got := len(there().Panes); got != 2 {
+		t.Fatalf("the machine has %d terminals, so the close was not refused "+
+			"and this is testing nothing", got)
+	}
+	if !strings.Contains(said.String(), "still running there") {
+		t.Errorf("a terminal that would not close said nothing about still "+
+			"running on the machine:\n%s", said.String())
+	}
+	if !strings.Contains(said.String(), "bot") {
+		t.Errorf("it does not name the machine, which is what somebody needs "+
+			"to go and look:\n%s", said.String())
+	}
+}
+
 // deleteSpaceOn removes a space and everything in it from a machine, as closing
 // its last tab there does.
 func deleteSpaceOn(t *testing.T, statePath, workspace string) {

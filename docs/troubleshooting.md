@@ -311,6 +311,23 @@ because the machine has work on it that this one does not:
 Like the cap below, `scope` is one setting for every machine rather than one
 per machine.
 
+**A tab you closed is still running on the machine.** Closing a mirrored tab
+closes the terminal on the machine too, and that is a call to the machine like
+any other: it can fail. When it does, the tab has gone here and the work is
+still running there.
+
+Nothing else will tell you. The terminal is recorded as one you closed, so it
+is not mirrored again and does not come back on its own. `mirror.log` has a
+line naming the machine and the terminal:
+
+```
+bot: could not close terminal w2:p3, so it is still running there while its
+tab here has gone: …
+```
+
+Connecting to the machine again brings it back, because connecting forgets
+what was closed — that is what makes it the way to see terminals you dismissed.
+
 **A machine says `at the mirror limit`.** One machine may mirror only so many
 terminals, so that a runaway pane count on a remote cannot flood the session
 here. The rest are not mirrored and are not retried: they were never attempted,
