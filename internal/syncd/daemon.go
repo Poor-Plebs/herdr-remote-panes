@@ -1831,9 +1831,13 @@ func (d *Daemon) closeRefused(paneID, label, what string, err error) {
 // longer there is dropped -- it went by some other route, which is the outcome
 // this wanted.
 func (d *Daemon) retryUnclosed(index *paneIndex) {
+	// Decided under the lock, done outside it. Each of these is a subprocess,
+	// and the daemon answers the menu on this lock: holding it across a call to
+	// Herdr is how a machine's trouble becomes a menu that will not open. The
+	// pass releases it to fetch its pane listing for the same reason.
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
+	type refused struct{ paneID, label string }
+	var again []refused
 	for paneID, label := range d.unclosed {
 		// Gone, or no longer the pane that was refused: Herdr reuses ids, and
 		// closing this one by id would close whatever has since taken it.
@@ -1841,11 +1845,29 @@ func (d *Daemon) retryUnclosed(index *paneIndex) {
 			delete(d.unclosed, paneID)
 			continue
 		}
-		if err := herdrcli.ClosePaneByID(paneID); err != nil {
+		again = append(again, refused{paneID, label})
+	}
+	d.mu.Unlock()
+
+	closed := make([]string, 0, len(again))
+	for _, r := range again {
+		if err := herdrcli.ClosePaneByID(r.paneID); err != nil {
 			continue
 		}
+		closed = append(closed, r.paneID)
+		// The listing this pass works from, as every other close corrects. Not
+		// shared yet: the per-machine goroutines start after this returns.
+		index.remove(r.paneID)
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, paneID := range closed {
+		// A refusal for this id recorded while the lock was down is dropped
+		// with it. That costs one retry of a pane that is already gone by this
+		// id, and the alternative -- keeping an entry this cannot identify --
+		// is the thing being avoided everywhere else here.
 		delete(d.unclosed, paneID)
-		index.remove(paneID)
 	}
 }
 
