@@ -873,3 +873,62 @@ func second() bool {
 		}
 	}
 }
+
+func TestTheReportIsGroupedByFileAndInOrder(t *testing.T) {
+	// A sweep of a package reports dozens of mutations and the list is read
+	// from the top. Grouped by file and in the order they appear in it, that
+	// reads as a walk through the source; ungrouped, the same lines arrive
+	// interleaved and somebody has to sort them by eye every run.
+	work := t.TempDir()
+	pkg := filepath.Join(work, "internal", "thing")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Two files, each with several decisions, written in an order that is not
+	// the order they should come back in.
+	for _, name := range []string{"zebra.go", "alpha.go"} {
+		body := "package thing\n\n" +
+			"func a" + strings.TrimSuffix(name, ".go") + "(n int) bool { return n > 0 }\n" +
+			"func b" + strings.TrimSuffix(name, ".go") + "(n int) bool { return n > 1 }\n" +
+			"func c" + strings.TrimSuffix(name, ".go") + "(n int) bool { return n > 2 }\n"
+		if err := os.WriteFile(filepath.Join(pkg, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	covered := map[string]map[int]bool{
+		"internal/thing/zebra.go": {3: true, 4: true, 5: true},
+		"internal/thing/alpha.go": {3: true, 4: true, 5: true},
+	}
+
+	muts, _, _, err := mutationsIn(work, "./internal/thing", nil, covered, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(muts) < 6 {
+		t.Fatalf("found %d mutations across two files, which is too few to be "+
+			"testing an order", len(muts))
+	}
+
+	// Each file's mutations arrive together.
+	seen := map[string]bool{}
+	file := ""
+	for _, m := range muts {
+		if m.file == file {
+			continue
+		}
+		if seen[m.file] {
+			t.Errorf("%s comes back in more than one run of lines; the list is "+
+				"not grouped by file", m.file)
+		}
+		seen[m.file] = true
+		file = m.file
+	}
+	// And within a file, in the order the lines are in it.
+	at := map[string]int{}
+	for _, m := range muts {
+		if last, ok := at[m.file]; ok && m.offset < last {
+			t.Errorf("%s: offset %d comes after %d", m.file, m.offset, last)
+		}
+		at[m.file] = m.offset
+	}
+}

@@ -160,3 +160,6 @@ internal/mirror/mousegate.go	< -> <=	if len(seq) < 5 || seq[0] != escape || seq[
 internal/syncd/daemon.go	< -> <=	if scheduled == 0 || wait < soonest {	scheduleWholePassRetry
 internal/syncd/plan.go	< -> <=	if found == "" || paneID < found {	planFollowSibling
 internal/capped/capped.go	> -> >=	if room := Max - c.Buf.Len(); room > 0 {	Write
+tools/mutants/main.go	< -> <=	return out[i].offset < out[j].offset	mutationsIn
+tools/mutants/main.go	< -> <=	if at.Line-1 < len(lines) {	sourceLine
+tools/mutants/main.go	< -> <=	return out[i].file < out[j].file	mutationsIn
