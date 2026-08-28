@@ -775,3 +775,101 @@ func TestARestrictedSweepIsNotRecordedAsThePackage(t *testing.T) {
 			"others do not:\n%s", lines, raw)
 	}
 }
+
+func TestTheRecordKeepsItsHeaderAsAHeader(t *testing.T) {
+	// Rewriting the file means reading back what is in it and keeping the
+	// lines that are entries. Getting the test for "not an entry" wrong turns
+	// the explanation at the top into data: every comment and blank line
+	// written back as though it were a package that had been swept.
+	path := filepath.Join(t.TempDir(), "swept.tsv")
+	recordSweep(path, "./internal/one", "", nil, 5, 5, 0, 0)
+	recordSweep(path, "./internal/two", "", nil, 3, 3, 0, 0)
+	recordSweep(path, "./internal/one", "", nil, 6, 6, 0, 0)
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	comments, entries, blanks := 0, 0, 0
+	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		switch {
+		case strings.HasPrefix(line, "#"):
+			comments++
+		case line == "":
+			blanks++
+		default:
+			entries++
+		}
+	}
+	if entries != 2 {
+		t.Errorf("%d entries after three runs over two packages; want one each:\n%s",
+			entries, raw)
+	}
+	if blanks != 0 {
+		t.Errorf("%d blank lines were written back as entries:\n%s", blanks, raw)
+	}
+	// The header is written fresh each time, so it must not also be kept from
+	// the last one.
+	if comments < 5 || comments > 20 {
+		t.Errorf("%d comment lines: the header is being kept as well as written:\n%s",
+			comments, raw)
+	}
+}
+
+func TestALineIsAttributedToTheFunctionItIsIn(t *testing.T) {
+	// read.tsv names the function for a line that appears more than once in a
+	// file and does not mean the same thing both times -- with only the line to
+	// go on, deciding one of them decides the other. So attributing a position
+	// to the wrong function quietly settles a judgement about code nobody read.
+	src := `package thing
+
+func first() bool {
+	return true
+}
+
+func second() bool {
+	return false
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "thing.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	within := enclosingFuncs(fset, file)
+
+	var firstPos, secondPos token.Pos
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		switch fn.Name.Name {
+		case "first":
+			firstPos = fn.Body.Pos() + 2
+		case "second":
+			secondPos = fn.Body.Pos() + 2
+		}
+	}
+
+	if got := within(firstPos); got != "first" {
+		t.Errorf("a line inside first is attributed to %q", got)
+	}
+	if got := within(secondPos); got != "second" {
+		t.Errorf("a line inside second is attributed to %q", got)
+	}
+	// Outside any of them -- the package clause -- belongs to none.
+	if got := within(file.Package); got != "" {
+		t.Errorf("a line outside every function is attributed to %q", got)
+	}
+	// And the very edges, since the range is what decides this.
+	for _, decl := range file.Decls {
+		fn := decl.(*ast.FuncDecl)
+		if got := within(fn.Pos()); got != fn.Name.Name {
+			t.Errorf("the first position of %s is attributed to %q", fn.Name.Name, got)
+		}
+		if got := within(fn.End()); got == fn.Name.Name {
+			t.Errorf("the position just past %s is still attributed to it", fn.Name.Name)
+		}
+	}
+}
