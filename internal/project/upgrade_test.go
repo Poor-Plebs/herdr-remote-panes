@@ -143,6 +143,20 @@ func (s *saidWhat) String() string {
 // says what the clone needs.
 func previousRelease(t *testing.T) string {
 	t.Helper()
+
+	// No repository at all is not the same as a repository without tags, and
+	// only the second is a problem. The mutation sweep copies the tree to a
+	// temporary directory to mutate it, and copies no .git with it -- so
+	// failing on that would mean this package could never be swept, which is
+	// a real cost for a check that CI runs on every push regardless.
+	//
+	// A shallow clone still fails below: it has a .git and no tags, which is
+	// a clone that cannot answer the question rather than a tree that was
+	// never asked to.
+	if err := exec.Command("git", "rev-parse", "--git-dir").Run(); err != nil {
+		t.Skip("not a git repository, so there is no release to upgrade from; " +
+			"CI checks out with fetch-depth: 0 and does run this")
+	}
 	// A particular jump can be asked for, which is how somebody several
 	// versions behind can be told whether their upgrade works rather than
 	// guessed at.
