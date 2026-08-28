@@ -320,6 +320,54 @@ func TestAPaneOpenedByHandInAMirroredMachinesSpaceMovesOntoIt(t *testing.T) {
 	}
 }
 
+func TestAPaneIsNotClosedWhenTheMachineWillNotTakeIt(t *testing.T) {
+	// Capturing a stray is the one path that closes a pane this plugin did not
+	// open, and it closes it because a terminal on the machine is replacing
+	// it. If the machine will not open that terminal there is no replacement,
+	// and closing anyway destroys somebody's shell and whatever was running in
+	// it -- for a feature meant to move work, not lose it.
+	//
+	// The order in the code is what makes it safe: open there, and only then
+	// close here. Reversing those two lines is the mistake this exists for,
+	// and it is invisible on the happy path.
+	here := withFakeHerdr(t)
+	there, remoteState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	remoteBefore := len(there().Panes)
+	var workspace string
+	for _, pane := range here().Panes {
+		workspace, _ = pane["workspace_id"].(string)
+	}
+	if workspace == "" {
+		t.Fatal("the machine has no space here")
+	}
+
+	// From here the machine refuses to open a terminal, which is what the
+	// capture needs before it may close anything.
+	refuseOnMachine(t, remoteState, "tab create")
+	stray := addLocalPane(t, workspace)
+
+	settle(t, d, here, 4, there)
+
+	if _, still := here().Panes[stray]; !still {
+		t.Error("the pane was closed although the machine never opened anything " +
+			"to replace it, so whatever was running in it is gone")
+	}
+	if got := len(there().Panes); got != remoteBefore {
+		t.Errorf("the machine has %d terminals against the %d it had, so the "+
+			"refusal this is about did not happen and it is testing nothing",
+			got, remoteBefore)
+	}
+}
+
 func TestScopeDecidesWhetherTheMachinesOwnWorkIsMirrored(t *testing.T) {
 	// "shared mirrors the shared space; all mirrors everything." The default is
 	// shared, and the reason is in the README: both ends then show the same
