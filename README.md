@@ -895,6 +895,18 @@ They read one list now, and the behaviour test fails if the fixture is missing
 something the list names. When two checks defer to each other, the question is
 what each assumes the other did.
 
+That turned out to be three pairs, not one. The third was the daemon's own
+list, which named the record of a placeholder shell as "cleaned when it goes"
+while the path that says a space is gone did not clear it — a space that went
+before its first mirror arrived left an entry behind, and since Herdr reuses
+space and pane ids, the next space to take that id would retire a pane id that
+by then could belong to a pane somebody was working in.
+
+No sweep can find that one: there was no delete to mutate. Mutation testing
+changes code that exists, so a cleanup nobody wrote is invisible to it, and a
+leak fails nothing in the meantime. What found it was reading the lists as
+claims and asking which of them anything actually held to.
+
 Coverage says which lines a test ran. It does not say whether anything would
 have failed had those lines been wrong, and that gap is worth checking
 directly:
