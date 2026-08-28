@@ -1829,16 +1829,61 @@ func TestAWorkspaceThatIsGoneIsForgotten(t *testing.T) {
 	// ran. This machine's log had them every two seconds.
 	d := withConfig(&Daemon{
 		markedWorkspaces: map[string]workspaceMark{"w37": {token: "remote_up"}},
+		rootPanes:        map[string]string{"w37": "w37:p1"},
 	}, config.Defaults())
 	state := &hostSync{host: config.Host{Target: "prod"}, workspaceID: "w37"}
+
+	// Everything the daemon keys by a space, so the guard's list is a list of
+	// things something actually calls forgetWorkspace with rather than a list
+	// of claims about them.
+	value := reflect.ValueOf(d).Elem()
+	for _, name := range perWorkspaceFields {
+		field := value.FieldByName(name)
+		if !field.IsValid() || field.Kind() != reflect.Map {
+			t.Fatalf("perWorkspaceFields names %s, which is not a map on Daemon", name)
+		}
+		if field.Len() == 0 {
+			t.Fatalf("the fixture never puts a space in %s, so forgetWorkspace is "+
+				"not asked about it -- put w37 in it", name)
+		}
+	}
 
 	d.forgetWorkspace(state, "w37")
 
 	if state.workspaceID != "" {
 		t.Errorf("workspaceID = %q, want it forgotten", state.workspaceID)
 	}
-	if _, ok := d.markedWorkspaces["w37"]; ok {
-		t.Error("the marker bookkeeping outlived the space")
+	for _, name := range perWorkspaceFields {
+		if value.FieldByName(name).Len() != 0 {
+			t.Errorf("%s outlived the space it was about", name)
+		}
+	}
+}
+
+func TestAWorkspaceThatIsGoneLeavesNoPlaceholderBehind(t *testing.T) {
+	// The placeholder is the shell Herdr opens with a space this daemon
+	// created, closed once a mirror is there to hold the space open. If the
+	// space goes before that happens -- the machine drops while its first
+	// mirror is still being made -- nothing was closing the record of it.
+	//
+	// Herdr reuses both space and pane ids. The stale entry is read by
+	// retireRootPane the next time a space takes that id, and the id it holds
+	// may by then belong to a live pane somebody is working in, which it
+	// closes. The aliveness check it makes is not that check: it asks whether
+	// the pane exists, which a recycled id does.
+	d := withConfig(&Daemon{
+		markedWorkspaces: map[string]workspaceMark{"w37": {token: "remote_up"}},
+		rootPanes:        map[string]string{"w37": "w37:p1", "w99": "w99:p1"},
+	}, config.Defaults())
+	state := &hostSync{host: config.Host{Target: "prod"}, workspaceID: "w37"}
+
+	d.forgetWorkspace(state, "w37")
+
+	if root, ok := d.rootPanes["w37"]; ok {
+		t.Errorf("placeholder %q outlived the space it was opened with", root)
+	}
+	if d.rootPanes["w99"] != "w99:p1" {
+		t.Error("forgetting one space took another space's placeholder with it")
 	}
 }
 
@@ -2195,6 +2240,14 @@ var perTerminalFields = []string{
 // in has nothing to do with whether it has to be forgotten.
 var perPaneFields = []string{
 	"labels", "reportedAgents", "shellPanes", "shellPlacement",
+}
+
+// perWorkspaceFields is what the daemon itself remembers per space, cleared by
+// forgetWorkspace. The daemon's own state had no list of this kind, and
+// rootPanes was cleared only where the placeholder was deliberately retired --
+// never on the path that says the space is gone.
+var perWorkspaceFields = []string{
+	"markedWorkspaces", "rootPanes",
 }
 
 func TestNothingIsRememberedAboutATerminalThatIsGone(t *testing.T) {
@@ -3769,8 +3822,13 @@ func TestEverythingTheDaemonRemembersIsCleanedBySomething(t *testing.T) {
 	perPane := map[string]bool{ // keyed by a pane, and cleaned when it goes
 		"seenStray": true,
 	}
-	perWorkspace := map[string]bool{ // keyed by a space, and cleaned when it goes
-		"markedWorkspaces": true, "rootPanes": true,
+	// The list the test on forgetWorkspace fills and checks. It said both of
+	// these were "cleaned when it goes" while rootPanes was cleaned only where
+	// a placeholder was deliberately retired -- a claim in a list nothing was
+	// holding to.
+	perWorkspace := map[string]bool{} // keyed by a space, and cleaned when it goes
+	for _, name := range perWorkspaceFields {
+		perWorkspace[name] = true
 	}
 	// hosts is the record of what is connected rather than something
 	// remembered about it, and an entry goes when the machine is disconnected.

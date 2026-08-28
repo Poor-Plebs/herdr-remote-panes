@@ -3055,6 +3055,10 @@ func (d *Daemon) forgetWorkspace(state *hostSync, workspaceID string) {
 		state.workspaceID = ""
 	}
 	delete(d.markedWorkspaces, workspaceID)
+	// The placeholder went with the space. Keeping the record of it means the
+	// next space to take this id retires a pane id that is no longer the one
+	// this opened, and a recycled id can belong to a pane somebody is in.
+	delete(d.rootPanes, workspaceID)
 }
 
 // workspaceMark is what was last put on a space: the name it was given, the
