@@ -2325,6 +2325,42 @@ func refuseOnMachine(t *testing.T, path, verbs string) {
 	t.Cleanup(func() { _ = os.Remove(path + ".refuse") })
 }
 
+func TestARecycledPaneIdIsNotClosedByAnOldRefusal(t *testing.T) {
+	// The list of panes to try closing again is a list of ids, and Herdr reuses
+	// ids. A pane that goes by some other route between two passes -- somebody
+	// closes it, the space is remade -- can have its id taken by a new pane
+	// before the next pass, and closing by id alone would close whatever had
+	// just been opened there.
+	//
+	// This is the hazard the rest of this file keeps naming: a stale mark meets
+	// a reused id. Retrying a close is a worse version of it than most, because
+	// what it does about the mistake is destroy somebody's terminal.
+	here := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+
+	// Refused while it was a mirror.
+	d.unclosed["w1:p6"] = "build@bot"
+
+	// By the next pass the id belongs to something else entirely.
+	index := newPaneIndex([]herdrcli.Pane{
+		{PaneID: "w1:p6", WorkspaceID: "w1", Label: "notes"},
+	})
+	before := here().Calls["pane close"]
+
+	d.retryUnclosed(index)
+
+	if got := here().Calls["pane close"]; got != before {
+		t.Errorf("closed a pane that had taken the id of a refused one: %d closes, want %d",
+			got, before)
+	}
+	if _, ok := d.unclosed["w1:p6"]; ok {
+		t.Error("the id is still listed to close, so a later pass tries again")
+	}
+	if !index.alive["w1:p6"] {
+		t.Error("the pane that took the id was struck from the listing")
+	}
+}
+
 func TestAPaneHerdrWouldNotCloseIsClosedOnceItWill(t *testing.T) {
 	// Turning mirroring off closes the mirrors and opens a plain terminal.
 	// Every close site logged a refusal and forgot the pane, which reads as
