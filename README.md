@@ -856,6 +856,27 @@ while looking exactly as though it did. Four ways it has, all of them here:
 Each of those produced a result that agreed with what was expected, which is
 when to ask what actually ran.
 
+Changing a default deserves the same treatment, for a reason that is not
+obvious: a test whose premise is a default stops being a test the day the
+default moves, and nothing says so. It keeps passing, and passing is the only
+signal anybody looks at. The check for placement was written when it defaulted
+to `split`, started from `Defaults()`, and went on passing after the default
+became `follow` — under which the terminal it opens arrives as a tab either
+way, so the assertion held whether or not the thing it was testing worked at
+all.
+
+So after moving one, put it back and see which tests notice:
+
+```bash
+# with the default edited back in internal/config
+go test ./internal/syncd/ ./internal/config/
+```
+
+Five noticed that one, which is the behaviour and both documentation checks.
+Anything claiming to be about that setting and *not* in the list has either
+stopped testing it or is independent of it on purpose — and the difference is
+worth establishing rather than assuming.
+
 Coverage says which lines a test ran. It does not say whether anything would
 have failed had those lines been wrong, and that gap is worth checking
 directly:
