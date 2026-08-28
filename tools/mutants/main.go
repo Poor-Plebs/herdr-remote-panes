@@ -199,7 +199,7 @@ func main() {
 		len(muts), caught, len(survived), unusable, time.Since(started).Round(time.Second))
 
 	recordSweep(filepath.Join(root, "tools", "mutants", "swept.tsv"),
-		pkg, os.Args[2:], len(muts), caught, len(survived), unexplained)
+		pkg, since, os.Args[2:], len(muts), caught, len(survived), unexplained)
 
 	// Not when the run was restricted to what changed. This reads a file's
 	// entries against the survivors of a sweep of that file, and a sweep of
@@ -651,12 +651,24 @@ func wasRead(read map[string]string, m mutation) bool {
 // One line per package, replaced each time, so this says what is true now
 // rather than growing a history. The date is the useful part: a package swept
 // before the work that changed it has not really been swept.
-func recordSweep(path, pkg string, files []string, mutations, caught, survived, unexplained int) {
+func recordSweep(path, pkg, since string, files []string, mutations, caught, survived, unexplained int) {
+	// A partial sweep is not the package, and recording it as though it were
+	// claims more than was done. Both ways of restricting one say so: the file
+	// list, and the revision only changes since which were tried.
+	//
+	// Missing the second made this record lie in the way it exists to prevent.
+	// A sweep of the four lines that had changed in syncd overwrote the entry
+	// for the package and left it reading "1 mutation" -- which says the whole
+	// of it was looked at and found to be almost nothing, when several hundred
+	// were never tried.
 	what := pkg
-	if len(files) > 0 {
-		// A partial sweep is not the package, and recording it as though it
-		// were would claim more than was done.
+	switch {
+	case len(files) > 0 && since != "":
+		what = pkg + " (" + strings.Join(files, " ") + ", since " + since + ")"
+	case len(files) > 0:
 		what = pkg + " (" + strings.Join(files, " ") + ")"
+	case since != "":
+		what = pkg + " (since " + since + ")"
 	}
 	line := fmt.Sprintf("%s\t%s\t%d\t%d\t%d\t%d", what, time.Now().Format("2006-01-02"),
 		mutations, caught, survived, unexplained)

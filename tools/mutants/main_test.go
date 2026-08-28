@@ -727,3 +727,51 @@ func TestChangedLinesReadsWhatADiffSays(t *testing.T) {
 		}
 	}
 }
+
+func TestARestrictedSweepIsNotRecordedAsThePackage(t *testing.T) {
+	// This record exists to say what was looked at, so a run that looked at
+	// part of a package must not claim the package. Getting that wrong made it
+	// state the opposite of the truth: a sweep of the four lines that had
+	// changed in a package overwrote its entry and left it reading "1
+	// mutation", which says the whole of it was tried and found to be almost
+	// nothing.
+	path := filepath.Join(t.TempDir(), "swept.tsv")
+	for _, tt := range []struct {
+		what  string
+		since string
+		files []string
+		named string
+	}{
+		{"the whole package", "", nil, "./internal/thing"},
+		{"some of its files", "", []string{"one.go"}, "./internal/thing (one.go)"},
+		{"only what changed", "v1.2.3", nil, "./internal/thing (since v1.2.3)"},
+		{"both at once", "v1.2.3", []string{"one.go"}, "./internal/thing (one.go, since v1.2.3)"},
+	} {
+		recordSweep(path, "./internal/thing", tt.since, tt.files, 7, 6, 1, 0)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), tt.named+"\t") {
+			t.Errorf("%s was recorded as something other than %q:\n%s",
+				tt.what, tt.named, raw)
+		}
+	}
+
+	// And each is its own line: a restricted run replacing the package's entry
+	// is how the record came to overstate what had been done.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(line, "./internal/thing") {
+			lines++
+		}
+	}
+	if lines != 4 {
+		t.Errorf("four different runs left %d lines; each says something the "+
+			"others do not:\n%s", lines, raw)
+	}
+}
