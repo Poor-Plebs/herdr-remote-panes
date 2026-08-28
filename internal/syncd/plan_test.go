@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -3808,6 +3809,85 @@ func TestASiblingMustBeInTheSpaceTheMachineIsUsing(t *testing.T) {
 		t.Errorf("opened beside %q, which is in a space this machine no longer "+
 			"uses; want a tab of its own", got)
 	}
+}
+
+func TestNothingNewTalksToHerdrHoldingTheDaemonsLock(t *testing.T) {
+	// The daemon answers the menu, the status listing and every command on
+	// d.mu. A call to Herdr is a subprocess and a call to a machine is an SSH
+	// round trip, so one made with the lock in hand stops the daemon answering
+	// for as long as it takes -- which is how a machine having trouble becomes
+	// a menu that will not open. Measured at 5.7s behind one slow machine.
+	//
+	// Three do it deliberately and say so where they are. This is here so that
+	// a fourth is a decision somebody makes rather than one that arrives.
+	//
+	// Direct calls only. A locked function calling something that reaches
+	// Herdr two frames down is not found by reading one function at a time,
+	// and saying so is better than implying a guarantee this does not give.
+	deliberate := map[string]string{
+		// Taking the lock only long enough to find the machine and then
+		// working on it unlocked raced the reconcile pass, which reads and
+		// writes the same bookkeeping.
+		"openRemotePane":       "held across the work rather than the lookup",
+		"ensureRemotePresence": "as openRemotePane: held across the work rather than the lookup",
+		"focusHost":            "reads the space the machine is using while deciding to focus it",
+	}
+
+	source, err := os.ReadFile("daemon.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(source), "\n")
+
+	talks := regexp.MustCompile(`herdrcli\.\w+\(|\.client\.Run\(`)
+	fn, held, found := "", 0, 0
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(line, "func ") {
+			fn, held = functionName(line), 0
+		}
+		switch {
+		case strings.Contains(trimmed, "d.mu.Lock()"), strings.Contains(trimmed, "d.mu.RLock()"):
+			held++
+		// A deferred unlock does not unlock here: it unlocks when the function
+		// returns, so everything below it still holds the lock. Counting it
+		// here reported no such calls anywhere, which read as a clean answer
+		// rather than as a broken question -- and the floor below is what
+		// turns that back into a failure.
+		case strings.HasPrefix(trimmed, "d.mu.Unlock()"), strings.HasPrefix(trimmed, "d.mu.RUnlock()"):
+			if held > 0 {
+				held--
+			}
+		}
+		if held == 0 || !talks.MatchString(trimmed) {
+			continue
+		}
+		found++
+		if _, ok := deliberate[fn]; !ok {
+			t.Errorf("daemon.go:%d talks to Herdr or a machine with d.mu held, in %s:\n  %s\n"+
+				"The daemon answers the menu on that lock. Do the call without it, or "+
+				"name %s above with why it has to be this way.", i+1, fn, trimmed, fn)
+		}
+	}
+
+	if found < 3 {
+		t.Fatalf("found %d calls under the lock, which is fewer than there are -- "+
+			"this has stopped matching", found)
+	}
+}
+
+// functionName is the name out of a top-level func line, method or not.
+func functionName(line string) string {
+	name := strings.TrimPrefix(line, "func ")
+	if strings.HasPrefix(name, "(") {
+		if i := strings.Index(name, ") "); i >= 0 {
+			name = name[i+2:]
+		}
+	}
+	if i := strings.Index(name, "("); i >= 0 {
+		name = name[:i]
+	}
+	return strings.TrimSpace(name)
 }
 
 func TestEverythingTheDaemonRemembersIsCleanedBySomething(t *testing.T) {
