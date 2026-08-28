@@ -64,6 +64,11 @@ func FuzzParseKeyDrainsWhatItReads(f *testing.F) {
 		"", "q", "\x1b", "\x1b[", "\x1b[A", "\x1bOA", "\x1b[1;5A", "\x1b[5~",
 		"\x1b[200~abc\x1b[201~", "\x1b[" + strings.Repeat("1;", 200) + "A",
 		"\x00\x01\x02", "日本語", "\x1b[999999999~",
+		// What a terminal sends that is not typing. The first is a click in
+		// the older encoding, whose three raw bytes were read as three
+		// keystrokes until this week.
+		"\x1b[M \x21\x21", "\x1b[M \x30\x21", "\x1b[<0;21;5M", "\x1b[I",
+		"\x1b]11;rgb:1c/1c/1c\x07", "\x1bP1$r0m\x1b\\", "\x1b[12;40R",
 	} {
 		f.Add(seed)
 	}
@@ -82,6 +87,32 @@ func FuzzParseKeyDrainsWhatItReads(f *testing.F) {
 			if r.Len() == before {
 				t.Fatalf("parseKey read nothing from %q at byte %d and returned %v",
 					in, len(in)-before, k)
+			}
+
+			// And a call that began at an escape came back as a key rather
+			// than as a character.
+			//
+			// Weaker than it looks, and worth saying so. It does not catch the
+			// click that was read as three keystrokes this week: that call
+			// began at the escape and returned nothing, correctly, and it was
+			// the three bytes left behind that were read as typing -- by later
+			// calls beginning at a space, where this says nothing. Removing
+			// the fix leaves this passing, which I checked rather than
+			// assumed.
+			//
+			// What holds the click is the table beside it, which drives each
+			// kind of thing a terminal sends and asserts nothing is left over.
+			// This holds the narrower thing: bytes inside a sequence never
+			// come back as a character from the call that read it.
+			if in[len(in)-before] == 0x1b {
+				switch k {
+				case keyUp, keyDown, keyEnter, keyQuit, keyToggle, keyDisconnect,
+					keyTop, keyBottom, keyPageUp, keyPageDown, keyNone:
+				default:
+					t.Fatalf("parseKey(%q) gave %q for the sequence at byte %d: "+
+						"a sequence came back as a character, which the menu acts "+
+						"on as typing", in, rune(k), len(in)-before)
+				}
 			}
 			if i > len(in)+8 {
 				t.Fatalf("draining %q took more calls than it has bytes", in)
