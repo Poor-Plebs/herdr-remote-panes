@@ -195,6 +195,25 @@ Connecting to a slow machine does not do this. That path talks to the machine
 before it takes the daemon, so the menu stays usable while you connect to
 something that is not answering.
 
+**The menu takes a moment to open every time, with nothing wrong.** The same
+mechanism without a machine misbehaving: each one is polled in turn while the
+daemon is held, so what a pass costs is every mirrored machine added together
+rather than the slowest of them. Enough of them and a pass lasts longer than
+the gap between passes, at which point one starts as the last ends and the
+daemon is never idle.
+
+It says so when that happens, once, in `mirror.log`:
+
+```
+a pass took 2.31s, longer than the 2s between passes: machines are polled one
+after another, so this is every machine added together.
+```
+
+A longer `poll_interval` gives the gap back — machines are then noticed a
+little later, which is the trade. Mirroring fewer of them does the same: a
+plain SSH machine is never polled, so it costs nothing here however many you
+have.
+
 **A machine says `ssh` when you asked it to mirror.** Mirroring needs Herdr on
 the machine, and it was not found. Usually it is simply not installed there;
 `ssh` is the fallback rather than a refusal, so the machine still works.

@@ -2979,6 +2979,44 @@ func TestAnAdoptedMachineLearnsWhereItsSpaceIs(t *testing.T) {
 	}
 }
 
+func TestADaemonSaysWhenAPassOutlastsTheGapBetweenPasses(t *testing.T) {
+	// Machines are polled one after another, each holding the lock the daemon
+	// answers the menu on, so a pass costs every machine added together. Past
+	// the poll interval there is no gap left: a pass starts as the last ends
+	// and the daemon is always in one. That is felt as a menu that takes a
+	// moment to open, and had no explanation anywhere -- nothing in the log,
+	// nothing in the status, and each machine individually fine.
+	var said strings.Builder
+	log.SetOutput(&said)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	d := New(machineConfig("bot"))
+
+	// A pass that took a second, against a gap of a hundred milliseconds.
+	d.reportIfSlow(time.Now().Add(-time.Second), 100*time.Millisecond)
+	if !strings.Contains(said.String(), "longer than the") {
+		t.Errorf("a pass over the interval said nothing:\n%s", said.String())
+	}
+	if !strings.Contains(said.String(), "poll_interval") {
+		t.Error("it does not say what to change, which is the point of saying anything")
+	}
+
+	// Still slow: said once, not every couple of seconds for as long as it lasts.
+	said.Reset()
+	d.reportIfSlow(time.Now().Add(-time.Second), 100*time.Millisecond)
+	if said.Len() != 0 {
+		t.Errorf("it said so again while nothing had changed:\n%s", said.String())
+	}
+
+	// Back inside the interval: worth saying once, so the log shows it cleared.
+	said.Reset()
+	d.reportIfSlow(time.Now(), 100*time.Millisecond)
+	if !strings.Contains(said.String(), "back inside") {
+		t.Errorf("recovering said nothing, so the log only ever shows the bad news:\n%s",
+			said.String())
+	}
+}
+
 func TestASteadyPassAsksAMachineOneThing(t *testing.T) {
 	// Every machine is polled on a timer for as long as Herdr is open, so what
 	// one pass costs is paid again every couple of seconds -- and the daemon

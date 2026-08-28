@@ -110,6 +110,11 @@ type Daemon struct {
 	// for as long as the daemon runs.
 	unclosed map[string]string
 
+	// slowPass is whether the last pass took longer than the gap between
+	// passes, so the transition each way is reported once rather than every
+	// couple of seconds.
+	slowPass bool
+
 	// reconciles folds overlapping reconcile requests into one.
 	reconciles coalescer
 
@@ -1871,6 +1876,37 @@ func (d *Daemon) retryUnclosed(index *paneIndex) {
 	}
 }
 
+// reportIfSlow says when a pass is taking longer than the gap between passes.
+//
+// Machines are polled one after another, each holding the lock the daemon
+// answers the menu on, so a pass costs the sum of them. Once that exceeds the
+// interval there is no gap left: the next pass starts as the last one ends and
+// the daemon is always in one, which is felt as a menu that takes a moment to
+// open and has no other explanation anywhere.
+//
+// Said once when it starts and once when it stops, because a line every couple
+// of seconds is how a log stops being read.
+func (d *Daemon) reportIfSlow(start time.Time, interval time.Duration) {
+	took := time.Since(start)
+	slow := took > interval
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if slow == d.slowPass {
+		return
+	}
+	d.slowPass = slow
+	if slow {
+		log.Printf("a pass took %v, longer than the %v between passes: machines are "+
+			"polled one after another, so this is every machine added together. "+
+			"The menu waits on it; a longer poll_interval or fewer mirrored "+
+			"machines is what shortens the wait.", took.Round(time.Millisecond), interval)
+		return
+	}
+	log.Printf("a pass is back inside the %v between passes, at %v",
+		interval, took.Round(time.Millisecond))
+}
+
 func (d *Daemon) maybePrune(alive map[string]bool) {
 	now := time.Now()
 	if last := d.lastPrune.Load(); last != 0 && now.Sub(time.Unix(0, last)) < pruneInterval {
@@ -2014,6 +2050,8 @@ func (d *Daemon) reconcileAll() {
 func (d *Daemon) reconcileOnce() {
 	// Before anything is decided from it.
 	d.rereadConfig()
+
+	defer d.reportIfSlow(time.Now(), d.config().Interval())
 
 	d.mu.Lock()
 	states := make([]*hostSync, 0, len(d.hosts))
