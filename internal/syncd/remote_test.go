@@ -2965,11 +2965,22 @@ func TestAnAdoptedMachineLearnsWhereItsSpaceIs(t *testing.T) {
 	state.workspaceID = ""
 	mirrorIsRunning(t, "w1:p1", "term-1")
 
+	// Known to the daemon, as a machine a pass reconciles always is. The pass
+	// gives up its lock for the round trip to the machine and checks on the
+	// way back that this is still the machine it started on; a state the
+	// daemon has never heard of does not survive that check.
+	d.hosts = map[string]*hostSync{host.Target: state}
+
 	index := newPaneIndex([]herdrcli.Pane{
 		{PaneID: "w1:p1", WorkspaceID: "w1", TerminalID: "term-1", Label: "shell@bot"},
 	})
 
-	if err := d.reconcileHost(state, index); err != nil {
+	// Held, as the pass holds it: reconcileHost gives the lock up for the round
+	// trip to the machine and takes it again.
+	d.mu.Lock()
+	err := d.reconcileHost(state, index)
+	d.mu.Unlock()
+	if err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
@@ -2980,12 +2991,11 @@ func TestAnAdoptedMachineLearnsWhereItsSpaceIs(t *testing.T) {
 }
 
 func TestADaemonSaysWhenAPassOutlastsTheGapBetweenPasses(t *testing.T) {
-	// Machines are polled one after another, each holding the lock the daemon
-	// answers the menu on, so a pass costs every machine added together. Past
-	// the poll interval there is no gap left: a pass starts as the last ends
-	// and the daemon is always in one. That is felt as a menu that takes a
-	// moment to open, and had no explanation anywhere -- nothing in the log,
-	// nothing in the status, and each machine individually fine.
+	// A pass costs about what its slowest machine costs. Past the poll interval
+	// there is no gap left: a pass starts as the last ends and the daemon is
+	// always in one. That is felt as a menu that takes a moment to open, and
+	// had no explanation anywhere -- nothing in the log, nothing in the status,
+	// and each machine individually fine.
 	var said strings.Builder
 	log.SetOutput(&said)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
@@ -3697,16 +3707,17 @@ func TestATabYouClosedStaysClosedAcrossARestart(t *testing.T) {
 //
 //	HRP_TIMING=1 go test ./internal/syncd/ -run PassCostsEveryMachine -v
 //
-// A goroutine is started per machine, which reads as polling them at the same
-// time. Each one takes d.mu first and holds it for the whole of its work, and
-// that work includes asking the machine over SSH for its panes -- so they run
-// strictly one after another, and the daemon's lock is held across every one
-// of those round trips.
+// A goroutine is started per machine, and each gives up the daemon's lock for
+// the round trip that asks its machine for panes -- so the round trips overlap
+// and a pass costs about what the slowest machine costs.
 //
-// It matters because that lock is what answers the menu, the status listing
-// and every command. The cost of a pass is the sum over machines rather than
-// the slowest of them, and a machine that is merely slow rather than broken
-// adds its whole latency to how long the menu takes to open.
+// It did not. Each goroutine took d.mu and held it across its own round trip,
+// so they ran strictly one after another and a pass cost every machine added
+// together: three at 300ms cost 910ms, where one cost 610ms. That lock is what
+// answers the menu, so that was the menu's wait.
+//
+// Kept because the property is worth holding rather than assuming: this is the
+// measurement that says whether the round trips still overlap.
 //
 // Opt-in: it sleeps in a stand-in ssh to make the difference legible, so it
 // takes seconds, and timing on a shared CI runner is not a thing to fail a
@@ -3755,13 +3766,18 @@ func TestAPassCostsEveryMachineAddedTogether(t *testing.T) {
 
 	t.Logf("one machine: %v", one.Round(10*time.Millisecond))
 	t.Logf("three machines: %v", three.Round(10*time.Millisecond))
-	t.Logf("polled at the same time this would be about %v; one after another, about %v",
+	t.Logf("polled together this is about %v; one after another it was about %v",
 		one.Round(10*time.Millisecond), (3 * one).Round(10*time.Millisecond))
 
-	// Reported rather than failed. What the right arrangement is has not been
-	// decided, and a test that fails until it is would only be turned off.
-	if three < 2*one {
-		t.Logf("NOTE: a pass is no longer the sum of its machines -- if the pass " +
-			"has been restructured, this comment and the ones on d.mu want revisiting")
+	// Held now, rather than only reported. Three machines costing appreciably
+	// more than one is the pass having gone back to waiting on each in turn.
+	//
+	// Generous, because it is a timing test: meant to tell three-times from
+	// one-times, not to police jitter on a busy machine.
+	if three > 2*one {
+		t.Errorf("three machines cost %v against one machine's %v, so the round "+
+			"trips are no longer overlapping -- a pass is back to costing every "+
+			"machine added together, which is what the menu waits for",
+			three.Round(10*time.Millisecond), one.Round(10*time.Millisecond))
 	}
 }

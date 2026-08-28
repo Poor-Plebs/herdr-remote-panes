@@ -153,21 +153,20 @@ What a reconcile pass costs is measurable the same way:
 HRP_TIMING=1 go test ./internal/syncd/ -run PassCostsEveryMachine -v
 ```
 
-A goroutine is started per machine, which reads as polling them at the same
-time. Each takes the daemon's lock first and holds it for the whole of its
-work, and that work includes asking the machine over SSH for its panes — so
-they run one after another with the lock held across every round trip.
+A goroutine is started per machine, and each gives up the daemon's lock for
+the round trip that asks its machine for panes, so those overlap: with a
+stand-in ssh at 300ms, one machine is 310ms and so are three.
 
-That lock is what answers the menu, the status listing and every command, so
-the cost of a pass is what the menu waits for: the sum over machines rather
-than the slowest of them. With a stand-in ssh that takes 300ms, one machine is
-300ms and three are 910ms — still the sum, and each machine added costs its
-whole latency again.
+Both halves of that were paid for. Each goroutine used to hold the lock across
+its own round trip, so they ran strictly one after another and a pass cost
+every machine added together — three machines 1.83s. Asking each machine one
+thing rather than two halved it to 910ms; overlapping the round trips took it
+to 310ms, where it is the slowest machine rather than the sum.
 
-A settled pass asks a machine one thing, its pane listing. It asked two until
-the tab order became conditional: that order decides the sequence mirrors are
-opened in, and a pass with nothing to open does not need it. One machine was
-610ms and three were 1.83s before that.
+The lock is what answers the menu, the status listing and every command, so a
+pass is what the menu waits for. The test above fails if three machines cost
+appreciably more than one, which is the pass having gone back to waiting on
+each in turn.
 
 ## Cutting a release
 

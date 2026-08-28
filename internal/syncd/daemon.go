@@ -1878,11 +1878,12 @@ func (d *Daemon) retryUnclosed(index *paneIndex) {
 
 // reportIfSlow says when a pass is taking longer than the gap between passes.
 //
-// Machines are polled one after another, each holding the lock the daemon
-// answers the menu on, so a pass costs the sum of them. Once that exceeds the
-// interval there is no gap left: the next pass starts as the last one ends and
-// the daemon is always in one, which is felt as a menu that takes a moment to
-// open and has no other explanation anywhere.
+// Machines are polled at the same time now, so a pass costs about what the
+// slowest of them costs rather than all of them added together. It can still
+// outrun the interval -- one machine slow enough does it on its own. Once it
+// does there is no gap left: the next pass starts as the last one ends and the
+// daemon is always in one, which is felt as a menu that takes a moment to open
+// and has no other explanation anywhere.
 //
 // Said once when it starts and once when it stops, because a line every couple
 // of seconds is how a log stops being read.
@@ -1901,9 +1902,10 @@ func (d *Daemon) reportIfSlow(took, interval time.Duration) {
 	d.slowPass = slow
 	if slow {
 		log.Printf("a pass took %v, longer than the %v between passes: machines are "+
-			"polled one after another, so this is every machine added together. "+
-			"The menu waits on it; a longer poll_interval or fewer mirrored "+
-			"machines is what shortens the wait.", took.Round(time.Millisecond), interval)
+			"polled together, so this is about what the slowest of them costs. "+
+			"The menu waits on it; a longer poll_interval, or not mirroring "+
+			"whichever machine is slow, is what shortens the wait.",
+			took.Round(time.Millisecond), interval)
 		return
 	}
 	log.Printf("a pass is back inside the %v between passes, at %v",
@@ -2137,6 +2139,13 @@ func (d *Daemon) reconcileOnce() {
 				state.failCount = 0
 			}
 			err := d.reconcileHost(state, index)
+			// Disconnected while its panes were being fetched. Nothing about
+			// this machine is still this pass's to decide, and counting it as
+			// a failure would give up on a machine somebody had just let go of
+			// deliberately.
+			if errors.Is(err, errWentAwayMidPass) {
+				return
+			}
 			if err != nil && (state.lastErr == nil || state.lastErr.Error() != err.Error()) {
 				log.Printf("reconcile %s: %s", state.host.Target, summarizeError(err))
 			}
@@ -2329,7 +2338,43 @@ func forgetTerminals(state *hostSync, seen map[string]bool) {
 	}
 }
 
+// errWentAwayMidPass says the machine was disconnected while its panes were
+// being fetched. Not a failure of the machine, so nothing is recorded against
+// it: the pass simply stops there.
+var errWentAwayMidPass = errors.New("machine disconnected during the pass")
+
+// pollPanes asks a machine for its panes without the daemon's lock in hand.
+//
+// The caller holds d.mu and gets it back. In between, the daemon can answer
+// the menu, the status listing and any command -- which is the whole point.
+// This is an SSH round trip, and every machine's pass held that lock across
+// its own, so what the menu waited for was every machine added together
+// rather than the slowest of them: three at 300ms cost 910ms.
+//
+// Anything read before this has to be read again after it. A command can run
+// while the lock is down, and disconnect takes the machine out of d.hosts and
+// closes its panes -- so this checks the machine is still the one the pass
+// began with, exactly as the pass does around fetching the local listing.
+func (d *Daemon) pollPanes(state *hostSync) ([]herdrcli.Pane, error) {
+	client, target := state.client, state.host.Target
+
+	d.mu.Unlock()
+	panes, err := client.PaneList()
+	d.mu.Lock()
+
+	if d.hosts[target] != state {
+		return nil, errWentAwayMidPass
+	}
+	if err != nil {
+		return nil, err
+	}
+	return panes, nil
+}
+
 // reconcileHost brings one host's mirrors in line with its remote panes.
+//
+// Callers hold d.mu. It is given up for the round trip to the machine and
+// taken again, so nothing read before that may be relied on after it.
 func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	// A plain SSH host exposes no panes to discover, so there is nothing to add
 	// or retire. Its terminals are still watched, because one whose connection
@@ -2520,7 +2565,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		}
 	}
 
-	remotePanes, err := state.client.PaneList()
+	remotePanes, err := d.pollPanes(state)
 	if err != nil {
 		return err
 	}

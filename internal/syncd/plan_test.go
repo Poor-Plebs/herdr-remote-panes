@@ -3816,7 +3816,9 @@ func TestNothingNewTalksToHerdrHoldingTheDaemonsLock(t *testing.T) {
 	// d.mu. A call to Herdr is a subprocess and a call to a machine is an SSH
 	// round trip, so one made with the lock in hand stops the daemon answering
 	// for as long as it takes -- which is how a machine having trouble becomes
-	// a menu that will not open. Measured at 5.7s behind one slow machine.
+	// a menu that will not open. The pass itself gives the lock up for the
+	// round trip to each machine, which is what stopped a pass costing every
+	// machine added together; these three are what is left.
 	//
 	// Three do it deliberately and say so where they are. This is here so that
 	// a fourth is a decision somebody makes rather than one that arrives.

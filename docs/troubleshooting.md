@@ -196,23 +196,22 @@ before it takes the daemon, so the menu stays usable while you connect to
 something that is not answering.
 
 **The menu takes a moment to open every time, with nothing wrong.** The same
-mechanism without a machine misbehaving: each one is polled in turn while the
-daemon is held, so what a pass costs is every mirrored machine added together
-rather than the slowest of them. Enough of them and a pass lasts longer than
-the gap between passes, at which point one starts as the last ends and the
-daemon is never idle.
+mechanism without a machine misbehaving. Machines are polled at the same time,
+so a pass costs about what the slowest of them costs — but one machine slow
+enough still makes a pass last longer than the gap between passes, at which
+point one starts as the last ends and the daemon is never idle.
 
 It says so when that happens, once, in `mirror.log`:
 
 ```
-a pass took 2.31s, longer than the 2s between passes: machines are polled one
-after another, so this is every machine added together.
+a pass took 2.31s, longer than the 2s between passes: machines are polled
+together, so this is about what the slowest of them costs.
 ```
 
 A longer `poll_interval` gives the gap back — machines are then noticed a
-little later, which is the trade. Mirroring fewer of them does the same: a
-plain SSH machine is never polled, so it costs nothing here however many you
-have.
+little later, which is the trade. So does not mirroring whichever machine is
+the slow one: a plain SSH machine is never polled, so it costs nothing here
+however many you have.
 
 **A machine says `ssh` when you asked it to mirror.** Mirroring needs Herdr on
 the machine, and it was not found. Usually it is simply not installed there;
