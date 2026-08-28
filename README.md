@@ -889,6 +889,13 @@ screen they are most of the rest.
 Only covered lines are tried, since a change to a line nothing runs survives by
 definition.
 
+The survivors are also written to a file in the temporary directory, which the
+run names at the end. A sweep of `./internal/syncd` is two and a half hours and
+the survivors are the whole of what it produces, so a terminal that keeps only
+the tail of the output — a pipe into `tail`, a scrollback that has moved on —
+throws them away and leaves the count. The count says how many there are and
+nothing about which.
+
 What it cannot see is worth knowing, because the report reads like a verdict on
 a package rather than on operators. It changes operators, so it says nothing
 about a call that passes the right values in the wrong order — and several

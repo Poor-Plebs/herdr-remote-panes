@@ -932,3 +932,51 @@ func TestTheReportIsGroupedByFileAndInOrder(t *testing.T) {
 		at[m.file] = m.offset
 	}
 }
+
+func TestSurvivorsAreKeptWhereATerminalCannotLoseThem(t *testing.T) {
+	// A sweep of a large package is hours, and the survivors are the whole of
+	// what it produced. Piping it through anything that keeps the tail throws
+	// them away and leaves the count -- which says how many there are and not
+	// one word about which. That has cost this repository a two and a half
+	// hour run.
+	survived := []mutation{
+		{file: "internal/thing/one.go", line: 12, column: 4, old: ">", new: ">=", source: "\tif n > 0 {", function: "f"},
+		{file: "internal/thing/two.go", line: 30, column: 9, old: "!=", new: "==", source: "\tif a != b {", function: "g"},
+	}
+
+	path := keepSurvivors(survived, "./internal/thing", "")
+	if path == "" {
+		t.Fatal("nothing was kept, so a truncated run loses everything it found")
+	}
+	defer os.Remove(path)
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := string(raw)
+	for _, want := range []string{
+		"internal/thing/one.go:12", "> -> >=", "if n > 0 {", "f",
+		"internal/thing/two.go:30", "!= -> ==", "if a != b {", "g",
+	} {
+		if !strings.Contains(kept, want) {
+			t.Errorf("what was kept does not mention %q:\n%s", want, kept)
+		}
+	}
+
+	// A restricted run says so, or the file reads as a sweep of the package.
+	restricted := keepSurvivors(survived, "./internal/thing", "v1.2.3")
+	defer os.Remove(restricted)
+	raw, err = os.ReadFile(restricted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "since v1.2.3") {
+		t.Errorf("a run restricted to what changed does not say so:\n%s", raw)
+	}
+
+	// Nothing to keep is not a file worth writing.
+	if got := keepSurvivors(nil, "./internal/thing", ""); got != "" {
+		t.Errorf("a clean sweep wrote %q", got)
+	}
+}

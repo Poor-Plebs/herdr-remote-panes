@@ -201,6 +201,15 @@ func main() {
 	recordSweep(filepath.Join(root, "tools", "mutants", "swept.tsv"),
 		pkg, since, os.Args[2:], len(muts), caught, len(survived), unexplained)
 
+	// Kept where a terminal cannot lose them. A sweep of a large package is
+	// hours, and the survivors are the whole of what it produced -- piping it
+	// through anything that keeps the tail of the output throws them away and
+	// leaves the count, which says how many there are and not one word about
+	// which. That has cost this repository a two and a half hour run.
+	if kept := keepSurvivors(survived, pkg, since); kept != "" {
+		defer fmt.Printf("\nThe survivors above are also in %s, which the next run replaces.\n", kept)
+	}
+
 	// Not when the run was restricted to what changed. This reads a file's
 	// entries against the survivors of a sweep of that file, and a sweep of
 	// four lines of it leaves every other entry looking like a judgement that
@@ -746,6 +755,32 @@ func changedLines(root, rev string) (map[string]map[int]bool, error) {
 		}
 	}
 	return changed, nil
+}
+
+// keepSurvivors writes the survivors somewhere a terminal cannot truncate,
+// and reports where. An empty string means it could not, which is worth
+// neither an error nor a mention: the run itself is on the screen.
+func keepSurvivors(survived []mutation, pkg, since string) string {
+	if len(survived) == 0 {
+		return ""
+	}
+	name := strings.NewReplacer("/", "-", ".", "", " ", "-").Replace(strings.TrimPrefix(pkg, "./"))
+	path := filepath.Join(os.TempDir(), "mutants-"+name+".txt")
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d survived in %s", len(survived), pkg)
+	if since != "" {
+		fmt.Fprintf(&b, ", of the lines changed since %s", since)
+	}
+	fmt.Fprintf(&b, ", %s\n\n", time.Now().Format(time.RFC3339))
+	for _, m := range survived {
+		fmt.Fprintf(&b, "%s:%d:%d  %s -> %s  %s\n", m.file, m.line, m.column, m.old, m.new, m.function)
+		fmt.Fprintf(&b, "    %s\n", strings.TrimSpace(m.source))
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return ""
+	}
+	return path
 }
 
 // staleTriage names the entries in read.tsv that no longer describe a survivor
