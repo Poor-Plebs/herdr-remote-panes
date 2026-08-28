@@ -1,8 +1,6 @@
 package version
 
 import (
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -18,27 +16,11 @@ import (
 // check about the agreement rather than about where the prose currently sits.
 func docsText(t *testing.T) string {
 	t.Helper()
-	root, err := project.Root()
+	text, err := project.DocsText()
 	if err != nil {
 		t.Fatal(err)
 	}
-	pages, err := filepath.Glob(filepath.Join(root, "docs", "*.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var all strings.Builder
-	for _, page := range append([]string{filepath.Join(root, "README.md")}, pages...) {
-		raw, err := os.ReadFile(page)
-		if err != nil {
-			t.Fatal(err)
-		}
-		all.Write(raw)
-		all.WriteString("\n")
-	}
-	if all.Len() == 0 {
-		t.Fatal("no documentation was read, so this test proves nothing")
-	}
-	return all.String()
+	return text
 }
 
 func TestShortIsAlwaysSomethingPrintable(t *testing.T) {

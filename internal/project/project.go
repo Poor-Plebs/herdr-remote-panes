@@ -41,3 +41,48 @@ func Root() (string, error) {
 		dir = parent
 	}
 }
+
+// DocPages is every page of documentation in the repository: the README at the
+// top and the pages under docs/, in that order.
+//
+// The set rather than the README alone, because which page carries a sentence
+// is a decision that changes. Troubleshooting and the contributor notes were
+// both in the README and are both their own pages now, and the tests that hold
+// a phrase in the prose to what the code prints are not about where the phrase
+// sits.
+func DocPages() ([]string, error) {
+	root, err := Root()
+	if err != nil {
+		return nil, err
+	}
+	pages, err := filepath.Glob(filepath.Join(root, "docs", "*.md"))
+	if err != nil {
+		return nil, err
+	}
+	return append([]string{filepath.Join(root, "README.md")}, pages...), nil
+}
+
+// DocsText is every page from [DocPages] joined together.
+//
+// Held in one place because five packages were each keeping their own copy of
+// this, which is the arrangement where one of them quietly stops matching the
+// others.
+func DocsText() (string, error) {
+	pages, err := DocPages()
+	if err != nil {
+		return "", err
+	}
+	var all []byte
+	for _, page := range pages {
+		raw, err := os.ReadFile(page)
+		if err != nil {
+			return "", err
+		}
+		all = append(all, raw...)
+		all = append(all, '\n')
+	}
+	if len(all) == 0 {
+		return "", errors.New("no documentation was read")
+	}
+	return string(all), nil
+}

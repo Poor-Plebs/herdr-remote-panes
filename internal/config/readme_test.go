@@ -32,23 +32,11 @@ func repoFile(t *testing.T, name string) string {
 // changed twice, when troubleshooting and the contributor notes moved out.
 func docsText(t *testing.T) string {
 	t.Helper()
-	pages, err := filepath.Glob(repoFile(t, filepath.Join("docs", "*.md")))
+	text, err := project.DocsText()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var all strings.Builder
-	for _, page := range append([]string{repoFile(t, "README.md")}, pages...) {
-		raw, err := os.ReadFile(page)
-		if err != nil {
-			t.Fatal(err)
-		}
-		all.Write(raw)
-		all.WriteString("\n")
-	}
-	if all.Len() == 0 {
-		t.Fatal("no documentation was read, so this test proves nothing")
-	}
-	return all.String()
+	return text
 }
 
 // TestTheREADMEShowsAWarningThisCanProduce guards an example against the code
