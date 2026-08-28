@@ -2992,8 +2992,17 @@ func TestADaemonSaysWhenAPassOutlastsTheGapBetweenPasses(t *testing.T) {
 
 	d := New(machineConfig("bot"))
 
+	// Exactly the gap is not "longer than" it, and the line says longer than.
+	// A measured duration never lands there -- these are nanoseconds apart --
+	// but the boundary is a decision either way, and this says which.
+	d.reportIfSlow(100*time.Millisecond, 100*time.Millisecond)
+	if said.Len() != 0 {
+		t.Errorf("a pass exactly as long as the gap was called longer than it:\n%s",
+			said.String())
+	}
+
 	// A pass that took a second, against a gap of a hundred milliseconds.
-	d.reportIfSlow(time.Now().Add(-time.Second), 100*time.Millisecond)
+	d.reportIfSlow(time.Second, 100*time.Millisecond)
 	if !strings.Contains(said.String(), "longer than the") {
 		t.Errorf("a pass over the interval said nothing:\n%s", said.String())
 	}
@@ -3003,14 +3012,14 @@ func TestADaemonSaysWhenAPassOutlastsTheGapBetweenPasses(t *testing.T) {
 
 	// Still slow: said once, not every couple of seconds for as long as it lasts.
 	said.Reset()
-	d.reportIfSlow(time.Now().Add(-time.Second), 100*time.Millisecond)
+	d.reportIfSlow(time.Second, 100*time.Millisecond)
 	if said.Len() != 0 {
 		t.Errorf("it said so again while nothing had changed:\n%s", said.String())
 	}
 
 	// Back inside the interval: worth saying once, so the log shows it cleared.
 	said.Reset()
-	d.reportIfSlow(time.Now(), 100*time.Millisecond)
+	d.reportIfSlow(10*time.Millisecond, 100*time.Millisecond)
 	if !strings.Contains(said.String(), "back inside") {
 		t.Errorf("recovering said nothing, so the log only ever shows the bad news:\n%s",
 			said.String())

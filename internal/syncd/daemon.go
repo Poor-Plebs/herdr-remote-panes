@@ -1886,8 +1886,11 @@ func (d *Daemon) retryUnclosed(index *paneIndex) {
 //
 // Said once when it starts and once when it stops, because a line every couple
 // of seconds is how a log stops being read.
-func (d *Daemon) reportIfSlow(start time.Time, interval time.Duration) {
-	took := time.Since(start)
+// Given how long the pass took rather than when it began, so that the boundary
+// is a thing a test can name: time.Since is always a little past whatever it is
+// compared with, so "exactly the interval" cannot be constructed through a
+// start time and the decision at that point was nobody's.
+func (d *Daemon) reportIfSlow(took, interval time.Duration) {
 	slow := took > interval
 
 	d.mu.Lock()
@@ -2051,7 +2054,8 @@ func (d *Daemon) reconcileOnce() {
 	// Before anything is decided from it.
 	d.rereadConfig()
 
-	defer d.reportIfSlow(time.Now(), d.config().Interval())
+	start := time.Now()
+	defer func() { d.reportIfSlow(time.Since(start), d.config().Interval()) }()
 
 	d.mu.Lock()
 	states := make([]*hostSync, 0, len(d.hosts))
