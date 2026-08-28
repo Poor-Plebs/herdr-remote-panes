@@ -877,6 +877,24 @@ Anything claiming to be about that setting and *not* in the list has either
 stopped testing it or is independent of it on purpose — and the difference is
 worth establishing rather than assuming.
 
+Two checks written to cover each other cover the seam between them least of
+all. What a machine remembers per terminal has to be forgotten when that
+terminal goes, and two tests split that job: one asks the type whether a newly
+added field is named in some list, and the other fills each named map and
+checks `forgetTerminals` clears it. Each says in its comments that the other
+handles the rest.
+
+The lists were separate copies. The guard named seven maps, the fixture built
+six, and `placement` — added to the guard, so the guard was satisfied — was
+never put in the fixture, so nothing ever called `forgetTerminals` with a
+placement in it. Inverting that loop, to keep what is gone and drop what is
+still there, passed the whole suite. It is the placement a reopened mirror is
+restored to, so the bug it hid is a tab coming back as a split.
+
+They read one list now, and the behaviour test fails if the fixture is missing
+something the list names. When two checks defer to each other, the question is
+what each assumes the other did.
+
 Coverage says which lines a test ran. It does not say whether anything would
 have failed had those lines been wrong, and that gap is worth checking
 directly:
