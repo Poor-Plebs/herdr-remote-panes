@@ -8,3 +8,6 @@
 # commit before anybody looked. The Makefile and build.sh both build to bin/,
 # so a binary with this name is never wanted.
 /herdr-remote-panes
+
+# Working notes, kept locally rather than published.
+/notes/
