@@ -3813,18 +3813,22 @@ func TestASiblingMustBeInTheSpaceTheMachineIsUsing(t *testing.T) {
 
 func TestNothingNewTalksToHerdrHoldingTheDaemonsLock(t *testing.T) {
 	// The daemon answers the menu, the status listing and every command on
-	// d.mu. A call to Herdr is a subprocess and a call to a machine is an SSH
-	// round trip, so one made with the lock in hand stops the daemon answering
-	// for as long as it takes -- which is how a machine having trouble becomes
-	// a menu that will not open. The pass itself gives the lock up for the
-	// round trip to each machine, which is what stopped a pass costing every
-	// machine added together; these three are what is left.
+	// d.mu. A call to a machine is an SSH round trip, so one made with the
+	// lock in hand stops the daemon answering for as long as the machine takes
+	// -- which is how a machine having trouble becomes a menu that will not
+	// open. The pass gives the lock up for its round trip, which is what
+	// stopped a pass costing every machine added together.
 	//
-	// Three do it deliberately and say so where they are. This is here so that
-	// a fourth is a decision somebody makes rather than one that arrives.
+	// These two are what is left, both on the path a keypress takes rather
+	// than the poll. This is here so a third is a decision somebody makes
+	// rather than one that arrives.
 	//
-	// Direct calls only. A locked function calling something that reaches
-	// Herdr two frames down is not found by reading one function at a time,
+	// Functions that say "Callers hold d.mu" count as holding it throughout,
+	// which is how reconcileHost is read: it has no Lock of its own and it is
+	// where a machine is talked to.
+	//
+	// Direct calls only. A locked function calling something that reaches a
+	// machine two frames down is not found by reading one function at a time,
 	// and saying so is better than implying a guarantee this does not give.
 	deliberate := map[string]string{
 		// Taking the lock only long enough to find the machine and then
@@ -3832,7 +3836,18 @@ func TestNothingNewTalksToHerdrHoldingTheDaemonsLock(t *testing.T) {
 		// writes the same bookkeeping.
 		"openRemotePane":       "held across the work rather than the lookup",
 		"ensureRemotePresence": "as openRemotePane: held across the work rather than the lookup",
-		"focusHost":            "reads the space the machine is using while deciding to focus it",
+		// Client.Close is "ssh -O exit" against the multiplexing socket on
+		// this machine, not a round trip to the far end, and it has to happen
+		// before the client it replaces is dropped.
+		"connect": "closes the local end of a connection whose settings changed",
+	}
+
+	// Methods on the client that decide something from what is already known
+	// rather than asking the machine. Named rather than assumed: a new method
+	// that does reach the machine is flagged by default, which is the side to
+	// be wrong on.
+	local := map[string]bool{
+		"SameSettings": true, "ShellArgv": true, "SSHArgs": true, "Argv": true,
 	}
 
 	source, err := os.ReadFile("daemon.go")
@@ -3841,12 +3856,34 @@ func TestNothingNewTalksToHerdrHoldingTheDaemonsLock(t *testing.T) {
 	}
 	lines := strings.Split(string(source), "\n")
 
-	talks := regexp.MustCompile(`herdrcli\.\w+\(|\.client\.Run\(`)
+	// A call to a machine, which is what costs seconds. Local Herdr calls are
+	// held under the lock all over this file and rightly so: they are
+	// subprocesses on this machine, they are the reconcile's actual work, and
+	// requiring them to be lock-free would be a different program. An earlier
+	// version of this matched those too and reported eight more, one of which
+	// was a pure parsing function -- a list long enough to stop being read.
+	talks := regexp.MustCompile(`\.client\.(\w+)\(`)
 	fn, held, found := "", 0, 0
+	var doc []string
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
+		// The comment block immediately above a func, kept so the func can be
+		// read together with what it says about itself.
+		if strings.HasPrefix(trimmed, "//") {
+			doc = append(doc, trimmed)
+		} else if !strings.HasPrefix(line, "func ") && trimmed != "" {
+			doc = nil
+		}
 		if strings.HasPrefix(line, "func ") {
 			fn, held = functionName(line), 0
+			// A function that says its callers hold the lock is holding it for
+			// every line in it. Without this the largest of them read as
+			// unlocked -- reconcileHost has no Lock() of its own, and it is
+			// where a machine is talked to.
+			if strings.Contains(strings.Join(doc, " "), "Callers hold d.mu") {
+				held = 1
+			}
+			doc = nil
 		}
 		switch {
 		case strings.Contains(trimmed, "d.mu.Lock()"), strings.Contains(trimmed, "d.mu.RLock()"):
@@ -3861,18 +3898,23 @@ func TestNothingNewTalksToHerdrHoldingTheDaemonsLock(t *testing.T) {
 				held--
 			}
 		}
-		if held == 0 || !talks.MatchString(trimmed) {
+		if held == 0 {
+			continue
+		}
+		reached := talks.FindStringSubmatch(trimmed)
+		if reached == nil || local[reached[1]] {
 			continue
 		}
 		found++
 		if _, ok := deliberate[fn]; !ok {
-			t.Errorf("daemon.go:%d talks to Herdr or a machine with d.mu held, in %s:\n  %s\n"+
-				"The daemon answers the menu on that lock. Do the call without it, or "+
-				"name %s above with why it has to be this way.", i+1, fn, trimmed, fn)
+			t.Errorf("daemon.go:%d reaches a machine with d.mu held, in %s:\n  %s\n"+
+				"That is an SSH round trip, and the daemon answers the menu on that "+
+				"lock. Give the lock up for the call as the pass does, or name %s "+
+				"above with why it has to be this way.", i+1, fn, trimmed, fn)
 		}
 	}
 
-	if found < 3 {
+	if found < 2 {
 		t.Fatalf("found %d calls under the lock, which is fewer than there are -- "+
 			"this has stopped matching", found)
 	}

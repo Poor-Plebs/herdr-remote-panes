@@ -2343,32 +2343,57 @@ func forgetTerminals(state *hostSync, seen map[string]bool) {
 // it: the pass simply stops there.
 var errWentAwayMidPass = errors.New("machine disconnected during the pass")
 
-// pollPanes asks a machine for its panes without the daemon's lock in hand.
+// awayFromTheLock makes one call to a machine without the daemon's lock in
+// hand.
 //
 // The caller holds d.mu and gets it back. In between, the daemon can answer
 // the menu, the status listing and any command -- which is the whole point.
-// This is an SSH round trip, and every machine's pass held that lock across
-// its own, so what the menu waited for was every machine added together
-// rather than the slowest of them: three at 300ms cost 910ms.
+// These are SSH round trips, and every machine's pass held the lock across its
+// own, so what the menu waited for was every machine added together rather
+// than the slowest of them: three at 300ms cost 910ms.
 //
 // Anything read before this has to be read again after it. A command can run
 // while the lock is down, and disconnect takes the machine out of d.hosts and
 // closes its panes -- so this checks the machine is still the one the pass
-// began with, exactly as the pass does around fetching the local listing.
-func (d *Daemon) pollPanes(state *hostSync) ([]herdrcli.Pane, error) {
+// began with, exactly as the pass does around fetching the local listing, and
+// says so with errWentAwayMidPass rather than as a failure of the machine.
+func awayFromTheLock[T any](d *Daemon, state *hostSync,
+	call func(*remote.Client) (T, error)) (T, error) {
+
 	client, target := state.client, state.host.Target
 
 	d.mu.Unlock()
-	panes, err := client.PaneList()
+	value, err := call(client)
 	d.mu.Lock()
 
 	if d.hosts[target] != state {
-		return nil, errWentAwayMidPass
+		var zero T
+		return zero, errWentAwayMidPass
 	}
-	if err != nil {
-		return nil, err
-	}
-	return panes, nil
+	return value, err
+}
+
+// pollPanes asks a machine for its panes, without the lock.
+func (d *Daemon) pollPanes(state *hostSync) ([]herdrcli.Pane, error) {
+	return awayFromTheLock(d, state, (*remote.Client).PaneList)
+}
+
+// pollTabOrder asks a machine what order its tabs are in, without the lock.
+// Only wanted when there is something to place, which is rare -- but a round
+// trip is a round trip, and the menu waits on this lock either way.
+func (d *Daemon) pollTabOrder(state *hostSync) (map[string]int, error) {
+	return awayFromTheLock(d, state, (*remote.Client).TabOrder)
+}
+
+// pollReachable checks a plain SSH machine still answers, without the lock.
+// It runs when the machine has no terminal up, which is exactly when it may
+// be gone -- so it is the call most likely to wait for a timeout, and the one
+// least worth waiting for with the daemon held.
+func (d *Daemon) pollReachable(state *hostSync) error {
+	_, err := awayFromTheLock(d, state, func(c *remote.Client) (struct{}, error) {
+		return struct{}{}, c.Reachable()
+	})
+	return err
 }
 
 // reconcileHost brings one host's mirrors in line with its remote panes.
@@ -2510,7 +2535,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		// a failure would look like "ok" forever. Checking costs one SSH call
 		// and only happens while the machine has nothing running.
 		if len(state.shellPanes) == 0 {
-			return state.client.Reachable()
+			return d.pollReachable(state)
 		}
 		return nil
 	}
@@ -2605,7 +2630,7 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 	if planNeedsTabOrder(shared, state.mirrors) {
 		// Only now, because this is a second round trip to the machine made
 		// with the daemon's lock in hand.
-		tabOrder, err := state.client.TabOrder()
+		tabOrder, err := d.pollTabOrder(state)
 		if err != nil {
 			return err
 		}
