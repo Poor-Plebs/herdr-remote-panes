@@ -82,7 +82,13 @@ func TestEditingTheConfigTakesEffectWithoutARestart(t *testing.T) {
 	_, statePath := withRemoteHerdr(t)
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", t.TempDir())
 
-	cfg := config.Defaults() // placement: split
+	// Split explicitly, not whatever the default happens to be. This test was
+	// written when the default was split and kept passing after it became
+	// follow -- which arrives as a tab anyway, so the assertion below held
+	// whether or not the edit was ever read. A test whose premise is a default
+	// stops being a test the day the default moves.
+	cfg := config.Defaults()
+	cfg.Placement = "split"
 	cfg.Hosts = []config.Host{{Target: "bot", Mode: "attach"}}
 	d := New(cfg)
 
@@ -94,6 +100,9 @@ func TestEditingTheConfigTakesEffectWithoutARestart(t *testing.T) {
 	}
 
 	// Somebody edits the file, the way the settings table invites them to.
+	// Tab rather than follow, so the two are told apart by the assertion: a
+	// terminal opened in its own tab over there arrives as a tab under either,
+	// and only split keeps it in the one that is already open.
 	edited := cfg
 	edited.Placement = "tab"
 	if err := config.Save(edited); err != nil {
