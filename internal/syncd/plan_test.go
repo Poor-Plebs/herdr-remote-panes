@@ -2337,6 +2337,48 @@ func TestGivingUpDoesNotStrandTheCountThatGaveUp(t *testing.T) {
 	}
 }
 
+func TestAConnectedMachineHasEveryMapItWillWriteTo(t *testing.T) {
+	// The same as the daemon's own, for the state made per machine. Connect
+	// builds it with eleven maps written out by hand, and writing to a nil map
+	// panics somewhere else entirely -- in a pass, on whichever machine was
+	// first to need the one that was forgotten.
+	//
+	// The type is asked rather than the list repeated. A twelfth map is the
+	// case this exists for, and a test naming eleven has nothing to say about
+	// it.
+	withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+
+	d.mu.Lock()
+	state := d.hosts["bot"]
+	d.mu.Unlock()
+	if state == nil {
+		t.Fatal("connecting left no state for the machine")
+	}
+
+	value := reflect.ValueOf(state).Elem()
+	shape := value.Type()
+	found := 0
+	for i := 0; i < shape.NumField(); i++ {
+		if shape.Field(i).Type.Kind() != reflect.Map {
+			continue
+		}
+		found++
+		if value.Field(i).IsNil() {
+			t.Errorf("hostSync.%s is nil on a freshly connected machine, so the "+
+				"first write to it panics -- add it where connect builds the state",
+				shape.Field(i).Name)
+		}
+	}
+	if found < 11 {
+		t.Fatalf("found %d maps on hostSync, fewer than there are -- this has "+
+			"stopped looking at the type", found)
+	}
+}
+
 func TestANewDaemonHasEveryMapItWillWriteTo(t *testing.T) {
 	// Writing to a nil map panics, and the panic is nowhere near the map that
 	// was forgotten. This is the constructor's whole job beyond holding the
