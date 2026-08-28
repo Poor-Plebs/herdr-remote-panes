@@ -206,13 +206,14 @@ It says so when that happens, once, in `mirror.log`:
 
 ```
 a pass took 2.31s, longer than the 2s between passes: machines are polled
-together, so this is about what the slowest of them costs.
+together, so this is about what the slowest of them costs, and bot was the
+slowest at 2.28s.
 ```
 
-A longer `poll_interval` gives the gap back — machines are then noticed a
-little later, which is the trade. So does not mirroring whichever machine is
-the slow one: a plain SSH machine is never polled, so it costs nothing here
-however many you have.
+It names the machine, because the advice needs it: a longer `poll_interval`
+gives the gap back — machines are then noticed a little later, which is the
+trade — and so does not mirroring the machine it names. A plain SSH machine is
+never polled, so it costs nothing here however many you have.
 
 **A machine says `ssh` when you asked it to mirror.** Mirroring needs Herdr on
 the machine, and it was not found. Usually it is simply not installed there;

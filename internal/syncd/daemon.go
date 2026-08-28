@@ -1897,7 +1897,7 @@ func (d *Daemon) retryUnclosed(index *paneIndex) {
 // is a thing a test can name: time.Since is always a little past whatever it is
 // compared with, so "exactly the interval" cannot be constructed through a
 // start time and the decision at that point was nobody's.
-func (d *Daemon) reportIfSlow(took, interval time.Duration) {
+func (d *Daemon) reportIfSlow(took, interval time.Duration, slowest string, its time.Duration) {
 	slow := took > interval
 
 	d.mu.Lock()
@@ -1907,11 +1907,19 @@ func (d *Daemon) reportIfSlow(took, interval time.Duration) {
 	}
 	d.slowPass = slow
 	if slow {
+		// Named, because the advice is useless without it. Machines are polled
+		// together, so a pass costs about what its slowest costs and the rest
+		// are blameless -- and being told "whichever machine is slow" leaves
+		// somebody timing them by hand to find out which.
+		blame := "no machine took a measurable share of it"
+		if slowest != "" {
+			blame = fmt.Sprintf("%s was the slowest at %v", slowest, its.Round(time.Millisecond))
+		}
 		log.Printf("a pass took %v, longer than the %v between passes: machines are "+
-			"polled together, so this is about what the slowest of them costs. "+
-			"The menu waits on it; a longer poll_interval, or not mirroring "+
-			"whichever machine is slow, is what shortens the wait.",
-			took.Round(time.Millisecond), interval)
+			"polled together, so this is about what the slowest of them costs, and "+
+			"%s. The menu waits on it; a longer poll_interval, or not mirroring "+
+			"that machine, is what shortens the wait.",
+			took.Round(time.Millisecond), interval, blame)
 		return
 	}
 	log.Printf("a pass is back inside the %v between passes, at %v",
@@ -2063,7 +2071,14 @@ func (d *Daemon) reconcileOnce() {
 	d.rereadConfig()
 
 	start := time.Now()
-	defer func() { d.reportIfSlow(time.Since(start), d.config().Interval()) }()
+	// Filled in once the machines have been through, and read by the deferred
+	// call after that: whichever took longest is what a pass costs, now that
+	// they run together.
+	var slowest string
+	var slowestTook time.Duration
+	defer func() {
+		d.reportIfSlow(time.Since(start), d.config().Interval(), slowest, slowestTook)
+	}()
 
 	d.mu.Lock()
 	states := make([]*hostSync, 0, len(d.hosts))
@@ -2095,11 +2110,17 @@ func (d *Daemon) reconcileOnce() {
 
 	defer d.persist()
 
+	// One slot each, written by that machine's own goroutine and read after
+	// they have all finished, so no lock is wanted for it.
+	spent := make([]time.Duration, len(states))
+
 	var wg sync.WaitGroup
-	for _, state := range states {
+	for i, state := range states {
 		wg.Add(1)
-		go func(state *hostSync) {
+		go func(i int, state *hostSync) {
 			defer wg.Done()
+			began := time.Now()
+			defer func() { spent[i] = time.Since(began) }()
 			d.mu.Lock()
 			defer d.mu.Unlock()
 			// Disconnected while this pass was away fetching its pane
@@ -2167,9 +2188,15 @@ func (d *Daemon) reconcileOnce() {
 				}
 			}
 			d.markWorkspaceState(state, state.lastErr == nil)
-		}(state)
+		}(i, state)
 	}
 	wg.Wait()
+
+	for i, took := range spent {
+		if took > slowestTook {
+			slowest, slowestTook = states[i].host.Target, took
+		}
+	}
 
 	d.scheduleWholePassRetry(states)
 

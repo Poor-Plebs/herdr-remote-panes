@@ -3064,31 +3064,37 @@ func TestADaemonSaysWhenAPassOutlastsTheGapBetweenPasses(t *testing.T) {
 	// Exactly the gap is not "longer than" it, and the line says longer than.
 	// A measured duration never lands there -- these are nanoseconds apart --
 	// but the boundary is a decision either way, and this says which.
-	d.reportIfSlow(100*time.Millisecond, 100*time.Millisecond)
+	d.reportIfSlow(100*time.Millisecond, 100*time.Millisecond, "bot", 90*time.Millisecond)
 	if said.Len() != 0 {
 		t.Errorf("a pass exactly as long as the gap was called longer than it:\n%s",
 			said.String())
 	}
 
 	// A pass that took a second, against a gap of a hundred milliseconds.
-	d.reportIfSlow(time.Second, 100*time.Millisecond)
+	d.reportIfSlow(time.Second, 100*time.Millisecond, "bot", 900*time.Millisecond)
 	if !strings.Contains(said.String(), "longer than the") {
 		t.Errorf("a pass over the interval said nothing:\n%s", said.String())
 	}
 	if !strings.Contains(said.String(), "poll_interval") {
 		t.Error("it does not say what to change, which is the point of saying anything")
 	}
+	// Named. Machines are polled together, so a pass costs about what its
+	// slowest costs and the others are blameless -- "whichever machine is
+	// slow" leaves somebody timing them by hand to find out which.
+	if !strings.Contains(said.String(), "bot was the slowest") {
+		t.Errorf("it does not name the machine the pass was waiting on:\n%s", said.String())
+	}
 
 	// Still slow: said once, not every couple of seconds for as long as it lasts.
 	said.Reset()
-	d.reportIfSlow(time.Second, 100*time.Millisecond)
+	d.reportIfSlow(time.Second, 100*time.Millisecond, "bot", 900*time.Millisecond)
 	if said.Len() != 0 {
 		t.Errorf("it said so again while nothing had changed:\n%s", said.String())
 	}
 
 	// Back inside the interval: worth saying once, so the log shows it cleared.
 	said.Reset()
-	d.reportIfSlow(10*time.Millisecond, 100*time.Millisecond)
+	d.reportIfSlow(10*time.Millisecond, 100*time.Millisecond, "bot", 9*time.Millisecond)
 	if !strings.Contains(said.String(), "back inside") {
 		t.Errorf("recovering said nothing, so the log only ever shows the bad news:\n%s",
 			said.String())
@@ -3831,6 +3837,71 @@ func TestTheMenuAnswersWhileAMachineIsBeingWaitedFor(t *testing.T) {
 			"is holding the daemon across the round trip again -- a machine that "+
 			"stops answering takes the menu with it",
 			waited.Round(10*time.Millisecond))
+	}
+}
+
+// TestASlowPassNamesTheMachineItWasWaitingOn holds the join between measuring
+// and reporting.
+//
+//	HRP_TIMING=1 go test ./internal/syncd/ -run SlowPassNames -v
+//
+// reportIfSlow is told which machine was slowest, and is tested on its own by
+// being handed one. What that leaves untested is the half that matters: that a
+// pass measures each machine and hands over the right name. Handing over the
+// wrong one is worse than handing over none -- it points at a machine that is
+// fine, and the advice is to stop mirroring it.
+func TestASlowPassNamesTheMachineItWasWaitingOn(t *testing.T) {
+	if os.Getenv("HRP_TIMING") == "" {
+		t.Skip("set HRP_TIMING=1 to run; it sleeps to make one machine the slow one")
+	}
+
+	here := withFakeHerdr(t)
+	withRemoteHerdrRunning(t, true)
+
+	cfg := machineConfig("bot", "prod")
+	for i := range cfg.Hosts {
+		cfg.Hosts[i].Mode = "attach"
+	}
+	// Short enough that one slow machine puts a pass over it.
+	cfg.PollInterval = "500ms"
+	d := New(cfg)
+	for _, target := range []string{"bot", "prod"} {
+		if reply := d.dispatch(Command{Cmd: "connect", Host: target}); !reply.OK {
+			t.Fatalf("connect %s: %s", target, reply.Message)
+		}
+	}
+	settle(t, d, here, 2)
+
+	// Only prod is slow. The destination is the argument before the command.
+	bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
+	path := filepath.Join(bin, "ssh")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slow := strings.Replace(string(raw), "#!/bin/sh\n",
+		"#!/bin/sh\nfor a in \"$@\"; do prev=\"$last\"; last=\"$a\"; done\n"+
+			"[ \"$prev\" = prod ] && sleep 1\n", 1)
+	if err := os.WriteFile(path, []byte(slow), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var said strings.Builder
+	log.SetOutput(&said)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	d.reconcileAll()
+
+	if !strings.Contains(said.String(), "longer than the") {
+		t.Fatalf("the pass was not reported as slow, so this is testing "+
+			"nothing:\n%s", said.String())
+	}
+	if !strings.Contains(said.String(), "prod was the slowest") {
+		t.Errorf("the slow machine was prod and the report says otherwise:\n%s",
+			said.String())
+	}
+	if strings.Contains(said.String(), "bot was the slowest") {
+		t.Errorf("it blamed the machine that was answering promptly:\n%s", said.String())
 	}
 }
 
