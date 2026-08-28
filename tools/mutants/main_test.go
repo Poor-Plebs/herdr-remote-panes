@@ -1072,3 +1072,85 @@ func TestTryTellsCaughtFromSurvived(t *testing.T) {
 		})
 	}
 }
+
+// TestCoveredLinesTellsRunFromNotRun holds what the sweep is allowed to try.
+//
+// Every mutation is checked against this first, and a line it does not name is
+// skipped as unreached. So a fault here does not produce a wrong answer, it
+// produces a smaller sweep -- quietly, with the same "0 survived" at the end.
+// The count beside that result is the only place it would show, and this tool
+// reported a third of itself unreached for exactly that reason.
+//
+// The two directions matter differently. Missing a covered line loses a
+// mutation nobody hears about; naming an uncovered one adds a mutation that
+// survives by definition, and a survivor is at least looked at.
+func TestCoveredLinesTellsRunFromNotRun(t *testing.T) {
+	work := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", "module probe\n\ngo 1.25\n")
+	// Run is called by the test; Skipped is not. Their bodies are on lines the
+	// test below names, so a change to this source wants the numbers changed.
+	write("probe.go", "package probe\n"+ // 1
+		"\n"+ // 2
+		"func Run(a, b int) bool {\n"+ // 3
+		"\treturn a > b\n"+ // 4
+		"}\n"+ // 5
+		"\n"+ // 6
+		"func Skipped(a, b int) bool {\n"+ // 7
+		"\treturn a < b\n"+ // 8
+		"}\n") // 9
+	write("probe_test.go", "package probe\n\nimport \"testing\"\n\n"+
+		"func TestRun(t *testing.T) {\n"+
+		"\tif !Run(2, 1) {\n\t\tt.Fatal(\"wrong\")\n\t}\n}\n")
+
+	covered, err := coveredLines(work, "./...")
+	if err != nil {
+		t.Fatalf("coveredLines: %v", err)
+	}
+	lines := covered["probe.go"]
+	if lines == nil {
+		t.Fatalf("nothing at all was reported for probe.go: %+v", covered)
+	}
+	if !lines[4] {
+		t.Error("the body of a function the tests call is not reported as run, " +
+			"so every mutation in it would be skipped as unreached")
+	}
+	if lines[8] {
+		t.Error("the body of a function nothing calls is reported as run, so " +
+			"mutations there survive by definition and fill the report")
+	}
+}
+
+// TestCoveredLinesSaysWhyItCannotStart holds the message rather than the exit
+// status: a package that does not exist and a package whose tests are red fail
+// the same way, and being told the wrong one sends somebody reading tests that
+// are fine.
+func TestCoveredLinesSaysWhyItCannotStart(t *testing.T) {
+	work := t.TempDir()
+	for name, body := range map[string]string{
+		"go.mod":        "module probe\n\ngo 1.25\n",
+		"probe.go":      "package probe\n\nfunc Run() bool { return false }\n",
+		"probe_test.go": "package probe\n\nimport \"testing\"\n\nfunc TestRun(t *testing.T) {\n\tt.Fatal(\"red\")\n}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := coveredLines(work, "./...")
+	if err == nil {
+		t.Fatal("a package whose tests fail was accepted as a place to start")
+	}
+	if !strings.Contains(err.Error(), "tests do not pass") {
+		t.Errorf("the error is %q, which does not say the tests are the problem", err)
+	}
+	if !strings.Contains(err.Error(), "red") {
+		t.Errorf("the error is %q and does not carry what go test said, so "+
+			"somebody has to run it again to find out", err)
+	}
+}
