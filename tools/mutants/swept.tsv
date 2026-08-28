@@ -12,19 +12,15 @@
 #
 # package	swept	mutations	caught	survived	unexplained
 ./internal/capped	2026-08-28	5	4	1	0
-./internal/cli	2026-08-27	54	50	4	0
-./internal/config	2026-08-27	135	133	2	0
-./internal/herdrcli	2026-08-28	3	3	0	0
-./internal/logfile	2026-08-28	2	2	0	0
-./internal/mirror	2026-08-28	1	1	0	0
-./internal/mirror (mousegate.go)	2026-08-27	31	25	6	0
-./internal/picker	2026-08-28	5	5	0	0
+./internal/cli	2026-08-28	56	52	4	0
+./internal/config	2026-08-28	135	133	2	0
+./internal/herdrcli	2026-08-28	60	60	0	0
+./internal/logfile	2026-08-28	9	9	0	0
+./internal/picker	2026-08-28	122	105	17	0
 ./internal/project	2026-08-28	3	3	0	0
-./internal/remote	2026-08-28	1	1	0	0
-./internal/sshconfig	2026-08-27	2	2	0	0
-./internal/syncd	2026-08-28	1	1	0	0
-./internal/syncd (daemon.go)	2026-08-27	6	5	1	0
-./internal/syncd (plan.go)	2026-08-27	9	8	1	0
-./internal/text	2026-08-28	6	6	0	0
-./internal/version	2026-08-27	9	7	2	0
-./tools/mutants	2026-08-27	10	10	0	0
+./internal/remote	2026-08-28	52	51	1	0
+./internal/sshconfig	2026-08-28	35	34	1	0
+./internal/syncd (since v0.4.1)	2026-08-28	1	1	0	0
+./internal/text	2026-08-28	60	55	5	0
+./internal/version	2026-08-28	9	7	2	0
+./tools/mutants	2026-08-28	94	82	12	8

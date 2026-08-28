@@ -1747,3 +1747,61 @@ func TestOnlyMGoesAheadWithClosingTerminals(t *testing.T) {
 		}
 	}
 }
+
+func TestTheQuestionSaysHowMuchThereIsToLose(t *testing.T) {
+	// The question exists to say what pressing m would cost, so the number in
+	// it is the whole point. Saying "1 terminal" over three of them is not a
+	// wording slip: it is the prompt understating the thing it was put there
+	// to warn about.
+	for _, tt := range []struct {
+		terminals int
+		want      string
+	}{
+		{1, "1 terminal"},
+		{2, "2 terminals"},
+		{7, "7 terminals"},
+	} {
+		entry := Entry{Target: "bot", Connected: true, Terminals: tt.terminals}
+		if !worthAskingBeforeToggle(entry, "attach") {
+			t.Fatalf("%d terminals does not ask, so this proves nothing", tt.terminals)
+		}
+
+		read, write, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		savedOut := os.Stdout
+		os.Stdout = write
+		// Answering no, since what is being read here is the question.
+		keysRead, keysWrite, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		savedIn := os.Stdin
+		os.Stdin = keysRead
+		go func() { _, _ = keysWrite.WriteString("q"); keysWrite.Close() }()
+
+		asked := make(chan string, 1)
+		go func() {
+			var b strings.Builder
+			_, _ = io.Copy(&b, read)
+			asked <- b.String()
+		}()
+		confirmToggle(entry, "attach")
+
+		os.Stdout, os.Stdin = savedOut, savedIn
+		write.Close()
+		keysRead.Close()
+		question := <-asked
+
+		if !strings.Contains(question, tt.want) {
+			t.Errorf("with %d open the question does not say %q:\n%s",
+				tt.terminals, tt.want, visible(question))
+		}
+		// And not the other spelling, which is how "1 terminals" would pass a
+		// check for "1 terminal".
+		if tt.terminals == 1 && strings.Contains(question, "1 terminals") {
+			t.Errorf("the question says %q for one terminal", "1 terminals")
+		}
+	}
+}
