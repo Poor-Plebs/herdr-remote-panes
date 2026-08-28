@@ -3863,6 +3863,28 @@ func TestNothingNewTalksToHerdrHoldingTheDaemonsLock(t *testing.T) {
 	// version of this matched those too and reported eight more, one of which
 	// was a pure parsing function -- a list long enough to stop being read.
 	talks := regexp.MustCompile(`\.client\.(\w+)\(`)
+
+	// daemon.go is where a machine is reached from, and this reads that file
+	// alone. Checked rather than assumed: another file doing it would be a
+	// file this says nothing whatever about, and the failure would be silence.
+	siblings, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range siblings {
+		if name == "daemon.go" || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if talks.Match(raw) {
+			t.Errorf("%s reaches a machine, and this reads only daemon.go -- so "+
+				"nothing says whether it does so holding d.mu", name)
+		}
+	}
+
 	fn, held, found := "", 0, 0
 	var doc []string
 	for i, line := range lines {
