@@ -2,10 +2,28 @@ package version
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/project"
 )
+
+// repoFile names a file at the top of the repository.
+//
+// Asked for rather than counted to with "..": a path that is merely wrong
+// reads no file, and a test that reads no file passes every check it makes
+// about what is missing from it. This repository has moved a package once
+// already.
+func repoFile(t *testing.T, name string) string {
+	t.Helper()
+	root, err := project.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(root, name)
+}
 
 func TestShortIsAlwaysSomethingPrintable(t *testing.T) {
 	// Tests are built outside a checkout, so this exercises the fallback: it
@@ -137,7 +155,7 @@ func TestTheREADMEQuotesTheWarningTheCodeActuallyPrints(t *testing.T) {
 	// recognises it when it appears. Written out by hand it agrees with the
 	// code until the wording changes, and then it describes a message nobody
 	// has ever seen.
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,7 +18,7 @@ import (
 // the memory of having done it -- and one of the settings audited that way
 // turned out not to work at all.
 func TestTheREADMEDocumentsTheRealDefaults(t *testing.T) {
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestTheREADMEDocumentsTheRealDefaults(t *testing.T) {
 func TestEverySettingWithADefaultIsInTheTable(t *testing.T) {
 	// The other direction: a setting this fills in and never mentions is one
 	// somebody cannot know about.
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestEveryPerMachineSettingIsInTheTableAndNoOthersAre(t *testing.T) {
 	// not a field is worse: it reads as an instruction, the key is accepted by
 	// the file, and it does nothing -- which is how a global setting written
 	// inside a machine entry looks exactly like it worked.
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestTheSidebarPictureIsWhatTheDefaultsDraw(t *testing.T) {
 	//
 	// Built from the defaults rather than compared as text, so that a machine
 	// renamed in the picture, or a line added to it, needs nothing here.
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestTheREADMESaysHowSoonAMachineStops(t *testing.T) {
 	// machines have all stopped after a laptop woke up. The number is the poll
 	// interval, and a poll interval changed here would leave the page saying
 	// something that used to be true.
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

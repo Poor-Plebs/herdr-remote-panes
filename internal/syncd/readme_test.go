@@ -24,7 +24,7 @@ import (
 // the thing being checked.
 func readmeProse(t *testing.T) string {
 	t.Helper()
-	raw, err := os.ReadFile("../../README.md")
+	raw, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestTheREADMEDoesNotClaimPlainSSHMachinesArePolled(t *testing.T) {
 // describing a different program, with nothing to say so -- which is what had
 // happened to the picture of the menu.
 func TestTheREADMEsSidebarIsNamedTheWayThisNamesThings(t *testing.T) {
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestTheREADMERequiresWhatTheProjectRequires(t *testing.T) {
 	text := readmeProse(t)
 
 	t.Run("the Go version go.mod asks for", func(t *testing.T) {
-		mod, err := os.ReadFile("../../go.mod")
+		mod, err := os.ReadFile(repoFile(t, "go.mod"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -204,7 +204,7 @@ func TestTheREADMERequiresWhatTheProjectRequires(t *testing.T) {
 	})
 
 	t.Run("the Herdr version the manifest asks for", func(t *testing.T) {
-		manifest, err := os.ReadFile("../../herdr-plugin.toml")
+		manifest, err := os.ReadFile(repoFile(t, "herdr-plugin.toml"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -224,7 +224,7 @@ func TestTheREADMERequiresWhatTheProjectRequires(t *testing.T) {
 	})
 
 	t.Run("the platforms the manifest claims", func(t *testing.T) {
-		manifest, err := os.ReadFile("../../herdr-plugin.toml")
+		manifest, err := os.ReadFile(repoFile(t, "herdr-plugin.toml"))
 		if err != nil {
 			t.Fatal(err)
 		}

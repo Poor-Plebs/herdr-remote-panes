@@ -11,6 +11,7 @@
 # seventeen and have nothing whatever to answer for.
 #
 # package	swept	mutations	caught	survived	unexplained
+./internal/capped	2026-08-28	5	4	1	0
 ./internal/cli	2026-08-27	54	50	4	0
 ./internal/config	2026-08-27	135	133	2	0
 ./internal/herdrcli	2026-08-27	57	57	0	0

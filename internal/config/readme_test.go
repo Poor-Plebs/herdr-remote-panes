@@ -7,7 +7,24 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/project"
 )
+
+// repoFile names a file at the top of the repository.
+//
+// Asked for rather than counted to with "..": a path that is merely wrong
+// reads no file, and a test that reads no file passes every check it makes
+// about what is missing from it. This repository has moved a package once
+// already.
+func repoFile(t *testing.T, name string) string {
+	t.Helper()
+	root, err := project.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(root, name)
+}
 
 // TestTheREADMEShowsAWarningThisCanProduce guards an example against the code
 // it claims to be an example of.
@@ -16,7 +33,7 @@ import (
 // somebody can recognise it. An example that has drifted from the wording is
 // worse than none: it is recognisable as something this never says.
 func TestTheREADMEShowsAWarningThisCanProduce(t *testing.T) {
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +80,7 @@ func TestTheWarningInTheREADMEIsOneAMisspellingActuallyCauses(t *testing.T) {
 // file, the whole config stops being readable, and every machine in it
 // disappears at once. Nothing checked that these were even JSON.
 func TestTheREADMEsExamplesAreConfigThisCanRead(t *testing.T) {
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +158,7 @@ func TestTheREADMEQuotesTheCollisionWarningWordForWord(t *testing.T) {
 	// The README quotes this so it can be recognised when it appears. Written
 	// out by hand it agrees with the code until the wording changes, and then
 	// it describes a message nobody has ever seen.
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,11 +192,11 @@ func TestTheREADMEInstallsThisRepository(t *testing.T) {
 	// project is ever moved or renamed, that line keeps pointing at where it
 	// used to be — and the failure is somebody else's plugin being installed,
 	// or none.
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	mod, err := os.ReadFile("../../go.mod")
+	mod, err := os.ReadFile(repoFile(t, "go.mod"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,11 +228,11 @@ func TestEveryBadgeNamesThisRepository(t *testing.T) {
 	// is moved or renamed they keep pointing at where it used to be — and a
 	// badge that points somewhere else does not break, it reports on somebody
 	// else's project.
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	mod, err := os.ReadFile("../../go.mod")
+	mod, err := os.ReadFile(repoFile(t, "go.mod"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,11 +271,11 @@ func TestEveryBadgeNamesThisRepository(t *testing.T) {
 // docPages is every page in the repository that might show a config example.
 func docPages(t *testing.T) []string {
 	t.Helper()
-	pages, err := filepath.Glob("../../docs/*.md")
+	pages, err := filepath.Glob(repoFile(t, "docs/*.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return append(pages, "../../README.md")
+	return append(pages, repoFile(t, "README.md"))
 }
 
 func TestEveryConfigExampleInEveryPageIsOneThisCanRead(t *testing.T) {
