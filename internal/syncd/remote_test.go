@@ -2979,13 +2979,18 @@ func TestAnAdoptedMachineLearnsWhereItsSpaceIs(t *testing.T) {
 	}
 }
 
-func TestASteadyPassAsksAMachineTwoThings(t *testing.T) {
+func TestASteadyPassAsksAMachineOneThing(t *testing.T) {
 	// Every machine is polled on a timer for as long as Herdr is open, so what
-	// one pass costs is paid again every couple of seconds, on every machine
-	// at once. Two calls: which panes it has, and what order its tabs are in.
-	// Both are needed -- the second is what keeps the two sides showing the
-	// same tabs in the same order -- and a third would be half as much traffic
-	// again, arriving quietly.
+	// one pass costs is paid again every couple of seconds -- and the daemon
+	// holds the lock it answers the menu on for the whole of it, so this is
+	// what the menu waits for.
+	//
+	// It asked two things: which panes the machine has, and what order its
+	// tabs are in. The order decides the sequence mirrors are opened in, and a
+	// settled pass opens nothing, so the second was half the cost of a pass
+	// bought for nothing. Existing mirrors are never repositioned by it --
+	// they are retitled, and their placement comes from a pane's tab id rather
+	// than from the order.
 	//
 	// Counted from the transcript rather than reasoned about, which is how the
 	// conversation with a machine has been checked here before.
@@ -3006,21 +3011,34 @@ func TestASteadyPassAsksAMachineTwoThings(t *testing.T) {
 	settle(t, d, here, passes, there)
 	spoken := asked(t)[before:]
 
-	if len(spoken) != 2*passes {
-		t.Errorf("%d passes cost %d calls, want %d:\n%s",
-			passes, len(spoken), 2*passes, strings.Join(spoken, "\n"))
+	if len(spoken) != passes {
+		t.Errorf("%d settled passes cost %d calls, want %d:\n%s",
+			passes, len(spoken), passes, strings.Join(spoken, "\n"))
 	}
-	for _, want := range []string{"pane list", "tab list"} {
-		got := 0
-		for _, line := range spoken {
-			if strings.HasSuffix(strings.TrimSpace(line), want) {
-				got++
-			}
+	for _, line := range spoken {
+		if !strings.HasSuffix(strings.TrimSpace(line), "pane list") {
+			t.Errorf("a settled pass asked for something besides its pane listing:\n  %s", line)
 		}
-		if got != passes {
-			t.Errorf("%q was asked %d times over %d passes, want once each:\n%s",
-				want, got, passes, strings.Join(spoken, "\n"))
+	}
+
+	// A terminal appears on the machine, so there is something to place and
+	// the order is worth asking for again.
+	before = len(asked(t))
+	if reply := d.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
+		t.Fatalf("open: %s", reply.Message)
+	}
+	settle(t, d, here, 1, there)
+
+	tabs := 0
+	for _, line := range asked(t)[before:] {
+		if strings.HasSuffix(strings.TrimSpace(line), "tab list") {
+			tabs++
 		}
+	}
+	if tabs == 0 {
+		t.Error("a pass with a terminal to place never asked what order the " +
+			"machine's tabs are in, so it is placed in whatever order the " +
+			"listing happened to arrive in")
 	}
 }
 

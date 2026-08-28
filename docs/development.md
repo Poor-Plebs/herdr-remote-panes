@@ -156,12 +156,18 @@ HRP_TIMING=1 go test ./internal/syncd/ -run PassCostsEveryMachine -v
 A goroutine is started per machine, which reads as polling them at the same
 time. Each takes the daemon's lock first and holds it for the whole of its
 work, and that work includes asking the machine over SSH for its panes — so
-they run one after another with the lock held across every round trip. With a
-stand-in ssh that takes 300ms, one machine is 610ms and three are 1.83s.
+they run one after another with the lock held across every round trip.
 
 That lock is what answers the menu, the status listing and every command, so
 the cost of a pass is what the menu waits for: the sum over machines rather
-than the slowest of them.
+than the slowest of them. With a stand-in ssh that takes 300ms, one machine is
+300ms and three are 910ms — still the sum, and each machine added costs its
+whole latency again.
+
+A settled pass asks a machine one thing, its pane listing. It asked two until
+the tab order became conditional: that order decides the sequence mirrors are
+opened in, and a pass with nothing to open does not need it. One machine was
+610ms and three were 1.83s before that.
 
 ## Cutting a release
 

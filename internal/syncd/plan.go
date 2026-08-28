@@ -248,6 +248,21 @@ func planStrayPlacement(panesInSameTab int) string {
 	return placementSplit
 }
 
+// planNeedsTabOrder reports whether the machine's tab order is worth a round
+// trip: it decides the order mirrors are opened in, so it is only needed when
+// there is something to open.
+//
+// A settled pass opens nothing, and asking anyway was half of what a pass cost
+// a machine -- doubling the time the daemon's lock is held for each one.
+func planNeedsTabOrder(panes []herdrcli.Pane, mirrored map[string]string) bool {
+	for _, pane := range panes {
+		if _, ok := mirrored[pane.TerminalID]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
 // planSharedPanes selects and orders the remote panes to mirror.
 //
 // With scope "shared" only this machine's own space on the remote is mirrored,

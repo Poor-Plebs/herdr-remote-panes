@@ -2509,16 +2509,21 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 			sharedWorkspace = ""
 		}
 	}
-	tabOrder, err := state.client.TabOrder()
-	if err != nil {
-		return err
-	}
 	// What the scope leaves out, counted before it is dropped. With the
 	// default scope this mirrors the space it made on the machine and nothing
 	// else, so somebody who already had terminals open there turns mirroring
 	// on and sees one -- working exactly as designed, and looking exactly like
 	// a machine whose other terminals failed to arrive.
-	shared := planSharedPanes(remotePanes, sharedWorkspace, tabOrder, d.config().SharedOnly())
+	shared := planSharedPanes(remotePanes, sharedWorkspace, nil, d.config().SharedOnly())
+	if planNeedsTabOrder(shared, state.mirrors) {
+		// Only now, because this is a second round trip to the machine made
+		// with the daemon's lock in hand.
+		tabOrder, err := state.client.TabOrder()
+		if err != nil {
+			return err
+		}
+		shared = planSharedPanes(remotePanes, sharedWorkspace, tabOrder, d.config().SharedOnly())
+	}
 	state.outsideShared = len(remotePanes) - len(shared)
 	remotePanes = shared
 
