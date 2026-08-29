@@ -990,3 +990,48 @@ func TestTheMenuSaysWhatTheDaemonIsWarningAbout(t *testing.T) {
 		t.Errorf("the daemon's warning did not reach the menu: %q", warning)
 	}
 }
+
+func TestAMachineOnSSHSaysWhenThatIsNotWhatWasAsked(t *testing.T) {
+	// Both of these are connected, on plain SSH, with terminals open, and the
+	// rows read identically -- which is the problem. One is a machine set to
+	// ssh doing exactly that; the other is a machine somebody pressed m on,
+	// where mirroring could not start because the machine has no herdr. The
+	// second is the one being looked at to find out why nothing happened, and
+	// the daemon had already worked out the answer and sent it.
+	asked := plainOf(statusSpans(Entry{Connected: true, Terminals: 2, Mirroring: true, SSHOnly: true, NoHerdr: true}))
+	if !strings.Contains(asked, "herdr not found") {
+		t.Errorf("a machine that could not mirror reads %q, with nothing about why", asked)
+	}
+
+	// The other half: a machine on ssh because that is what it is for must not
+	// pick up the excuse. It would be a fault reported on a machine that has
+	// none, on the row somebody reads to see that it is working.
+	plain := plainOf(statusSpans(Entry{Connected: true, Terminals: 2}))
+	if strings.Contains(plain, "herdr") {
+		t.Errorf("a machine set to ssh reads %q, which reports a problem it does not have", plain)
+	}
+}
+
+func TestOneReasonIsGivenForACountThatReadsLow(t *testing.T) {
+	// Three things make a machine mirror fewer terminals than it has, and the
+	// line has room for one of them. Whichever is shown has to be the one that
+	// stays true: a terminal the scope skips arrives by changing the scope,
+	// and one past the limit never arrives at all. Showing "3 elsewhere" to
+	// somebody whose real problem is the cap sends them to move terminals that
+	// will not be mirrored when they get there.
+	both := plainOf(statusSpans(Entry{
+		Connected: true, Mirroring: true, Mirrors: 8, OutsideShared: 3, AtCapacity: true,
+	}))
+	if !strings.Contains(both, "at limit") {
+		t.Errorf("a machine at the cap reads %q, which sends somebody after the wrong one", both)
+	}
+	if strings.Contains(both, "elsewhere") {
+		t.Errorf("the line reads %q -- both causes at once, on a line with room for one", both)
+	}
+
+	// With no cap in the way the scope is the answer, and still gets said.
+	scope := plainOf(statusSpans(Entry{Connected: true, Mirroring: true, Mirrors: 1, OutsideShared: 3}))
+	if !strings.Contains(scope, "3 elsewhere") {
+		t.Errorf("a machine with terminals outside the scope reads %q", scope)
+	}
+}

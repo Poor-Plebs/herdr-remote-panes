@@ -227,7 +227,8 @@ against is not something this plugin knows, and guessing would demote a machine
 that works. It is there because it is the first thing worth knowing when a
 mirror is behaving oddly and everything else looks fine.
 
-**A machine says `ssh` when you asked it to mirror.** Mirroring needs Herdr on
+**A machine says `ssh` when you asked it to mirror.** In the menu it reads
+`connected · 2 open · herdr not found`. Mirroring needs Herdr on
 the machine, and it was not found. Usually it is simply not installed there;
 `ssh` is the fallback rather than a refusal, so the machine still works.
 
@@ -341,7 +342,8 @@ tab here has gone: …
 Connecting to the machine again brings it back, because connecting forgets
 what was closed — that is what makes it the way to see terminals you dismissed.
 
-**A machine says `at the mirror limit`.** One machine may mirror only so many
+**A machine says `at the mirror limit`.** In the menu the same machine reads
+`connected · 8 mirrored · at limit`. One machine may mirror only so many
 terminals, so that a runaway pane count on a remote cannot flood the session
 here. The rest are not mirrored and are not retried: they were never attempted,
 which is what makes this different from the count below. The cap is one setting
@@ -360,7 +362,8 @@ that stopped answering partway through a pass. Unlike the limit above, trying
 again may work: connect to the machine again from the menu. The daemon's log
 says what each one said.
 
-**A machine says `more than one space has this machine's name`.** Two spaces on
+**A machine says `more than one space has this machine's name`.** In the menu
+it reads `connected · 2 mirrored · shared name`. Two spaces on
 that machine answer to the name this plugin looks for, so which one you get
 depends on which came back first — and it need not be the same one each time,
 or the same one the other end picked. Nothing fails; you simply cannot see

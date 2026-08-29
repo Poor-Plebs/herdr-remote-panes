@@ -52,6 +52,19 @@ type Entry struct {
 	// leaves somebody with nothing to do about it, and this is the screen they
 	// are looking at when they want to know.
 	Reason string
+	// NoHerdr is a machine asked to mirror that fell back to plain SSH,
+	// because the machine has no herdr on the PATH an SSH session gets. The
+	// fallback is deliberate and the row was right to say ssh; what it could
+	// not say is that ssh was not what was asked for.
+	NoHerdr bool
+	// AtCapacity is a machine holding max_mirrors terminals with more waiting.
+	// Unlike a mirror that failed, these were never attempted and will not be
+	// until the setting changes, so nothing later makes them appear.
+	AtCapacity bool
+	// SharedName is more than one space on the machine answering to the name
+	// this machine's terminals live under. Nothing fails; the terminals in the
+	// others cannot be seen, and the only sign is a count that reads low.
+	SharedName bool
 }
 
 // Connect asks the daemon to connect to a machine.
@@ -442,6 +455,9 @@ func collect() ([]Entry, string) {
 			entry.OutsideShared = info.OutsideShared
 			entry.Terminals = info.Terminals
 			entry.SSHOnly = info.SSHOnly
+			entry.NoHerdr = info.NoHerdr
+			entry.AtCapacity = info.AtCapacity
+			entry.SharedName = info.SharedName
 			entry.Mirroring = info.Mirroring
 			entry.GaveUp = info.GaveUp
 			entry.Reason = shortReason(info.LastError)
@@ -613,6 +629,55 @@ func isMirroring(entry Entry) bool {
 	return entry.Mirroring
 }
 
+// whyTheCountIsLow explains a machine mirroring fewer terminals than it has.
+//
+// Three things cause it and the menu has room for one. They are not competing
+// pieces of information: they are three answers to the single question this
+// line gets asked, which is why four terminals on a machine show up as one.
+// Any of them answers it well enough to stop the count reading as three
+// mirrors that failed, and `status` prints all of them for somebody who wants
+// the rest.
+//
+// The most permanent first, since that is the one whose absence would mislead.
+// A terminal the scope skips arrives by moving it; one past the limit or in a
+// space with a name it shares does not arrive at all until a setting changes.
+//
+// Keeping it to one slot is also what keeps the state column inside its width.
+// Every column this takes comes off the machine names, for every machine, on
+// every row -- including the machines with nothing wrong with them.
+func whyTheCountIsLow(entry Entry) []span {
+	switch {
+	case entry.AtCapacity:
+		return []span{{" · at limit", yellow}}
+	case entry.SharedName:
+		return []span{{" · shared name", yellow}}
+	case entry.OutsideShared > 0:
+		return []span{{fmt.Sprintf(" · %d elsewhere", entry.OutsideShared), dim}}
+	}
+	return nil
+}
+
+// whyNotMirrored says when a machine is on plain SSH that was not asked for.
+//
+// The rows for a connected machine read the same whether SSH is what the
+// config says or what was left after mirroring could not start, and those are
+// opposite situations: one is working, the other is the machine somebody
+// pressed m on and is now looking at to find out why nothing happened. The
+// daemon knew, logged it, and sent it here in every status reply.
+//
+// Not dim, unlike the other trailing detail. Dim is for what can be dropped
+// for want of room, and this is the only thing on the line that is not simply
+// a report of a machine working.
+func whyNotMirrored(entry Entry) []span {
+	if !entry.NoHerdr {
+		return nil
+	}
+	// The cause, not the remedy -- the remedy is a sentence about herdr_bin
+	// and where a login's PATH reaches, which is what `status` and the log are
+	// for. This is a few words on a line that already has some.
+	return []span{{" · herdr not found", yellow}}
+}
+
 // statusSpans is what a machine's line says after its name.
 func statusSpans(entry Entry) []span {
 	mode := "ssh"
@@ -648,14 +713,11 @@ func statusSpans(entry Entry) []span {
 		// straight after pressing m, and without it a machine with four
 		// terminals on it showing one mirror looks like three that failed.
 		// Dim and last, so it is the first thing dropped for want of room.
-		if entry.OutsideShared > 0 {
-			out = append(out, span{fmt.Sprintf(" · %d elsewhere", entry.OutsideShared), dim})
-		}
-		return out
+		return append(out, whyTheCountIsLow(entry)...)
 	case entry.Connected && entry.Terminals > 0:
-		return []span{{fmt.Sprintf("connected · %d open", entry.Terminals), green}}
+		return append([]span{{fmt.Sprintf("connected · %d open", entry.Terminals), green}}, whyNotMirrored(entry)...)
 	case entry.Connected:
-		return []span{{"connected", green}, {" · ssh", dim}}
+		return append([]span{{"connected", green}, {" · ssh", dim}}, whyNotMirrored(entry)...)
 	case entry.Configured:
 		return []span{{"not connected", yellow}, {" · " + mode, dim}}
 	default:
@@ -734,7 +796,11 @@ func widestStatus() int {
 		{Connected: true, Mirroring: true, Mirrors: 99, OutsideShared: 99},
 		{GaveUp: true, Mirroring: true, ReadOnly: true},
 		{Connected: true, Mirroring: true, ReadOnly: true, Mirrors: 99, OutsideShared: 99},
+		{Connected: true, Mirroring: true, ReadOnly: true, Mirrors: 99, AtCapacity: true},
+		{Connected: true, Mirroring: true, ReadOnly: true, Mirrors: 99, SharedName: true},
+		{Connected: true, Terminals: 99, NoHerdr: true},
 		{Connected: true, Terminals: 99},
+		{Connected: true, NoHerdr: true},
 		{Connected: true},
 		{Configured: true, Mirroring: true},
 		{Configured: true},
