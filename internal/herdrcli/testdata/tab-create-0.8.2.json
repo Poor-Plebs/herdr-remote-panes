@@ -1,0 +1,31 @@
+{
+  "id": "cli:tab:create",
+  "result": {
+    "root_pane": {
+      "agent_status": "unknown",
+      "cwd": "/home/you",
+      "focused": false,
+      "foreground_cwd": "/home/you",
+      "pane_id": "w1:p3",
+      "revision": 0,
+      "scroll": {
+        "max_offset_from_bottom": 0,
+        "offset_from_bottom": 0,
+        "viewport_rows": 39
+      },
+      "tab_id": "w1:t3",
+      "terminal_id": "term_65a2c17abbf794",
+      "workspace_id": "w1"
+    },
+    "tab": {
+      "agent_status": "unknown",
+      "focused": false,
+      "label": "3",
+      "number": 3,
+      "pane_count": 1,
+      "tab_id": "w1:t3",
+      "workspace_id": "w1"
+    },
+    "type": "tab_created"
+  }
+}

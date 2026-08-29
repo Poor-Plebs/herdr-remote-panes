@@ -1,0 +1,28 @@
+{
+  "id": "cli:workspace:list",
+  "result": {
+    "type": "workspace_list",
+    "workspaces": [
+      {
+        "active_tab_id": "w1:t1",
+        "agent_status": "unknown",
+        "focused": true,
+        "label": "hrp probe",
+        "number": 1,
+        "pane_count": 2,
+        "tab_count": 2,
+        "workspace_id": "w1"
+      },
+      {
+        "active_tab_id": "w2:t1",
+        "agent_status": "unknown",
+        "focused": false,
+        "label": "hrp second",
+        "number": 2,
+        "pane_count": 1,
+        "tab_count": 1,
+        "workspace_id": "w2"
+      }
+    ]
+  }
+}
