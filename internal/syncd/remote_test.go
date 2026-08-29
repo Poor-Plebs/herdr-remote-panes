@@ -381,6 +381,58 @@ func TestASpaceHerdrHasLostIsNoticedAndForgotten(t *testing.T) {
 	}
 }
 
+func TestAMarkThatKeepsFailingIsReportedOnce(t *testing.T) {
+	// The marker on a machine's space is put there again whenever the machine's
+	// state moves, which is often. A call that keeps failing therefore keeps
+	// failing, and reporting each one fills the log with the same line for as
+	// long as the daemon runs -- which is how a log stops being read at all.
+	//
+	// So the failure is recorded on the space and reported only when it was
+	// not already failing. What that costs is a second report of the same
+	// trouble; what it buys is a log somebody still reads.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	// Refused from here, and not with "not found": that answer means the space
+	// has gone and is handled by forgetting it, which is a different branch.
+	refuseOnMachine(t, os.Getenv(fakeHerdrState), "workspace report-metadata:internal_error")
+
+	var said strings.Builder
+	log.SetOutput(&said)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	// Marked again each pass by clearing what was last put there, which is
+	// what a machine whose state keeps moving does on its own.
+	marks := here().Calls["workspace report-metadata"]
+	for i := 0; i < 4; i++ {
+		d.mu.Lock()
+		for target, mark := range d.markedWorkspaces {
+			mark.label, mark.token = "", ""
+			d.markedWorkspaces[target] = mark
+		}
+		d.mu.Unlock()
+		settle(t, d, here, 1, there)
+	}
+
+	tried := here().Calls["workspace report-metadata"] - marks
+	if tried < 2 {
+		t.Fatalf("the mark was attempted %d times, so there is no repetition "+
+			"to report once: %+v", tried, here().Calls)
+	}
+	if got := strings.Count(said.String(), "mark space"); got != 1 {
+		t.Errorf("%d attempts were reported %d times; the same trouble should be "+
+			"said once:\n%s", tried, got, said.String())
+	}
+}
+
 func TestAPlainShellIsNamedAfterWhereItIs(t *testing.T) {
 	// What a machine sends for an ordinary shell is a banner title --
 	// "you@laptop:~" -- and a working directory. The banner is skipped, since
