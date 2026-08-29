@@ -177,8 +177,16 @@ it.
 
 ```bash
 make check                                    # green, from a clean tree
+make vuln                                     # known vulnerabilities
 go test -run XXX -fuzz FuzzDecodeFrame -fuzztime 40s ./internal/mirror/
 ```
+
+`make vuln` is not part of `make check`, and deliberately: it needs the network
+and asks a database that changes without the code changing, so it can start
+failing on a machine that has been left alone overnight — which is how a check
+comes to be ignored. There are no dependencies here, `go.mod` has no require
+block at all, so what it really reports on is the standard library this was
+built against. That still moves, and a release is the moment it matters.
 
 `make check` starts two daemons and hands the socket from one to the other,
 because an upgrade is not an install and three releases in one day went out

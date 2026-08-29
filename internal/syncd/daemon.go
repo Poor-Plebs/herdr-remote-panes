@@ -1435,7 +1435,7 @@ func (d *Daemon) prepareRemote(client *remote.Client) error {
 		// The server is launched in the background and needs a moment to bind
 		// its socket, so an immediate ping would fail and leave the host
 		// disconnected until the next manual connect.
-		if retryErr := waitForRemote(client); retryErr != nil {
+		if retryErr := waitForRemote(client, remoteStartTimeout); retryErr != nil {
 			return retryErr
 		}
 	}
@@ -1445,16 +1445,17 @@ func (d *Daemon) prepareRemote(client *remote.Client) error {
 // remoteStartTimeout bounds how long a freshly launched remote session is
 // given to come up.
 //
-// A variable rather than a constant, as the accept grace above: what wants
-// holding is that waiting stops, and a test proving that against ten seconds
-// spends ten seconds doing it.
-var remoteStartTimeout = 10 * time.Second
+// Passed to waitForRemote rather than read by it. It was briefly a variable so
+// that a test could shorten it, which is a package variable written by a test
+// while daemons from other tests are still running and reading it -- a race,
+// and the race detector said so within the hour.
+const remoteStartTimeout = 10 * time.Second
 
 // waitForRemote polls a just-started remote session until it answers. The
 // server is launched detached over SSH, so it is not listening yet when Start
 // returns.
-func waitForRemote(client *remote.Client) error {
-	deadline := time.Now().Add(remoteStartTimeout)
+func waitForRemote(client *remote.Client, within time.Duration) error {
+	deadline := time.Now().Add(within)
 	var err error
 	for attempt := 0; ; attempt++ {
 		if err = client.Ping(); err == nil {
@@ -2115,8 +2116,17 @@ func (d *Daemon) reconcileOnce() {
 	defer d.persist()
 
 	// One slot each, written by that machine's own goroutine and read after
-	// they have all finished, so no lock is wanted for it.
-	spent := make([]time.Duration, len(states))
+	// they have all finished, so no lock is wanted for the slice itself.
+	//
+	// The name is copied in rather than read out afterwards. Reading
+	// state.host.Target from the summary below is a read of a machine's own
+	// bookkeeping with the lock down, and connect writes that field: the race
+	// detector had it within the hour.
+	type machineTime struct {
+		target string
+		took   time.Duration
+	}
+	spent := make([]machineTime, len(states))
 
 	var wg sync.WaitGroup
 	for i, state := range states {
@@ -2124,9 +2134,13 @@ func (d *Daemon) reconcileOnce() {
 		go func(i int, state *hostSync) {
 			defer wg.Done()
 			began := time.Now()
-			defer func() { spent[i] = time.Since(began) }()
 			d.mu.Lock()
 			defer d.mu.Unlock()
+			// Registered after the unlock above, so it runs before it: defers
+			// are last in first out, and this one reads the machine's name.
+			defer func() {
+				spent[i] = machineTime{state.host.Target, time.Since(began)}
+			}()
 			// Disconnected while this pass was away fetching its pane
 			// listing. The lock was released for that -- it is a subprocess,
 			// and holding it across one would stop the daemon answering --
@@ -2196,9 +2210,9 @@ func (d *Daemon) reconcileOnce() {
 	}
 	wg.Wait()
 
-	for i, took := range spent {
-		if took > slowestTook {
-			slowest, slowestTook = states[i].host.Target, took
+	for _, machine := range spent {
+		if machine.took > slowestTook {
+			slowest, slowestTook = machine.target, machine.took
 		}
 	}
 

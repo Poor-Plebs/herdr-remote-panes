@@ -49,7 +49,7 @@ func answeringAfter(t *testing.T, n int) func() int {
 func TestAMachineWhoseHerdrIsStillStartingIsWaitedFor(t *testing.T) {
 	asked := answeringAfter(t, 2)
 
-	if err := waitForRemote(remote.New("bot", "")); err != nil {
+	if err := waitForRemote(remote.New("bot", ""), remoteStartTimeout); err != nil {
 		t.Fatalf("gave up on a machine that answered: %v", err)
 	}
 	if got := asked(); got < 3 {
@@ -61,14 +61,14 @@ func TestAMachineWhoseHerdrIsStillStartingIsWaitedFor(t *testing.T) {
 // TestAMachineThatNeverAnswersIsGivenUpOn holds the other half. Waiting for
 // something that is not coming is a connect that never returns.
 func TestAMachineThatNeverAnswersIsGivenUpOn(t *testing.T) {
-	was := remoteStartTimeout
-	remoteStartTimeout = 300 * time.Millisecond
-	t.Cleanup(func() { remoteStartTimeout = was })
-
 	answeringAfter(t, 1<<30) // never
 
+	// The bound is an argument rather than something to reach in and change:
+	// a package variable written here is written while daemons started by
+	// other tests are still reading it, which the race detector reported
+	// within an hour of it being one.
 	start := time.Now()
-	err := waitForRemote(remote.New("bot", ""))
+	err := waitForRemote(remote.New("bot", ""), 300*time.Millisecond)
 	took := time.Since(start)
 
 	if err == nil {
