@@ -64,6 +64,11 @@ description = "connect to a machine"
 Pick keys Herdr does not already use — a clash is silent, and the built-in wins.
 `prefix+shift+r`, for instance, is `reload_config`.
 
+`herdr config check` will not tell you: a config binding a plugin action to a
+key Herdr already owns is reported as `config: ok`. What you see instead is a
+key that does the built-in thing, and nothing anywhere saying why. If a binding
+seems to do nothing, try another key before looking any further.
+
 ## The menu
 
 The key you bound opens this:
