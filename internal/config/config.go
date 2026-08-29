@@ -201,7 +201,7 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	raw, err := os.ReadFile(path)
+	raw, err := readConfigFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		cfg := Defaults()
 		if err := Save(cfg); err != nil {
@@ -501,6 +501,29 @@ func saveRaw(cfg Config) error {
 	return nil
 }
 
+// readConfigFile reads the settings file, refusing anything that is not a
+// regular one.
+//
+// os.ReadFile on a named pipe waits for somebody to write to it, and on a
+// terminal for somebody to type. The daemon reads this file on a timer, so
+// either is the whole daemon stopped -- no menu, no reconcile, and nothing
+// anywhere saying why. The same hazard was found in the SSH config, which is
+// read to draw the menu; this one is worse because of how often it is read.
+//
+// An error rather than silence: a daemon whose configuration could not be read
+// already says so, in the menu, and that is a better answer than defaults
+// nobody chose.
+func readConfigFile(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file, so it is not read", path)
+	}
+	return os.ReadFile(path)
+}
+
 // loadRaw reads the file as written, without filling in defaults.
 //
 // Changing one setting used to go through Load and Save, both of which fill in
@@ -512,7 +535,7 @@ func loadRaw() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := readConfigFile(path)
 	if err != nil {
 		return Config{}, err
 	}
