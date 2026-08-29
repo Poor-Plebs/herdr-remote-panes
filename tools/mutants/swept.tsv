@@ -20,7 +20,7 @@
 ./internal/picker	2026-08-28	122	105	17	0
 ./internal/project	2026-08-28	8	8	0	0
 ./internal/remote	2026-08-28	52	51	1	0
-./internal/sshconfig	2026-08-29	41	40	1	0
+./internal/sshconfig	2026-08-29	44	43	1	0
 ./internal/syncd	2026-08-28	350	318	32	0
 ./internal/syncd (daemon.go, since 1c47ae4)	2026-08-28	5	5	0	0
 ./internal/syncd (since 30daff2)	2026-08-29	3	1	2	0

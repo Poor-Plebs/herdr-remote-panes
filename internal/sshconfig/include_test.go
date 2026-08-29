@@ -44,14 +44,39 @@ func TestAFileTooLargeToBeAConfigIsNotRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Exactly the bound is read, because the name says maximum.
+	exact := append([]byte("Host exact\n"), make([]byte, maxConfigBytes-len("Host exact\n"))...)
+	if int64(len(exact)) != int64(maxConfigBytes) {
+		t.Fatalf("the file for the boundary is %d bytes, not %d", len(exact), maxConfigBytes)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "atbound"), exact, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	hosts := hostsFrom(path, 0)
 	for _, host := range hosts {
 		if host == "buried" {
 			t.Error("a file past the bound was read anyway")
 		}
 	}
-	// One large file beside a real one is not a reason to lose the real one.
-	if len(hosts) != 1 || hosts[0] != "kept" {
+	found := false
+	for _, host := range hosts {
+		if host == "exact" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a file of exactly %d bytes was not read; the limit is a "+
+			"maximum, so that size is allowed: got %v", maxConfigBytes, hosts)
+	}
+	// One large file beside real ones is not a reason to lose them.
+	kept := false
+	for _, host := range hosts {
+		if host == "kept" {
+			kept = true
+		}
+	}
+	if !kept {
 		t.Errorf("got %v, want the machine from the fragment that is a config", hosts)
 	}
 }
@@ -188,6 +213,19 @@ func TestAnIncludeThatMatchesEverythingIsRefused(t *testing.T) {
 			t.Fatalf("an include matching %d files was read anyway: %q came back",
 				maxIncludeMatches+1, host)
 		}
+	}
+
+	// And exactly the bound is allowed, because the name says maximum. One
+	// file fewer is the same directory with the last one taken out, so this
+	// is the boundary itself rather than a number near it.
+	if err := os.Remove(filepath.Join(many, fmt.Sprintf("c%04d", maxIncludeMatches))); err != nil {
+		t.Fatal(err)
+	}
+	atTheBound := hostsFrom(path, 0)
+	if len(atTheBound) != maxIncludeMatches+2 {
+		t.Errorf("an include matching exactly %d files gave %d machines; the "+
+			"limit is a maximum, so that many is allowed",
+			maxIncludeMatches, len(atTheBound)-2)
 	}
 	// And the machines around it are still offered, as with any other include
 	// that could not be used.
