@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "workspace_not_found",
+    "message": "workspace w99 not found"
+  },
+  "id": "cli:tab:create"
+}

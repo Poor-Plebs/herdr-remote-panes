@@ -2,6 +2,7 @@ package herdrcli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 )
@@ -177,4 +178,65 @@ func TestARealCreationParses(t *testing.T) {
 				"is nowhere to learn it from")
 		}
 	})
+}
+
+// TestARealRefusalIsRecognised holds what "already gone" looks like on the
+// wire, which is the difference between a close that worked and one that did
+// not.
+//
+// A close of a pane that has already gone comes back as a refusal, and this
+// plugin treats that as success: it is the outcome that was wanted. That
+// judgement is made on the error's code ending in "_not_found". If Herdr ever
+// spelt those differently, every such close would be read as a failure --
+// queued for another attempt, and reported to somebody as a terminal still
+// running on a machine when it is not.
+//
+// So the codes come from Herdr 0.8.2 rather than from this plugin's idea of
+// them: a pane closed twice, a tab asked for in a space that is not there, and
+// a session with no server behind it.
+func TestARealRefusalIsRecognised(t *testing.T) {
+	for _, tt := range []struct {
+		file string
+		code string
+		gone bool
+		what string
+	}{
+		{"error-pane-not-found-0.8.2.json", "pane_not_found", true,
+			"closing a pane that has already gone"},
+		{"error-workspace-not-found-0.8.2.json", "workspace_not_found", true,
+			"a space that is not there"},
+		// Not a "gone" answer: the machine's Herdr is not running, which is
+		// worth reporting rather than treating as the thing having happened.
+		{"error-no-server-0.8.2.json", "server_not_running", false,
+			"no server behind the session"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			raw, err := os.ReadFile("testdata/" + tt.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = Decode(raw, []string{"pane", "close", "w9:p99"})
+			if err == nil {
+				t.Fatal("a refusal was read as an answer")
+			}
+
+			var api *APIError
+			if !errors.As(err, &api) {
+				t.Fatalf("the refusal came back as %T, which nothing can ask "+
+					"the code of: %v", err, err)
+			}
+			if api.Code != tt.code {
+				t.Errorf("the code came back %q and Herdr sent %q", api.Code, tt.code)
+			}
+			if got := IsNotFound(err); got != tt.gone {
+				t.Errorf("IsNotFound says %v for %q; a close of something already "+
+					"gone counts as done, and anything else does not", got, api.Code)
+			}
+			// The message is what reaches somebody in the log, so it has to
+			// survive the decoding.
+			if api.Message == "" {
+				t.Error("the message Herdr sent was dropped")
+			}
+		})
+	}
 }
