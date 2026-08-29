@@ -972,22 +972,30 @@ func TestTheMenuSaysWhenItCouldNotReadTheSSHConfig(t *testing.T) {
 	}
 }
 
-func TestTheMenuSaysWhatTheDaemonIsWarningAbout(t *testing.T) {
-	// The daemon computes this on every status: a plugin config it could not
-	// read, or settings that parsed and mean nothing -- a misspelled key, a
-	// machine listed twice. It travelled to the menu in every reply and the
-	// menu dropped it, so the only way to see it was to run `status` by hand
-	// from a terminal. That is the wrong place: what a config problem does is
-	// leave machines out of the *menu*, and the menu is where somebody is
-	// standing when they notice one missing.
+func TestAConfigProblemIsSaidOnce(t *testing.T) {
+	// Two things compute this warning: the menu, from its own read of the
+	// config, and the daemon, which sends it in every status reply. They agree
+	// almost always, being the same check over the same file, so a menu that
+	// shows both shows one sentence twice -- on the line that gets two lines
+	// in the popup and an ellipsis after that.
+	//
+	// Which is what happened when the reply's field was noticed and wired in
+	// as though nothing were reporting it. It reads as a gap: the daemon fills
+	// the field on every call and the menu unpacks the fields on either side
+	// of it. The comment on status says why it stays unread.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"mode":"mirrorr"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
 	answerWith(t, syncd.Reply{
 		OK:      true,
-		Warning: "check the plugin config, 2 problems",
+		Warning: `check the plugin config: mode "mirrorr" is not one of ssh, attach or observe`,
 	})
 
-	_, warning := status()
-	if !strings.Contains(warning, "2 problems") {
-		t.Errorf("the daemon's warning did not reach the menu: %q", warning)
+	_, warning := collect()
+	if n := strings.Count(strings.ToLower(warning), "mirrorr"); n != 1 {
+		t.Errorf("the misspelled mode is reported %d times, not once:\n%s", n, warning)
 	}
 }
 
