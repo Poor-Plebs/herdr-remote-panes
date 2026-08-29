@@ -46,25 +46,57 @@ func TestEveryDocCommentNamesItsOwnFunction(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse %s: %v", path, err)
 		}
+		// What each declaration is called, and the comment above it. Types,
+		// constants and variables as well as functions: the rule is the same
+		// for all of them, and reading only functions let a comment about
+		// something else settle above a type, where `go doc` shows it as that
+		// type's first paragraph.
+		//
+		// Only declarations naming one thing. A grouped `var (...)` may
+		// reasonably carry a comment about the group rather than any member.
+		type documented struct {
+			name string
+			doc  *ast.CommentGroup
+			what string
+		}
+		var named []documented
 		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Doc == nil || len(fn.Doc.List) == 0 {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				named = append(named, documented{d.Name.Name, d.Doc, "func"})
+			case *ast.GenDecl:
+				if len(d.Specs) != 1 {
+					continue
+				}
+				switch spec := d.Specs[0].(type) {
+				case *ast.TypeSpec:
+					named = append(named, documented{spec.Name.Name, d.Doc, "type"})
+				case *ast.ValueSpec:
+					if len(spec.Names) == 1 {
+						named = append(named, documented{spec.Names[0].Name, d.Doc, "declaration"})
+					}
+				}
+			}
+		}
+
+		for _, fn := range named {
+			if fn.doc == nil || len(fn.doc.List) == 0 {
 				continue
 			}
 			checked++
 			// Go's own convention: a doc comment opens with the name of what
 			// it documents. Held to here because it is what makes this
 			// checkable at all.
-			opening := strings.Fields(strings.TrimPrefix(fn.Doc.List[0].Text, "//"))
+			opening := strings.Fields(strings.TrimPrefix(fn.doc.List[0].Text, "//"))
 			if len(opening) == 0 {
 				continue
 			}
 			first := strings.TrimRight(opening[0], ",.")
-			if first != fn.Name.Name {
-				t.Errorf("%s: the comment above %s opens with %q.\n"+
+			if first != fn.name {
+				t.Errorf("%s: the comment above %s %s opens with %q.\n"+
 					"A doc comment starts with the name of what it documents. If %q is a "+
-					"real function, its comment has been stranded here and belongs above it.",
-					fset.Position(fn.Doc.Pos()), fn.Name.Name, first, first)
+					"real name, its comment has been stranded here and belongs above it.",
+					fset.Position(fn.doc.Pos()), fn.what, fn.name, first, first)
 			}
 		}
 		return nil

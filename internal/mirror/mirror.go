@@ -185,8 +185,6 @@ func bridge() error {
 	}
 }
 
-// shell opens a plain interactive SSH session. Nothing about it needs Herdr on
-// the far side, so it works against any machine you can log in to.
 // tail keeps the last of what is written to it, so a command's own account of
 // why it failed can be put in the record without holding on to everything it
 // ever said.
@@ -248,6 +246,8 @@ func failed(err error, argv []string, said *tail) error {
 	return fmt.Errorf("%w running: %s", err, describeCommand(argv))
 }
 
+// shell opens a plain interactive SSH session. Nothing about it needs Herdr on
+// the far side, so it works against any machine you can log in to.
 func shell(client *remote.Client) error {
 	argv := client.ShellArgv()
 	cmd := exec.Command(argv[0], argv[1:]...)

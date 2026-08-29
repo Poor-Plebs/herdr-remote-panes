@@ -855,12 +855,6 @@ func nameColumn(entries []Entry, cols int) int {
 	return limit
 }
 
-// visibleWindow picks the slice of entries to show, keeping the selected one
-// on screen.
-//
-// The menu runs in a popup whose height it does not control, and writing more
-// lines than fit scrolls the top away — taking the first machine, and the
-// heading, with it. So the list is windowed rather than assumed to fit.
 // maxNoticeLines bounds one paragraph on a screen that is not the menu. An
 // error can carry a socket path and a suggested command and still be one
 // sentence, so there is more room here than a warning in the menu gets.
@@ -1152,12 +1146,12 @@ func swallowPaste(read func() (byte, bool)) key {
 // the end of it.
 const maxPasteBytes = 1 << 16
 
-// maxEscapeParams bounds how much of an escape sequence is read before giving
-// up on it, so a stream that never ends one cannot be read forever.
 // mouseReportBytes is how much a click in the old encoding carries after its
 // sequence: the button, the column and the row, each offset by 32.
 const mouseReportBytes = 3
 
+// maxEscapeParams bounds how much of an escape sequence is read before giving
+// up on it, so a stream that never ends one cannot be read forever.
 const maxEscapeParams = 16
 
 // parseKey reads one keypress, translating the escape sequences a terminal

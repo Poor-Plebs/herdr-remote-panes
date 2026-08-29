@@ -40,12 +40,6 @@ type Pane struct {
 	Cwd         string `json:"cwd"`
 }
 
-// DisplayName is the best human name for a pane: its explicit label, else the
-// detected agent, else the terminal title, else the working directory.
-//
-// Shell titles are usually of the form "user@host:~", which would produce a
-// second "@" once the host suffix is appended, so those are skipped in favour
-// of the directory name.
 // maxAgentName bounds an agent's name. An unbounded one crowds out everything
 // beside it in a sidebar.
 const maxAgentName = 28
@@ -61,6 +55,12 @@ func (p Pane) SafeAgent() string {
 	return text.Truncate(text.Sanitize(p.Agent), maxAgentName)
 }
 
+// DisplayName is the best human name for a pane: its explicit label, else the
+// detected agent, else the terminal title, else the working directory.
+//
+// Shell titles are usually of the form "user@host:~", which would produce a
+// second "@" once the host suffix is appended, so those are skipped in favour
+// of the directory name.
 func (p Pane) DisplayName() string {
 	if s := strings.TrimSpace(p.Label); s != "" {
 		return s

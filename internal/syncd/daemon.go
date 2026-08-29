@@ -3044,14 +3044,14 @@ func (d *Daemon) retitle(state *hostSync, paneID, label string) {
 	state.labels[paneID] = label
 }
 
-// forgetPane drops everything remembered about a pane that has gone, so a
-// recycled id starts clean.
 // shellPlace is one plain terminal and how it was placed.
 type shellPlace struct {
 	paneID string
 	where  string
 }
 
+// forgetPane drops everything remembered about a pane that has gone, so a
+// recycled id starts clean.
 func (d *Daemon) forgetPane(state *hostSync, paneID string) {
 	delete(state.labels, paneID)
 	delete(state.reportedAgents, paneID)

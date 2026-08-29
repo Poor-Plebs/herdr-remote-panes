@@ -26,9 +26,6 @@ import "bytes"
 // arrive from a machine.
 const Max = 8 * 1024 * 1024
 
-// Not an error at the point of writing: the command is still running, and what
-// has already arrived is usually the useful part -- Herdr's refusals are short
-// and come first. The caller is told after.
 // Writer collects up to [Max] and counts the rest away.
 type Writer struct {
 	Buf bytes.Buffer
@@ -39,6 +36,12 @@ type Writer struct {
 	Overran bool
 }
 
+// Write keeps what fits and counts the rest away, stopping the command the
+// first time something does not fit.
+//
+// Not an error at the point of writing: the command is still running, and what
+// has already arrived is usually the useful part -- Herdr's refusals are short
+// and come first. The caller is told after.
 func (c *Writer) Write(p []byte) (int, error) {
 	if room := Max - c.Buf.Len(); room > 0 {
 		if len(p) <= room {

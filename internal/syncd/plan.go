@@ -435,22 +435,6 @@ func planShellName(taken map[string]bool, label func(string) string) string {
 // maxHostAttempts is how many times a machine is tried before it is left alone.
 const maxHostAttempts = 2
 
-// planGiveUp says whether to stop trying a machine.
-//
-// Retrying a machine every couple of seconds burns SSH connections, fills the
-// log, and slows every other machine down, so after a couple of attempts it is
-// left alone until it is connected to again -- which is an explicit "try now".
-//
-// Some failures do not even earn the second attempt. A changed host key, a name
-// that does not resolve, a key the machine will not take: none of those can
-// come good between one attempt and the next, so the retry is guaranteed to
-// fail in exactly the same way. It is not free either -- an unresolvable name
-// costs another DNS wait, and a changed host key another fifteen-line banner in
-// the log -- and it delays saying the one thing worth saying, which is what to
-// go and fix.
-// passResult is what one machine did in one reconcile pass, reduced to the two
-// things that decide whether the pass says something about the machines or
-// about the link to them.
 type passResult struct {
 	gaveUp  bool
 	settled bool
@@ -504,6 +488,22 @@ const (
 	autoRetryCeiling = 5 * time.Minute
 )
 
+// planGiveUp says whether to stop trying a machine.
+//
+// Retrying a machine every couple of seconds burns SSH connections, fills the
+// log, and slows every other machine down, so after a couple of attempts it is
+// left alone until it is connected to again -- which is an explicit "try now".
+//
+// Some failures do not even earn the second attempt. A changed host key, a name
+// that does not resolve, a key the machine will not take: none of those can
+// come good between one attempt and the next, so the retry is guaranteed to
+// fail in exactly the same way. It is not free either -- an unresolvable name
+// costs another DNS wait, and a changed host key another fifteen-line banner in
+// the log -- and it delays saying the one thing worth saying, which is what to
+// go and fix.
+// passResult is what one machine did in one reconcile pass, reduced to the two
+// things that decide whether the pass says something about the machines or
+// about the link to them.
 func planGiveUp(consecutiveFailures int, err error) bool {
 	if settledFailure(err) {
 		return true
