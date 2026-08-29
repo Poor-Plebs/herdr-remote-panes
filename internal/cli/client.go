@@ -107,7 +107,13 @@ func statusLines(hosts []syncd.HostInfo, width int) []string {
 		}
 		open := h.Mirrors
 		r.kind = "mirrored"
-		if h.SSHOnly {
+		// SSHOnly records what happened when the connection was made, so on a
+		// machine that has not connected there is nothing in it to read and it
+		// is false -- which left this column saying "mirrored" for every
+		// machine that was down, including the ones set to plain ssh that
+		// would never have mirrored anything. The setting is what is left to
+		// go on, and it is what the menu falls back on for the same reason.
+		if h.SSHOnly || (!h.Connected && !h.Mirroring) {
 			open, r.kind = h.Terminals, "ssh"
 		}
 		// What follows is everything the machine is quietly not doing. Each is

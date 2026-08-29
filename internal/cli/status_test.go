@@ -54,8 +54,16 @@ func TestStatusSaysHowAMachineIsReachedEvenWhenItIsNot(t *testing.T) {
 	// saying for a machine that is not answering. The count is not: "0
 	// mirrored" reads as a tally, and a machine that cannot be reached has
 	// nothing to tally.
+	//
+	// Mirroring is set here rather than left off, which is what this asked for
+	// all along: it comes from the config rather than from the connection, so
+	// it is the machine's setting and reads the same whether or not the
+	// machine ever answered. Left off, the fixture was a machine set to plain
+	// ssh, and the assertion below held only because the column defaulted to
+	// "mirrored" for everything that was down. Which kind is shown for which
+	// setting is TestAMachineThatIsDownIsStillReportedAsWhatItIsSetTo.
 	hosts := []syncd.HostInfo{
-		{Label: "staging", GaveUp: true, LastError: "host key changed"},
+		{Label: "staging", GaveUp: true, Mirroring: true, LastError: "host key changed"},
 	}
 	line := statusLines(hosts, 0)[0]
 
@@ -704,5 +712,31 @@ func TestEveryThingAMachineCanReportIsAccountedFor(t *testing.T) {
 			t.Errorf("HostInfo.%s is listed as changing the status line and does not: %q",
 				name, got)
 		}
+	}
+}
+
+func TestAMachineThatIsDownIsStillReportedAsWhatItIsSetTo(t *testing.T) {
+	// The kind column said "mirrored" for every machine that was not
+	// connected, because the field it read -- SSHOnly -- records what happened
+	// when the connection was made, and on a machine that never connected
+	// nothing has happened. So a machine deliberately left on plain ssh was
+	// reported as mirroring the moment it went down, which is the state
+	// somebody runs `status` to look at.
+	hosts := []syncd.HostInfo{
+		{Label: "plain", GaveUp: true, LastError: "connection refused"},
+		{Label: "mirror", GaveUp: true, Mirroring: true, LastError: "connection refused"},
+	}
+	lines := statusLines(hosts, 100)
+	if len(lines) < 2 {
+		t.Fatalf("two machines came out as %d lines: %q", len(lines), lines)
+	}
+	if strings.Contains(lines[0], "mirrored") {
+		t.Errorf("a machine set to ssh reads as mirroring while it is down: %q", lines[0])
+	}
+	// The other half, and why this falls back to the setting rather than to a
+	// blank: what a machine is set to is the only thing worth saying about one
+	// that is not doing anything.
+	if !strings.Contains(lines[1], "mirrored") {
+		t.Errorf("a machine set to mirror stopped saying so while it is down: %q", lines[1])
 	}
 }
