@@ -221,6 +221,16 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 			if err := os.MkdirAll(src, 0o755); err != nil {
 				t.Fatal(err)
 			}
+			// Checked before it is unpacked, because the failure otherwise
+			// lands on tar: git archive writes nothing and exits, tar reads
+			// the empty pipe and says "this does not look like a tar
+			// archive", and the one thing that went wrong -- a version that
+			// is not a tag here -- appears nowhere. HRP_UPGRADE_FROM is set
+			// by hand, which is where the typo comes from.
+			if out, err := exec.Command("git", "rev-parse", "--verify", from+"^{commit}").CombinedOutput(); err != nil {
+				t.Fatalf("%s is not a commit in this repository, so there is "+
+					"nothing to upgrade from: %v\n%s", from, err, out)
+			}
 			archive := exec.Command("git", "archive", from)
 			untar := exec.Command("tar", "-x", "-C", src)
 			pipe, err := archive.StdoutPipe()

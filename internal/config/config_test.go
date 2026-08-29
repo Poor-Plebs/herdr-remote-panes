@@ -542,3 +542,47 @@ func TestAFirstRunThatCannotWriteItsConfigSaysSo(t *testing.T) {
 		t.Errorf("the defaults handed back are not usable: %+v", cfg)
 	}
 }
+
+func TestAConfigWrittenByAnOlderVersionKeepsTheDefaultsOfItsDay(t *testing.T) {
+	// Load writes every setting at its default when there is no file, which is
+	// what makes them discoverable in the file rather than only in the README.
+	// The cost is recorded here rather than left to be found: a value written
+	// down is a value chosen, as far as anything downstream can tell, so
+	// changing a default reaches new installs and nobody else.
+	//
+	// It has already happened once. placement defaulted to "split" until
+	// v0.4.0, where the README says a mirror that does not mirror the shape is
+	// not something anybody should have to discover a setting for -- and
+	// everyone who installed before that has "placement": "split" written in
+	// their file by this function, so the change reached none of them.
+	//
+	// This is not an assertion that the behaviour is right. It is here so that
+	// whoever changes a default finds out who will not get it, which is not
+	// visible from Defaults() and was not visible from the comment on Load.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	written := `{"poll_interval": "2s", "mode": "ssh", "placement": "split", "hosts": []}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(written), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Placement != "split" {
+		t.Errorf("a setting written in the file came back as %q; the file is what "+
+			"the machine is run with, whoever wrote it", cfg.Placement)
+	}
+	if Defaults().Placement == "split" {
+		t.Skip("the default is split again, so this no longer tells the two apart")
+	}
+	// The half worth knowing: it differs from the current default and nothing
+	// anywhere says so. A machine set up before the change behaves one way,
+	// the README describes another, and neither the menu nor `status` reports
+	// a difference -- there is nothing wrong with the setting, only with how
+	// it came to be there.
+	if problems := cfg.Problems(); len(problems) > 0 {
+		t.Errorf("a config pinning an old default is reported as faulty: %v", problems)
+	}
+}

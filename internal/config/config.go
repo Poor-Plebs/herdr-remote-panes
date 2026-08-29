@@ -194,7 +194,14 @@ func Path() (string, error) {
 	return filepath.Join(dir, "config.json"), nil
 }
 
-// Load reads the config file, writing a commented default when it is absent.
+// Load reads the config file, writing one out when it is absent.
+//
+// What it writes is every setting at its default, which is what makes them
+// discoverable in the file rather than only in the README -- and which pins
+// them: a value written down is a value chosen as far as anything here can
+// tell, so a default improved in a later version reaches new installs only.
+// TestAConfigWrittenByAnOlderVersionKeepsTheDefaultsOfItsDay is where that is
+// spelled out.
 func Load() (Config, error) {
 	path, err := Path()
 	if err != nil {
