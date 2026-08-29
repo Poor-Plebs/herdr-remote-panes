@@ -147,11 +147,20 @@ bytes twice gives the same answer — so they keep working when the wording of
 something changes. `go test ./...` runs their seed corpus; the fuzzing itself is
 opt-in, like the two above.
 
-Give them minutes rather than seconds. Every target had been run at 45s and was
-clean; at three minutes, `FuzzHostsFrom` found an `Include` that matches a
-terminal — a config the menu would never finish reading. The other eleven were
-still clean at three minutes, so the useful budget is the one that found
-something, not the one that finishes quickly.
+Give them minutes rather than seconds, and give them to the right target.
+Every one had been run at 45s and was clean; `FuzzHostsFrom` then found five
+separate faults between three and ten minutes, and re-running it after each fix
+found the next.
+
+The other twelve found nothing at three minutes, and several nothing at ten.
+The difference is not how untrusted the input is — it is whether the input
+decides what work happens next. An `Include` line is a glob, so the file being
+read chooses which paths get walked, how many, how large and how deep. The rest
+take bytes and return values with no I/O in between, and no input can make them
+do more than one pass over what they were handed.
+
+So a long budget is worth spending where a parser's output decides the next
+piece of work, and those are rare.
 
 A failing input is written to `testdata/fuzz/<Target>/` and becomes part of what
 `go test ./...` runs from then on. Keep it: the seed is the cheapest possible
