@@ -219,7 +219,7 @@ func main() {
 			// A shell sets its own title as a matter of course, and that is
 			// what a mirror of it is named after. Leaving it empty left every
 			// name in these tests coming from the last fallback there is.
-			"terminal_title_stripped": "zsh",
+			"terminal_title_stripped": "you@laptop:~", "cwd": "/home/you",
 		}
 		save()
 		ok(map[string]any{"workspace": state.Workspaces[id], "root_pane": state.Panes[root]})
@@ -317,7 +317,7 @@ func main() {
 		state.Panes[root] = map[string]any{
 			"pane_id": root, "tab_id": tab, "workspace_id": workspace,
 			"terminal_id": state.id("term_"), "label": "",
-			"terminal_title_stripped": "zsh",
+			"terminal_title_stripped": "you@laptop:~", "cwd": "/home/you",
 		}
 		save()
 		ok(map[string]any{

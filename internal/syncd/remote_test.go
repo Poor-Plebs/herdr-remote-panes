@@ -320,6 +320,48 @@ func TestAPaneOpenedByHandInAMirroredMachinesSpaceMovesOntoIt(t *testing.T) {
 	}
 }
 
+func TestAPlainShellIsNamedAfterWhereItIs(t *testing.T) {
+	// What a machine sends for an ordinary shell is a banner title --
+	// "you@laptop:~" -- and a working directory. The banner is skipped, since
+	// appending the machine to it would give a name with two "@" in it, so the
+	// name comes from the directory.
+	//
+	// That is the common case on any machine and it was not reached from here
+	// until the stand-in started sending what Herdr sends: it sent a title of
+	// "zsh" and no directory at all, so every mirror in every test was named
+	// from a field that a real shell does not set that way.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 3, there)
+
+	var names []string
+	for _, pane := range here().Panes {
+		if label, _ := pane["label"].(string); label != "" {
+			names = append(names, label)
+		}
+	}
+	if len(names) != 1 {
+		t.Fatalf("want one mirror to read the name of, got %v", names)
+	}
+	// The directory the shell is in, and the machine it is on. Not the banner,
+	// which would read "you@laptop:~@bot".
+	if names[0] != "you@bot" {
+		t.Errorf("the mirror is called %q; a shell in /home/you on bot is "+
+			"\"you@bot\"", names[0])
+	}
+	if strings.Count(names[0], "@") != 1 {
+		t.Errorf("the name %q has more than one @, so the banner was used "+
+			"rather than skipped", names[0])
+	}
+}
+
 func TestAPaneIsNotClosedWhenTheMachineWillNotTakeIt(t *testing.T) {
 	// Capturing a stray is the one path that closes a pane this plugin did not
 	// open, and it closes it because a terminal on the machine is replacing
