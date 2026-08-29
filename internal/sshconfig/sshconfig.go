@@ -113,10 +113,34 @@ func Hosts() []string {
 // error to ssh either, so there is nothing to read anywhere.
 const maxIncludeDepth = 16
 
+// hostsFrom reads a config and everything it includes.
+//
+// The entry point keeps its own record of what has been read, so a file
+// reached twice is read once.
 func hostsFrom(path string, depth int) []string {
+	return hostsRead(path, depth, map[string]bool{})
+}
+
+// hostsRead is hostsFrom with that record in hand.
+//
+// Without it the depth limit is the only bound, and it bounds the wrong thing.
+// Three files that each include the directory they are in multiply at every
+// level: sixteen deep is three to the sixteenth reads, which is a menu that
+// never opens. That shape is a copy-paste -- the same Include header in each
+// fragment -- rather than anything exotic.
+//
+// Skipping a repeat cannot change the answer. What is collected here is host
+// aliases, and those are already deduplicated; reading a file a second time
+// adds nothing but the reading.
+func hostsRead(path string, depth int, read map[string]bool) []string {
 	if path == "" || depth > maxIncludeDepth {
 		return nil
 	}
+	path = filepath.Clean(path)
+	if read[path] {
+		return nil
+	}
+	read[path] = true
 	// Regular files only. An Include is a glob, and a glob matches whatever is
 	// there: "Include /*/*/0" matches /dev/pts/0 on an ordinary machine, and
 	// reading a terminal blocks until somebody types into it. This file is read
@@ -156,7 +180,7 @@ func hostsFrom(path string, depth int) []string {
 		case "include":
 			for _, included := range fields[1:] {
 				for _, match := range expand(included) {
-					for _, host := range hostsFrom(match, depth+1) {
+					for _, host := range hostsRead(match, depth+1, read) {
 						if !seen[host] {
 							seen[host] = true
 							hosts = append(hosts, host)

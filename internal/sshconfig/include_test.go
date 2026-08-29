@@ -10,6 +10,51 @@ import (
 	"time"
 )
 
+// TestFilesThatIncludeEachOtherAreReadOnce bounds the shape the depth limit
+// does not.
+//
+// The limit stops a chain at sixteen. It does not stop a chain that branches:
+// three files that each include the directory they are in multiply at every
+// level, which is three to the sixteenth reads and a menu that never opens.
+// The shape is a copy-paste -- the same Include header in each fragment --
+// rather than anything anybody set out to write.
+//
+// Reading each file once cannot change what comes back. Host aliases are
+// deduplicated already; a second reading adds only the reading.
+func TestFilesThatIncludeEachOtherAreReadOnce(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, "conf.d")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		body := fmt.Sprintf("Host h%d\nInclude %s/*\n", i, dir)
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("c%d", i)), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(home, "config")
+	if err := os.WriteFile(path, []byte("Host mine\nInclude "+dir+"/*\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan []string, 1)
+	go func() { done <- hostsFrom(path, 0) }()
+
+	select {
+	case hosts := <-done:
+		// All four machines, each once: the answer is the same as it would be
+		// without the cycle, which is the point of the fix.
+		if len(hosts) != 4 {
+			t.Errorf("got %v, want the four machines named across the files", hosts)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("files that include each other did not come back; the depth " +
+			"limit bounds the chain and not the branching")
+	}
+}
+
 // TestAnIncludeThatMatchesEverythingIsRefused bounds the work one line can ask
 // for.
 //
