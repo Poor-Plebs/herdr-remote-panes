@@ -8,8 +8,12 @@
 package logfile
 
 import (
+	"io"
 	"os"
+	"strings"
 	"sync"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 )
 
 // File is an io.Writer that rolls over rather than growing without end. One
@@ -79,9 +83,60 @@ func (f *File) Write(p []byte) (int, error) {
 			f.written = 0
 		}
 	}
-	n, err := f.file.Write(p)
+	n, err := f.file.Write(safeToRead(p))
 	f.written += int64(n)
-	return n, err
+	if err != nil {
+		return n, err
+	}
+	// What was consumed rather than what was written: the two differ once
+	// anything has been taken out, and a writer reporting fewer bytes than it
+	// was given means a short write to everything that checks.
+	return len(p), nil
+}
+
+// Sanitized wraps a writer so that what a machine said cannot act on the
+// terminal showing it.
+//
+// The file this package keeps is only half of where the daemon's diagnostics
+// go: they are written to standard error as well, which Herdr collects, and
+// every command's final error goes there through the same logger. Both ends of
+// that are a terminal somebody reads.
+func Sanitized(w io.Writer) io.Writer { return sanitized{w} }
+
+type sanitized struct{ w io.Writer }
+
+func (s sanitized) Write(p []byte) (int, error) {
+	if _, err := s.w.Write(safeToRead(p)); err != nil {
+		return 0, err
+	}
+	// As in File.Write: what was consumed, not what was left after taking
+	// things out of it.
+	return len(p), nil
+}
+
+// safeToRead takes out what a terminal would act on rather than show.
+//
+// Both of these files are named in the troubleshooting page with `cat` in
+// front of them, which is the one thing they are for -- and what goes into
+// them is not all ours. An error from a machine carries that machine's
+// standard error as it was written, and a banner is the far side's to choose,
+// so the escape that clears the screen or renames the window would run in
+// whatever terminal went looking for why something failed.
+//
+// Here rather than at the twenty-odd places that log an error, because that is
+// a list nobody can finish: the next one is written by somebody who has no
+// reason to think about it. This package writes nothing but these two files,
+// so it can hold the rule for both.
+//
+// Line by line, so the newline that divides one entry from the next survives
+// -- Sanitize drops it along with the rest of the control characters, and an
+// entry per line with the time at the front is what makes the file readable.
+func safeToRead(p []byte) []byte {
+	lines := strings.Split(string(p), "\n")
+	for i, line := range lines {
+		lines[i] = text.Sanitize(line)
+	}
+	return []byte(strings.Join(lines, "\n"))
 }
 
 // rotate keeps the previous generation. Callers hold the lock.

@@ -33,6 +33,11 @@ import (
 func Main() int {
 	log.SetFlags(log.Ltime)
 	log.SetPrefix("herdr-remote-panes: ")
+	// Every command's failure is reported through this logger, and a failure
+	// that came from a machine carries whatever that machine said. Herdr shows
+	// a command's standard error once it has finished, so an escape in it acts
+	// on the terminal reading the report.
+	log.SetOutput(logfile.Sanitized(os.Stderr))
 
 	args := os.Args[1:]
 	if len(args) == 0 {
@@ -324,10 +329,10 @@ func daemonLog() func() {
 		log.Printf("could not open the daemon log: %v", err)
 		return nil
 	}
-	log.SetOutput(io.MultiWriter(os.Stderr, f))
+	log.SetOutput(io.MultiWriter(logfile.Sanitized(os.Stderr), f))
 	log.Printf("herdr-remote-panes %s starting", version.Short())
 	return func() {
-		log.SetOutput(os.Stderr)
+		log.SetOutput(logfile.Sanitized(os.Stderr))
 		_ = f.Close()
 	}
 }

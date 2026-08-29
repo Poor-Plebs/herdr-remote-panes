@@ -1,8 +1,10 @@
 package logfile
 
 import (
+	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -415,5 +417,94 @@ func TestTheLogKeepsWritingWhenItCannotRollOver(t *testing.T) {
 	if f.written >= f.max {
 		t.Errorf("the log holds %d bytes against a bound of %d, so the next line "+
 			"tries the rename again", f.written, f.max)
+	}
+}
+
+func TestALogDoesNotCarryWhatATerminalWouldActOn(t *testing.T) {
+	// Both files this package writes are named in the troubleshooting page
+	// with `cat` in front of them, and what goes into them is not all ours: an
+	// error from a machine carries that machine's standard error as it was
+	// written. So the escape that clears the screen or renames the window
+	// would run in the terminal of somebody looking for why something failed.
+	//
+	// Held here rather than at each place that logs an error, because that is
+	// a list of twenty-odd that nobody can finish.
+	path := filepath.Join(t.TempDir(), "daemon.log")
+	f, err := Open(path, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := log.New(f, "", log.LstdFlags)
+	logger.Printf("bot: %s", "could not connect: \x1b[2J\x1b]0;renamed\x07")
+	logger.Printf("bot: second entry")
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(string(written), "\x1b\x07") {
+		t.Errorf("the log carries an escape from a machine: %s", strconv.Quote(string(written)))
+	}
+	// The text still has to be there. Taking the escape out is only worth
+	// doing if what it was wrapped around survives.
+	if !strings.Contains(string(written), "could not connect") {
+		t.Errorf("the log lost what it was reporting: %s", strconv.Quote(string(written)))
+	}
+	// And the newline that divides one entry from the next: Sanitize drops it
+	// along with the other control characters, and an entry per line with the
+	// time at the front is the whole shape of the file.
+	if n := len(strings.Split(strings.TrimRight(string(written), "\n"), "\n")); n != 2 {
+		t.Errorf("two entries came out as %d lines: %s", n, strconv.Quote(string(written)))
+	}
+}
+
+func TestAWriteReportsEverythingItWasGiven(t *testing.T) {
+	// Once anything is taken out, what reaches the file is shorter than what
+	// arrived -- and an io.Writer that returns fewer bytes than it was given
+	// is reporting a short write to everything that checks, which for a log is
+	// a failure invented out of a message that was written correctly.
+	f, err := Open(filepath.Join(t.TempDir(), "daemon.log"), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	line := []byte("bot: \x1b[2Jcould not connect\n")
+	n, err := f.Write(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != len(line) {
+		t.Errorf("Write was given %d bytes and reported %d", len(line), n)
+	}
+}
+
+func TestSanitizedGuardsAWriterThatIsNotAFile(t *testing.T) {
+	// The log file is only half of where the daemon's diagnostics go: they
+	// reach standard error too, which Herdr collects and shows, and every
+	// command's final error goes there through the same logger. Sanitizing
+	// only the file would leave the half that a terminal reads first.
+	var out strings.Builder
+	w := Sanitized(&out)
+
+	line := []byte("bot: could not connect: \x1b[2J\x1b]0;renamed\x07\n")
+	n, err := w.Write(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != len(line) {
+		t.Errorf("Write was given %d bytes and reported %d", len(line), n)
+	}
+	if strings.ContainsAny(out.String(), "\x1b\x07") {
+		t.Errorf("an escape reached the writer: %s", strconv.Quote(out.String()))
+	}
+	if !strings.Contains(out.String(), "could not connect") {
+		t.Errorf("what was being reported was lost: %s", strconv.Quote(out.String()))
+	}
+	if !strings.HasSuffix(out.String(), "\n") {
+		t.Errorf("the line no longer ends: %s", strconv.Quote(out.String()))
 	}
 }
