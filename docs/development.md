@@ -138,7 +138,7 @@ input is not this plugin's to predict: a terminal's own title, a machine's
 beside its JSON.
 
 ```bash
-go test -run XXX -fuzz FuzzDecodeFrame -fuzztime 60s ./internal/mirror/
+go test -run XXX -fuzz FuzzHostsFrom -fuzztime 180s ./internal/sshconfig/
 ```
 
 They hold contracts rather than outputs — a name comes back drawable and on one
@@ -146,6 +146,16 @@ line, a frame is refused or usable and never half of each, reading the same
 bytes twice gives the same answer — so they keep working when the wording of
 something changes. `go test ./...` runs their seed corpus; the fuzzing itself is
 opt-in, like the two above.
+
+Give them minutes rather than seconds. Every target had been run at 45s and was
+clean; at three minutes, `FuzzHostsFrom` found an `Include` that matches a
+terminal — a config the menu would never finish reading. The other eleven were
+still clean at three minutes, so the useful budget is the one that found
+something, not the one that finishes quickly.
+
+A failing input is written to `testdata/fuzz/<Target>/` and becomes part of what
+`go test ./...` runs from then on. Keep it: the seed is the cheapest possible
+regression test, and it costs milliseconds once the bug is fixed.
 
 What a reconcile pass costs is measurable the same way:
 
