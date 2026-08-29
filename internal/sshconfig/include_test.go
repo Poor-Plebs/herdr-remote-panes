@@ -10,6 +10,52 @@ import (
 	"time"
 )
 
+// TestAnIncludeThatTakesTooLongToExpandIsAbandoned bounds the finding, not
+// just what is found.
+//
+// The cap on matches bounds what is done with them and cannot bound looking
+// for them, because that is one call into the filesystem.
+// "Include /*/**/**/**/*///" walks five levels of wildcards and takes fourteen
+// seconds to come back with nothing -- while somebody waits for a menu.
+//
+// A short budget here rather than a real pathological pattern, so the test
+// costs milliseconds and does not depend on what this machine has mounted.
+func TestAnIncludeThatTakesTooLongToExpandIsAbandoned(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, "conf.d")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a"), []byte("Host included\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	was := includeGlobBudget
+	includeGlobBudget = time.Nanosecond
+	t.Cleanup(func() {
+		includeGlobBudget = was
+		slowGlobs.Delete(filepath.Join(dir, "*"))
+	})
+
+	path := filepath.Join(home, "config")
+	if err := os.WriteFile(path, []byte("Host before\nInclude "+dir+"/*\nHost after\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hosts := hostsFrom(path, 0)
+	for _, host := range hosts {
+		if host == "included" {
+			t.Fatal("an expansion past its budget was waited for after all")
+		}
+	}
+	// And the config around it still reads: one slow include is not a reason
+	// to lose the machines somebody wrote down beside it.
+	if len(hosts) != 2 || hosts[0] != "before" || hosts[1] != "after" {
+		t.Errorf("got %v, want the machines either side of the abandoned include", hosts)
+	}
+}
+
 // TestFilesThatIncludeEachOtherAreReadOnce bounds the shape the depth limit
 // does not.
 //

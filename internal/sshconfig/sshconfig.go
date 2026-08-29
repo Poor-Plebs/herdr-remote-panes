@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 )
@@ -298,6 +300,24 @@ func connectable(alias string) bool {
 // what happens to sort first.
 const maxIncludeMatches = 256
 
+// includeGlobBudget is how long expanding one Include may take.
+//
+// The cap on matches bounds what is done with them; it cannot bound finding
+// them, because that is one call. "Include /*/**/**/**/*///" walks five levels
+// of wildcards across the filesystem and takes fourteen seconds before
+// returning nothing at all -- and this runs to draw the menu.
+//
+// Generous against any real config, where an Include names a directory
+// somebody set up and matching in it is immediate.
+var includeGlobBudget = 2 * time.Second
+
+// slowGlobs are patterns that went past that budget once.
+//
+// Kept for the life of the process so a menu opened again does not start the
+// same walk again, and so the goroutine left behind finishing it is one rather
+// than one per keypress.
+var slowGlobs sync.Map
+
 // expand resolves an Include path, which may be relative to ~/.ssh and may
 // contain globs.
 func expand(pattern string) []string {
@@ -309,8 +329,30 @@ func expand(pattern string) []string {
 	if !filepath.IsAbs(pattern) {
 		pattern = filepath.Join(filepath.Dir(Path()), pattern)
 	}
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
+	if _, slow := slowGlobs.Load(pattern); slow {
+		return nil
+	}
+	type globbed struct {
+		matches []string
+		err     error
+	}
+	done := make(chan globbed, 1)
+	go func() {
+		matches, err := filepath.Glob(pattern)
+		done <- globbed{matches, err}
+	}()
+
+	var matches []string
+	select {
+	case got := <-done:
+		if got.err != nil {
+			return nil
+		}
+		matches = got.matches
+	case <-time.After(includeGlobBudget):
+		// Left to finish on its own and its answer dropped. Recorded so the
+		// next menu does not wait for it again.
+		slowGlobs.Store(pattern, struct{}{})
 		return nil
 	}
 	if len(matches) > maxIncludeMatches {
