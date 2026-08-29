@@ -1043,3 +1043,38 @@ func TestOneReasonIsGivenForACountThatReadsLow(t *testing.T) {
 		t.Errorf("a machine with terminals outside the scope reads %q", scope)
 	}
 }
+
+func TestWhatIsWrongWithAMachineIsOnTheScreenExactlyOnce(t *testing.T) {
+	// Checked against the whole screen rather than the row, because the row is
+	// not the only thing that can say something: there is a warning line above
+	// the list, and collect fills it from a config read of its own. A fact
+	// reported twice was shipped once already -- see TestAConfigProblemIsSaidOnce
+	// -- and the shape of that mistake is invisible from any one function.
+	entries := []Entry{
+		{Target: "workbox", Connected: true, Terminals: 2, Mirroring: true, SSHOnly: true, NoHerdr: true},
+		{Target: "buildbox", Connected: true, Mirroring: true, Mirrors: 8, AtCapacity: true},
+		{Target: "ci", Connected: true, Mirroring: true, Mirrors: 2, SharedName: true},
+	}
+	drawn := lines(entries, 0, 80, 24)
+	screen := strings.Join(drawn, "\n")
+
+	for _, want := range []string{"herdr not found", "at limit", "shared name"} {
+		if n := strings.Count(screen, want); n != 1 {
+			t.Errorf("%q is on the screen %d times, want once:\n%s", want, n, screen)
+		}
+	}
+
+	// And each on its own machine's line: three states across three machines
+	// is three lines saying one thing each, not one line saying three.
+	for _, line := range drawn {
+		said := 0
+		for _, marker := range []string{"herdr not found", "at limit", "shared name"} {
+			if strings.Contains(line, marker) {
+				said++
+			}
+		}
+		if said > 1 {
+			t.Errorf("one line carries %d of them, which is a machine wearing another's fault: %q", said, line)
+		}
+	}
+}
