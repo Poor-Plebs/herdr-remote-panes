@@ -1423,6 +1423,13 @@ func (d *Daemon) prepareRemote(client *remote.Client) error {
 	if err := client.CheckHerdr(); err != nil {
 		return err
 	}
+	// Said once, when a machine is prepared rather than on every pass. What a
+	// machine is running is the first thing worth knowing about a mirror
+	// behaving oddly, and it was already being fetched: the check is whether
+	// the binary runs, and running it prints the version.
+	if v := client.HerdrVersion(); v != "" {
+		log.Printf("%s: %s", client.Target, v)
+	}
 	if err := client.Ping(); err != nil {
 		// The host is reachable but its session is not up yet. Start one and
 		// retry before treating this as a failure.

@@ -12,6 +12,39 @@ import (
 	"time"
 )
 
+func TestTheMachinesHerdrVersionIsKept(t *testing.T) {
+	// The check is whether the binary runs, and running it prints the version.
+	// Throwing that away meant the first question about a mirror behaving
+	// oddly -- what is the machine running -- could only be answered by going
+	// and asking the machine.
+	//
+	// Nothing decides anything from it. Which versions can be mirrored against
+	// is not something this plugin knows, and refusing on a guess would demote
+	// a machine that works.
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"case \"$*\" in\n" +
+		"  *command\\ -v\\ herdr*) echo /usr/bin/herdr; exit 0;;\n" +
+		"  *--version*) echo 'herdr 9.9.9'; exit 0;;\n" +
+		"esac\n" +
+		"exit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	c := New("bot", "")
+	if got := c.HerdrVersion(); got != "" {
+		t.Errorf("a machine that has not been asked reports %q", got)
+	}
+	if err := c.CheckHerdr(); err != nil {
+		t.Fatalf("CheckHerdr: %v", err)
+	}
+	if got := c.HerdrVersion(); got != "herdr 9.9.9" {
+		t.Errorf("the machine said \"herdr 9.9.9\" and this kept %q", got)
+	}
+}
+
 func TestRemoteCommandClearsSocketOverrides(t *testing.T) {
 	// HERDR_SOCKET_PATH outranks HERDR_SESSION when Herdr resolves which
 	// server to talk to, so it must be cleared before the remote invocation.

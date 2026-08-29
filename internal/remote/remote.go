@@ -39,6 +39,10 @@ type Client struct {
 
 	mu  sync.Mutex
 	bin string
+	// herdrVersion is what the machine said when its Herdr was last asked to
+	// run. Under the same lock as bin, and for the same reason: the check that
+	// sets it and the status that reads it are different goroutines.
+	herdrVersion string
 }
 
 // New builds a client for an SSH target and optional remote session name.
@@ -201,13 +205,41 @@ func (c *Client) CheckHerdr() error {
 	argv := []string{"ssh"}
 	argv = append(argv, c.SSHArgs(false)...)
 	argv = append(argv, shellQuote(bin)+" --version")
-	if _, _, err := runCommand(argv); err != nil {
+	out, _, err := runCommand(argv)
+	if err != nil {
 		if reachErr := c.Reachable(); reachErr != nil {
 			return reachErr
 		}
 		return fmt.Errorf("%s: %s did not run: %w", c.Target, bin, ErrNoHerdr)
 	}
+	c.mu.Lock()
+	c.herdrVersion = strings.TrimSpace(firstLine(string(out)))
+	c.mu.Unlock()
 	return nil
+}
+
+// HerdrVersion is what the machine said when it was asked, or "" if it has not
+// been asked yet.
+//
+// Kept rather than discarded. It was already being fetched -- the check is
+// "does the binary run", and running it prints the version -- and what a
+// machine is running is the first thing worth knowing about a mirror that is
+// behaving oddly. Nothing decides anything from it: which versions can be
+// mirrored against is not something this plugin knows, and refusing on a
+// guess would demote a machine that works.
+func (c *Client) HerdrVersion() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.herdrVersion
+}
+
+// firstLine keeps a version to the line it is on; --version is one line, and a
+// login that prints a banner first is not.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // Reachable reports whether plain SSH to the host works, independently of

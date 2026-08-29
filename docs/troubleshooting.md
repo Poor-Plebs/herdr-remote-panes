@@ -215,6 +215,18 @@ gives the gap back — machines are then noticed a little later, which is the
 trade — and so does not mirroring the machine it names. A plain SSH machine is
 never polled, so it costs nothing here however many you have.
 
+**Which Herdr is a machine running?** `mirror.log` says, once, when the
+machine is connected:
+
+```
+bot: herdr 0.8.2
+```
+
+Nothing here refuses a machine for being old — which versions can be mirrored
+against is not something this plugin knows, and guessing would demote a machine
+that works. It is there because it is the first thing worth knowing when a
+mirror is behaving oddly and everything else looks fine.
+
 **A machine says `ssh` when you asked it to mirror.** Mirroring needs Herdr on
 the machine, and it was not found. Usually it is simply not installed there;
 `ssh` is the fallback rather than a refusal, so the machine still works.
