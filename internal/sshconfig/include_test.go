@@ -10,6 +10,43 @@ import (
 	"time"
 )
 
+// TestTheTwoHalvesAgreeAboutAConfigTooLargeToRead holds them to each other.
+//
+// One half decides what is read and the other explains an empty menu. A bound
+// added to the first and not the second means a config that is skipped is also
+// pronounced fine: no machines, and nothing anywhere saying why. That is the
+// failure this package exists to prevent, and adding the size bound created a
+// new instance of it -- caught by asking what the two halves would each do
+// with the same file rather than by anything failing.
+func TestTheTwoHalvesAgreeAboutAConfigTooLargeToRead(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// Ordinary in every way except its size: short lines, real host blocks.
+	var body strings.Builder
+	for i := 0; body.Len() <= maxConfigBytes+1024; i++ {
+		fmt.Fprintf(&body, "Host machine%06d\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte(body.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hosts := Hosts()
+	why := Unreadable()
+	if len(hosts) == 0 && why == "" {
+		t.Fatal("no machines and no reason: the menu would be empty with " +
+			"nothing anywhere to explain it")
+	}
+	if len(hosts) == 0 && !strings.Contains(why, "larger than") {
+		t.Errorf("the reason given is %q, which does not say what is wrong "+
+			"with the file", why)
+	}
+}
+
 // TestAFileTooLargeToBeAConfigIsNotRead bounds what is read, after bounding
 // how many and how long they take to find.
 //

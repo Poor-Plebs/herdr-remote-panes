@@ -31,6 +31,7 @@ package sshconfig
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -102,6 +103,14 @@ func Unreadable() string {
 		// Said plainly, because the file is there and readable in the sense
 		// somebody would test with `cat`, and the machines are still missing.
 		return "not a regular file, so it is not read"
+	}
+	// The same bound the reading applies. Without this the two disagreed: a
+	// config past the bound was skipped by one and pronounced fine by the
+	// other, so the menu was empty with nothing said -- which is the failure
+	// this function exists to prevent, introduced by the bound that fixed
+	// another one.
+	if info.Size() > maxConfigBytes {
+		return fmt.Sprintf("larger than %d bytes, so it is not read", maxConfigBytes)
 	}
 	file, err := os.Open(path)
 	if err != nil {
