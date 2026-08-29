@@ -1,5 +1,31 @@
 // Package sshconfig reads the host aliases out of the user's SSH config, so
 // the picker can offer the machines they already have set up.
+//
+// # What bounds the reading
+//
+// This runs to draw the menu, so anything it does slowly is a keypress that
+// does not come back, and anything it stops doing quietly is machines missing
+// as though they had been deleted. An Include is a glob and a glob matches
+// whatever is there, so the file names work rather than describing it.
+//
+// Six limits, each added after something demonstrated the need, and each said
+// again where it is defined:
+//
+//   - maxIncludeDepth, on how deep a chain of includes goes
+//   - the record of files already read, on how a chain that branches
+//     multiplies -- three fragments including their own directory is three to
+//     the sixteenth reads without it
+//   - maxIncludeMatches, on how many files one Include may pull in
+//   - includeGlobBudget, on how long finding those files may take, which the
+//     count cannot bound because finding them is one call
+//   - maxConfigBytes, on how large a file read as configuration may be
+//   - maxConfigLine, on how long one line in it may be
+//
+// What is not bounded is the number of distinct files reached altogether, and
+// that was measured rather than assumed: two thousand real fragments read in
+// two hundred milliseconds. Reading configuration is cheap. What is expensive
+// is always something that is not configuration, which is what the limits
+// above are about.
 package sshconfig
 
 import (
