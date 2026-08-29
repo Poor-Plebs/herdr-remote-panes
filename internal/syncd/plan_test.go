@@ -3313,6 +3313,31 @@ func TestPlanWorkspaceMark(t *testing.T) {
 // is a line that is not there, in a function that compiles and runs perfectly
 // well without it.
 func TestEveryPaneClosedInAPassLeavesTheListing(t *testing.T) {
+	closesAPane := regexp.MustCompile(`herdrcli\.ClosePane(ByID)?\(`)
+
+	// daemon.go is where panes are closed, and this reads that file. Checked
+	// rather than assumed, as the lock guard below does: a second file closing
+	// a pane would be a file this says nothing about, and "every pane closed
+	// in a pass" would be a claim about one file wearing the name of all of
+	// them.
+	siblings, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range siblings {
+		if name == "daemon.go" || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if closesAPane.Match(raw) {
+			t.Errorf("%s closes a pane, and this reads only daemon.go -- so "+
+				"nothing says whether it corrects the listing", name)
+		}
+	}
+
 	source, err := os.ReadFile("daemon.go")
 	if err != nil {
 		t.Fatal(err)
