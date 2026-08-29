@@ -273,3 +273,41 @@ func TestTheVersionIsTheSameInBothPlacesItIsWritten(t *testing.T) {
 			declared[1], pinned[1])
 	}
 }
+
+func TestThePluginIDIsTheSameEverywhereItIsWritten(t *testing.T) {
+	// PluginID carries a comment saying it must match the id in the manifest,
+	// which is a note to whoever reads it rather than anything that would stop
+	// it drifting. What it feeds is what somebody is told to run when nothing
+	// is answering -- `herdr plugin log list --plugin <id>` -- and an id that
+	// no longer matches sends them to a plugin Herdr has never heard of, at
+	// the moment they already cannot see what is wrong.
+	//
+	// Same reasoning as the version above: nothing can hold either of these to
+	// an outside truth, but they can be held to each other.
+	manifest, err := os.ReadFile(repoFile(t, "herdr-plugin.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := regexp.MustCompile(`(?m)^id = "([^"]+)"`).FindSubmatch(manifest)
+	if declared == nil {
+		t.Fatal("the manifest no longer declares an id")
+	}
+	if string(declared[1]) != PluginID {
+		t.Errorf("the manifest says %q and the code says %q", declared[1], PluginID)
+	}
+
+	// And the docs, which spell it out for copying into a shell: the config
+	// directory is found with it, and there is no other way to know where the
+	// config file is.
+	for _, name := range []string{"README.md", "docs/troubleshooting.md", "docs/development.md"} {
+		page, err := os.ReadFile(repoFile(t, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, found := range regexp.MustCompile(`poorplebs\.[a-z0-9-]+`).FindAll(page, -1) {
+			if string(found) != PluginID {
+				t.Errorf("%s names the plugin %q, and it is %q", name, found, PluginID)
+			}
+		}
+	}
+}
