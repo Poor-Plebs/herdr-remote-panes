@@ -14,7 +14,7 @@
 ./internal/capped	2026-08-28	5	4	1	0
 ./internal/cli	2026-08-28	56	52	4	0
 ./internal/config	2026-08-28	135	133	2	0
-./internal/herdrcli	2026-08-28	60	60	0	0
+./internal/herdrcli	2026-08-29	60	60	0	0
 ./internal/logfile	2026-08-28	9	9	0	0
 ./internal/mirror	2026-08-28	134	123	11	0
 ./internal/picker	2026-08-28	122	105	17	0
