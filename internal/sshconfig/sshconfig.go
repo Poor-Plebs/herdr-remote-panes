@@ -71,6 +71,17 @@ func hostsFrom(path string, depth int) []string {
 	if path == "" || depth > maxIncludeDepth {
 		return nil
 	}
+	// Regular files only. An Include is a glob, and a glob matches whatever is
+	// there: "Include /*/*/0" matches /dev/pts/0 on an ordinary machine, and
+	// reading a terminal blocks until somebody types into it. This file is read
+	// to draw the menu, so that is a keypress that never comes back, with
+	// nothing on screen to say why.
+	//
+	// Checked before opening rather than after, because opening some of them
+	// is itself the thing that waits.
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+		return nil
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil
