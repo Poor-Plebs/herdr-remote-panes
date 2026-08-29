@@ -115,6 +115,17 @@ func Hosts() []string {
 // error to ssh either, so there is nothing to read anywhere.
 const maxIncludeDepth = 16
 
+// maxConfigBytes is the largest file this will read as configuration.
+//
+// A config fragment is kilobytes: host blocks somebody typed. A megabyte is
+// far past any of them, and what lies past it is not configuration at all --
+// "Include /l*/d*/*" matches a hundred and eighty library files, and reading
+// those line by line is sixteen seconds while somebody waits for the menu.
+//
+// The size comes from the same stat that asks whether it is a regular file,
+// so this costs nothing to know.
+const maxConfigBytes = 1 << 20
+
 // hostsFrom reads a config and everything it includes.
 //
 // The entry point keeps its own record of what has been read, so a file
@@ -151,7 +162,8 @@ func hostsRead(path string, depth int, read map[string]bool) []string {
 	//
 	// Checked before opening rather than after, because opening some of them
 	// is itself the thing that waits.
-	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxConfigBytes {
 		return nil
 	}
 	file, err := os.Open(path)

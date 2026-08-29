@@ -10,6 +10,52 @@ import (
 	"time"
 )
 
+// TestAFileTooLargeToBeAConfigIsNotRead bounds what is read, after bounding
+// how many and how long they take to find.
+//
+// A config fragment is kilobytes of host blocks somebody typed. What lies past
+// a megabyte is not configuration: "Include /l*/d*/*" matches a hundred and
+// eighty library files, and reading those a line at a time is sixteen seconds
+// while somebody waits for a menu. It is now a fifth of a second.
+//
+// The size comes from the stat that already asks whether it is a regular file,
+// so knowing costs nothing.
+func TestAFileTooLargeToBeAConfigIsNotRead(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, "conf.d")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// A machine named at the top, then padding past the bound. Reading any of
+	// it at all would offer that machine.
+	big := append([]byte("Host buried\n"), make([]byte, maxConfigBytes+1)...)
+	if err := os.WriteFile(filepath.Join(dir, "big"), big, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// And an ordinary fragment beside it, which must still be read.
+	if err := os.WriteFile(filepath.Join(dir, "small"), []byte("Host kept\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(home, "config")
+	if err := os.WriteFile(path, []byte("Include "+dir+"/*\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hosts := hostsFrom(path, 0)
+	for _, host := range hosts {
+		if host == "buried" {
+			t.Error("a file past the bound was read anyway")
+		}
+	}
+	// One large file beside a real one is not a reason to lose the real one.
+	if len(hosts) != 1 || hosts[0] != "kept" {
+		t.Errorf("got %v, want the machine from the fragment that is a config", hosts)
+	}
+}
+
 // TestAnIncludeThatTakesTooLongToExpandIsAbandoned bounds the finding, not
 // just what is found.
 //
