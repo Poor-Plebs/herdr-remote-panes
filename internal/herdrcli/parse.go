@@ -14,7 +14,6 @@ import (
 type Workspace struct {
 	WorkspaceID string `json:"workspace_id"`
 	Label       string `json:"label"`
-	PaneCount   int    `json:"pane_count"`
 }
 
 // ParseWorkspaceList decodes a workspace_list result.

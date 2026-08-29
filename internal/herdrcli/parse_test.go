@@ -21,7 +21,7 @@ func TestParseWorkspaceList(t *testing.T) {
 	if len(workspaces) != 2 {
 		t.Fatalf("got %d workspaces, want 2", len(workspaces))
 	}
-	if workspaces[1].Label != "☁  bot" || workspaces[1].PaneCount != 3 {
+	if workspaces[1].Label != "☁  bot" {
 		t.Errorf("second workspace = %+v", workspaces[1])
 	}
 }

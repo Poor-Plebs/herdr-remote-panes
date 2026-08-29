@@ -109,11 +109,14 @@ func TestARealWorkspaceListingParses(t *testing.T) {
 		t.Errorf("first space came back %+v; the recording has w1 labelled "+
 			"\"hrp probe\"", spaces[0])
 	}
-	// The count is how "a space with terminals in it" is told from an empty
-	// one, which decides whether a terminal is opened.
-	if spaces[0].PaneCount != 2 {
-		t.Errorf("pane count came back %d and the recording has 2 -- the field "+
-			"it is read from has moved", spaces[0].PaneCount)
+	// Only the id and the label are taken from a listing. Whether a space has
+	// anything in it is counted from the panes Herdr actually has, because a
+	// terminal closed a moment ago may not have been reconciled away yet --
+	// so the pane_count the listing carries is not read, and the recording is
+	// here to show what else is on offer if it is ever wanted.
+	if spaces[1].WorkspaceID != "w2" || spaces[1].Label != "hrp second" {
+		t.Errorf("second space came back %+v; the recording has w2 labelled "+
+			"\"hrp second\"", spaces[1])
 	}
 }
 
