@@ -163,3 +163,7 @@ internal/capped/capped.go	> -> >=	if room := Max - c.Buf.Len(); room > 0 {	Write
 tools/mutants/main.go	< -> <=	return out[i].offset < out[j].offset	mutationsIn
 tools/mutants/main.go	< -> <=	if at.Line-1 < len(lines) {	sourceLine
 tools/mutants/main.go	< -> <=	return out[i].file < out[j].file	mutationsIn
+
+# a tie needs two machines to take the same time to the nanosecond, and
+# naming either of two equally slow machines is the same answer
+internal/syncd/daemon.go	> -> >=	if machine.took > slowestTook {	reconcileOnce
