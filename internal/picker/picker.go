@@ -487,7 +487,17 @@ func status() ([]syncd.HostInfo, string) {
 		return nil, "The daemon is not running, so nothing here can be connected to. " +
 			"Check `herdr plugin log list --plugin " + syncd.PluginID + "`."
 	}
-	return reply.Hosts, version.StaleMessage(reply.Revision)
+	// The daemon's own warning as well as the version one. It says a config
+	// that could not be read, and settings that read fine and mean nothing --
+	// a misspelling, a machine listed twice. Those were computed every time
+	// the menu asked for machines and shown only to somebody who happened to
+	// run `status` from a terminal, which is not where the effect appears: the
+	// menu is where machines are missing from.
+	// The config warning ahead of the version one, the order the rest of the
+	// menu uses: the line wraps to two and the remainder becomes an ellipsis,
+	// so whichever is more worth acting on has to lead. A config that named a
+	// machine wrong is; a newer copy installed than the one running can wait.
+	return reply.Hosts, bothWarnings(reply.Warning, version.StaleMessage(reply.Revision))
 }
 
 const (

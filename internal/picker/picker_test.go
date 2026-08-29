@@ -971,3 +971,22 @@ func TestTheMenuSaysWhenItCouldNotReadTheSSHConfig(t *testing.T) {
 		t.Errorf("the warning does not say what stopped it: %q", warning)
 	}
 }
+
+func TestTheMenuSaysWhatTheDaemonIsWarningAbout(t *testing.T) {
+	// The daemon computes this on every status: a plugin config it could not
+	// read, or settings that parsed and mean nothing -- a misspelled key, a
+	// machine listed twice. It travelled to the menu in every reply and the
+	// menu dropped it, so the only way to see it was to run `status` by hand
+	// from a terminal. That is the wrong place: what a config problem does is
+	// leave machines out of the *menu*, and the menu is where somebody is
+	// standing when they notice one missing.
+	answerWith(t, syncd.Reply{
+		OK:      true,
+		Warning: "check the plugin config, 2 problems",
+	})
+
+	_, warning := status()
+	if !strings.Contains(warning, "2 problems") {
+		t.Errorf("the daemon's warning did not reach the menu: %q", warning)
+	}
+}
