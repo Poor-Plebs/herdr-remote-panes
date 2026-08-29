@@ -271,6 +271,23 @@ func main() {
 	case join == "tab list":
 		// Derived from the panes rather than kept separately, so a tab cannot
 		// outlive what is in it or go missing while something still is.
+		//
+		// Two things here are not what Herdr does, checked against a recording
+		// from 0.8.2 in internal/herdrcli/testdata. Tab ids there are scoped
+		// to their space -- "w1:t1" -- where these are bare, and numbering is
+		// per space, so a real listing has "w1:t1" and "w2:t1" both numbered
+		// 1 while these are numbered straight through.
+		//
+		// Left alone deliberately. The plugin takes a tab id as an opaque
+		// string, and reads the number only to order panes within one space,
+		// where numbering per space and numbering throughout give the same
+		// order. The one difference real data makes is a tie between spaces
+		// under scope "all", and a tie falls back to the pane id, which was
+		// tried against these shapes and is stable.
+		//
+		// It would start to matter if anything here read a space out of a tab
+		// id, or compared numbers across spaces. Either is a reason to make
+		// these scoped, as the pane ids already are.
 		seen := map[string]bool{}
 		var ids []string
 		for _, pane := range values(state.Panes) {
