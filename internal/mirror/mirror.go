@@ -129,17 +129,39 @@ var holdOpen = 5 * time.Second
 
 // reportFailure leaves a trace a user can actually find.
 func reportFailure(err error) {
-	MarkFailed(os.Getenv("HERDR_PANE_ID"), err.Error())
 
 	// A plain SSH pane has neither a name nor a remote terminal, so this read
 	// as "[herdr-remote-panes] : exit status 255" -- a colon introducing
 	// nothing. The machine is what identifies the pane in that case.
-	name := firstNonEmpty(
-		os.Getenv(EnvName), os.Getenv(EnvTerminal), os.Getenv(EnvTarget))
-	message := fmt.Sprintf("[herdr-remote-panes] %v", err)
+	name := text.Sanitize(firstNonEmpty(
+		os.Getenv(EnvName), os.Getenv(EnvTerminal), os.Getenv(EnvTarget)))
+
+	// Whatever the far side said arrives in here as it was written: an error
+	// from a command carries that command's standard error verbatim, and this
+	// writes it to a pane and to a file the troubleshooting page tells people
+	// to cat. A machine's banner is the far side's to choose, so it can hold
+	// the escape that clears the screen, or moves the cursor, or renames the
+	// window -- and up to capped.Max of it can arrive, which is eight
+	// megabytes on one line.
+	//
+	// The same treatment the package's own command errors already get in
+	// lastLine, applied where it is written rather than where it is made, so
+	// that it covers the errors that come from elsewhere too.
+	//
+	// Newlines become spaces before the rest goes: dropping them outright
+	// would run the last word of one line into the first of the next, and an
+	// entry that keeps them is several lines in a log that is one line per
+	// entry with the time at the front.
+	detail := text.Truncate(text.Sanitize(strings.ReplaceAll(err.Error(), "\n", " ")), maxSaidWidth)
+	message := fmt.Sprintf("[herdr-remote-panes] %s", detail)
 	if name != "" {
-		message = fmt.Sprintf("[herdr-remote-panes] %s: %v", name, err)
+		message = fmt.Sprintf("[herdr-remote-panes] %s: %s", name, detail)
 	}
+
+	// The record the daemon reads gets the same bounded text. It is written to
+	// a file of its own and read back by something that shows it, so it has
+	// both of the same problems.
+	MarkFailed(os.Getenv("HERDR_PANE_ID"), detail)
 
 	if dir := os.Getenv("HERDR_PLUGIN_STATE_DIR"); dir != "" {
 		appendToLog(filepath.Join(dir, "mirror.log"), message)

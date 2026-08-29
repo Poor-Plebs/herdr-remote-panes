@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -362,4 +363,64 @@ func captureStdout(t *testing.T, run func()) string {
 	run()
 	write.Close()
 	return <-done
+}
+
+func TestWhatAMachineSaysCannotRepaintThePaneOrTheLog(t *testing.T) {
+	// The error a failure carries holds the far side's standard error as it
+	// was written -- runCommand puts it there verbatim -- and a machine's
+	// banner is that machine's to choose. This wrote it to the pane and to
+	// mirror.log untouched, and the troubleshooting page tells people to cat
+	// that file, so the escapes would run twice: once where the pane is, and
+	// again in whatever terminal went looking for why.
+	restore := holdOpen
+	holdOpen = time.Millisecond
+	defer func() { holdOpen = restore }()
+
+	state := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", state)
+	t.Setenv("HERDR_SESSION", "hub")
+	t.Setenv("HERDR_PANE_ID", "w1:p2")
+	t.Setenv(EnvTarget, "bot")
+	t.Setenv(EnvName, "shell@bot")
+	t.Setenv(EnvTerminal, "")
+
+	banner := errors.New("exit status 255: \x1b[2J\x1b[H\x1b]0;renamed\x07\nsecond line")
+	drawn := captureStdout(t, func() { reportFailure(banner) })
+
+	logged, err := os.ReadFile(filepath.Join(state, "mirror.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for what, got := range map[string]string{"the pane": drawn, "the log": string(logged)} {
+		if strings.ContainsAny(got, "\x1b\x07") {
+			t.Errorf("%s takes an escape from the machine: %s", what, strconv.Quote(got))
+		}
+		// The words either side of a newline must not be run together. Dropping
+		// the newline outright is what a plain sanitise does, and it turns two
+		// readable lines into one unreadable one.
+		if !strings.Contains(got, "renamed second line") {
+			t.Errorf("%s ran the lines together: %s", what, strconv.Quote(got))
+		}
+	}
+
+	// One failure is one entry: the log has the time at the front of each, so
+	// a message that kept its newlines put two lines in it with no time on the
+	// second, which reads as an entry from an unknown moment.
+	if n := strings.Count(strings.TrimRight(string(logged), "\n"), "\n"); n != 0 {
+		t.Errorf("one failure wrote %d extra lines into the log: %s", n, strconv.Quote(string(logged)))
+	}
+
+	// And what a machine can spend: a command's output is read up to
+	// capped.Max, which is eight megabytes, and all of it used to arrive on
+	// one line of a pane and a file that is kept.
+	flood := errors.New(strings.Repeat("bot said something. ", 4000))
+	captureStdout(t, func() { reportFailure(flood) })
+	after, err := os.ReadFile(filepath.Join(state, "mirror.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := strings.Split(strings.TrimRight(string(after), "\n"), "\n")
+	if grew := len(last[len(last)-1]); grew > 400 {
+		t.Errorf("a machine wrote %d characters into one log entry", grew)
+	}
 }
