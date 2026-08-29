@@ -5,6 +5,7 @@ package sshconfig
 import (
 	"bufio"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -21,6 +22,26 @@ func Path() string {
 		return ""
 	}
 	return filepath.Join(home, ".ssh", "config")
+}
+
+// maxConfigLine is the longest line read out of an SSH config.
+//
+// bufio.Scanner stops at 64KB by default and says so only through Err, which
+// nothing here was asking. So one long line -- a comment, a ProxyCommand, an
+// Include that matched something without newlines in it -- ended the scan, and
+// every machine after that line was quietly missing from the menu. Quietly is
+// the problem: a machine that is absent looks like one somebody deleted.
+//
+// A megabyte is past anything a person writes and still bounded, which matters
+// because the line is held in memory and this file is not this plugin's to
+// size.
+const maxConfigLine = 1 << 20
+
+// scanConfig reads a config a line at a time, with that bound.
+func scanConfig(r io.Reader) *bufio.Scanner {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxConfigLine)
+	return scanner
 }
 
 // Unreadable reports why the SSH config could not be read, when it is there and
@@ -58,7 +79,18 @@ func Unreadable() string {
 	if err != nil {
 		return err.Error()
 	}
-	_ = file.Close()
+	defer file.Close()
+
+	// Read through it, because opening is not the only way a config fails to
+	// be read: a line past the bound ends the scan, and the machines after it
+	// are missing with nothing said. This file is small; the menu already
+	// reads all of it.
+	scanner := scanConfig(file)
+	for scanner.Scan() {
+	}
+	if err := scanner.Err(); err != nil {
+		return err.Error()
+	}
 	return ""
 }
 
@@ -104,7 +136,7 @@ func hostsFrom(path string, depth int) []string {
 
 	var hosts []string
 	seen := map[string]bool{}
-	scanner := bufio.NewScanner(file)
+	scanner := scanConfig(file)
 	for scanner.Scan() {
 		fields := splitDirective(scanner.Text())
 		if len(fields) < 2 {
@@ -134,6 +166,11 @@ func hostsFrom(path string, depth int) []string {
 			}
 		}
 	}
+	// Nothing to do about it here -- the machines already read are still worth
+	// offering -- but Unreadable asks the same question of the top-level file
+	// and reports it, so an emptier menu than yesterday's has a reason
+	// somewhere.
+	_ = scanner.Err()
 	return hosts
 }
 
