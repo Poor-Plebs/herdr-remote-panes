@@ -320,6 +320,67 @@ func TestAPaneOpenedByHandInAMirroredMachinesSpaceMovesOntoIt(t *testing.T) {
 	}
 }
 
+func TestASpaceHerdrHasLostIsNoticedAndForgotten(t *testing.T) {
+	// A machine's space here goes when its last pane closes, and the id was
+	// kept regardless: every pass then renamed and marked a space that no
+	// longer existed, two failing calls each time, for as long as the daemon
+	// ran. One machine's log had them every couple of seconds.
+	//
+	// What notices is the rename coming back "not found", and forgetting is
+	// what stops it. Both halves have been tested apart -- planWorkspaceMark
+	// decides when to rename, forgetWorkspace clears what is remembered -- and
+	// the line between them, which reads the refusal and decides it means the
+	// space is gone, had nothing on it.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	d.mu.Lock()
+	had := d.hosts["bot"].workspaceID
+	d.mu.Unlock()
+	if had == "" {
+		t.Fatal("the machine has no space here to lose")
+	}
+
+	// A rename only happens when the name or the marker has moved on; a
+	// settled space is deliberately left alone, which is what the record of
+	// what was last put on it is for. Clearing that record puts this in the
+	// position of a machine whose state has just changed, which is when the
+	// rename that meets the refusal actually happens.
+	d.mu.Lock()
+	d.markedWorkspaces = map[string]workspaceMark{}
+	d.mu.Unlock()
+
+	// From here Herdr says that space is not there, which is what it says
+	// once somebody has closed the last pane in it.
+	refuseOnMachine(t, os.Getenv(fakeHerdrState), "workspace rename:workspace_not_found")
+	renames := here().Calls["workspace rename"]
+
+	settle(t, d, here, 3, there)
+
+	// Checked first: if nothing tried to rename, the refusal was never reached
+	// and what follows is about something else.
+	if here().Calls["workspace rename"] == renames {
+		t.Fatalf("nothing tried to rename the space, so the refusal this is "+
+			"about never happened: %+v", here().Calls)
+	}
+
+	d.mu.Lock()
+	still := d.hosts["bot"].workspaceID
+	d.mu.Unlock()
+	if still == had {
+		t.Errorf("the machine still claims space %q after Herdr said it is not "+
+			"there, so every later pass renames and marks it again", still)
+	}
+}
+
 func TestAPlainShellIsNamedAfterWhereItIs(t *testing.T) {
 	// What a machine sends for an ordinary shell is a banner title --
 	// "you@laptop:~" -- and a working directory. The banner is skipped, since
