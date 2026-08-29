@@ -36,12 +36,26 @@ func Unreadable() string {
 	if path == "" {
 		return ""
 	}
-	file, err := os.Open(path)
+	// Asked about before it is opened, for the same reason hostsFrom does:
+	// opening a pipe waits for somebody to write to it, and opening a terminal
+	// waits for somebody to type. This runs to draw the menu, so either is a
+	// menu that never appears -- and this function exists to explain an empty
+	// one, which makes hanging in it a particularly poor failure.
+	info, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			// No SSH config, which is ordinary.
 			return ""
 		}
+		return err.Error()
+	}
+	if !info.Mode().IsRegular() {
+		// Said plainly, because the file is there and readable in the sense
+		// somebody would test with `cat`, and the machines are still missing.
+		return "not a regular file, so it is not read"
+	}
+	file, err := os.Open(path)
+	if err != nil {
 		return err.Error()
 	}
 	_ = file.Close()

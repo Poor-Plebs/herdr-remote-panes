@@ -8,6 +8,37 @@ import (
 	"time"
 )
 
+// TestReportingAnUnreadableConfigDoesNotWaitEither is the same hazard in the
+// function that exists to explain it.
+//
+// Unreadable opens the config to find out whether it can be read, and opening
+// a pipe waits for a writer. So a config that is a pipe hung the menu inside
+// the check meant to say why the menu is empty -- which is the worst place for
+// it, and was left behind when the reading path was fixed.
+func TestReportingAnUnreadableConfigDoesNotWaitEither(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(home, ".ssh", "config"), 0o600); err != nil {
+		t.Skipf("cannot make a named pipe here: %v", err)
+	}
+
+	done := make(chan string, 1)
+	go func() { done <- Unreadable() }()
+
+	select {
+	case why := <-done:
+		if why == "" {
+			t.Error("a config that cannot be read was reported as fine, so the " +
+				"menu is empty with nothing said about it")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the check that explains an empty menu did not come back")
+	}
+}
+
 // TestAnIncludeThatMatchesSomethingUnreadableDoesNotWait holds the menu open.
 //
 // An Include is a glob, and a glob matches whatever is there. Reading a pipe
