@@ -1,0 +1,46 @@
+{
+  "id": "cli:pane:list",
+  "result": {
+    "panes": [
+      {
+        "agent_status": "unknown",
+        "cwd": "/home/you",
+        "focused": true,
+        "foreground_cwd": "/home/you",
+        "label": "build@bot",
+        "pane_id": "w1:p1",
+        "revision": 1,
+        "scroll": {
+          "max_offset_from_bottom": 0,
+          "offset_from_bottom": 0,
+          "viewport_rows": 39
+        },
+        "tab_id": "w1:t1",
+        "terminal_id": "term_65a2bae900e011",
+        "terminal_title": "you@laptop:~",
+        "terminal_title_stripped": "you@laptop:~",
+        "workspace_id": "w1"
+      },
+      {
+        "agent_status": "unknown",
+        "cwd": "/home/you",
+        "focused": false,
+        "foreground_cwd": "/home/you",
+        "label": "tests@bot",
+        "pane_id": "w1:p2",
+        "revision": 1,
+        "scroll": {
+          "max_offset_from_bottom": 0,
+          "offset_from_bottom": 0,
+          "viewport_rows": 39
+        },
+        "tab_id": "w1:t2",
+        "terminal_id": "term_65a2bb1409f582",
+        "terminal_title": "you@laptop:~",
+        "terminal_title_stripped": "you@laptop:~",
+        "workspace_id": "w1"
+      }
+    ],
+    "type": "pane_list"
+  }
+}
