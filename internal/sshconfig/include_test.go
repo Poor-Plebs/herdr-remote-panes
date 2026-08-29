@@ -1,12 +1,89 @@
 package sshconfig
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
+
+// TestAnIncludeThatMatchesEverythingIsRefused bounds the work one line can ask
+// for.
+//
+// An Include names configuration somebody wrote. A pattern with a wildcard
+// high in an absolute path names whatever is there: "Include /*/*" matches
+// seventy-five thousand things on an ordinary machine, and each one is then
+// asked about and possibly read. That is not slow, it is a menu that does not
+// arrive.
+//
+// Refused whole rather than read in part: a config that meant to include
+// something specific is better served by nothing arriving, which shows in the
+// menu, than by whichever subset happens to sort first.
+func TestAnIncludeThatMatchesEverythingIsRefused(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// One more than the bound, each naming a machine, so reading any of them
+	// would show.
+	many := filepath.Join(home, "many")
+	if err := os.MkdirAll(many, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= maxIncludeMatches; i++ {
+		name := filepath.Join(many, fmt.Sprintf("c%04d", i))
+		if err := os.WriteFile(name, []byte(fmt.Sprintf("Host m%04d\n", i)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	path := filepath.Join(home, "config")
+	body := "Host before\nInclude " + many + "/*\nHost after\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hosts := hostsFrom(path, 0)
+	for _, host := range hosts {
+		if strings.HasPrefix(host, "m0") {
+			t.Fatalf("an include matching %d files was read anyway: %q came back",
+				maxIncludeMatches+1, host)
+		}
+	}
+	// And the machines around it are still offered, as with any other include
+	// that could not be used.
+	if len(hosts) != 2 || hosts[0] != "before" || hosts[1] != "after" {
+		t.Errorf("got %v, want the machines either side of the refused include", hosts)
+	}
+}
+
+// TestAnIncludeInsideTheBoundIsStillRead is the other half: the bound has to
+// sit past anything a person would write, or it is a feature quietly removed.
+func TestAnIncludeInsideTheBoundIsStillRead(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	dir := filepath.Join(home, "conf.d")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 12; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("c%02d", i))
+		if err := os.WriteFile(name, []byte(fmt.Sprintf("Host k%02d\n", i)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(home, "config")
+	if err := os.WriteFile(path, []byte("Include "+dir+"/*\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := len(hostsFrom(path, 0)); got != 12 {
+		t.Errorf("an ordinary directory of host blocks gave %d machines, want 12", got)
+	}
+}
 
 // TestReportingAnUnreadableConfigDoesNotWaitEither is the same hazard in the
 // function that exists to explain it.

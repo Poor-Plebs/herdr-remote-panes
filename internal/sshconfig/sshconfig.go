@@ -260,6 +260,20 @@ func connectable(alias string) bool {
 	return alias != "" && !isPattern(alias) && config.ValidTarget(alias) == nil
 }
 
+// maxIncludeMatches is how many files one Include may pull in.
+//
+// An Include names configuration somebody wrote: a directory of host blocks, a
+// file per employer, a shared file. Matching more than this is not that. It is
+// a pattern with a wildcard high in an absolute path -- "Include /*/*" matches
+// seventy-five thousand things on an ordinary machine -- and every one of them
+// then gets asked about and possibly read.
+//
+// Refusing the whole pattern rather than reading the first few: a config that
+// meant to include something specific is better served by nothing arriving,
+// which is visible in the menu, than by an arbitrary subset that depends on
+// what happens to sort first.
+const maxIncludeMatches = 256
+
 // expand resolves an Include path, which may be relative to ~/.ssh and may
 // contain globs.
 func expand(pattern string) []string {
@@ -273,6 +287,9 @@ func expand(pattern string) []string {
 	}
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
+		return nil
+	}
+	if len(matches) > maxIncludeMatches {
 		return nil
 	}
 	sort.Strings(matches)
