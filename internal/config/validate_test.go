@@ -1364,3 +1364,33 @@ func TestAPollIntervalThatIsNotUsedSaysSo(t *testing.T) {
 		})
 	}
 }
+
+func TestTheNameForAnUnreachableMachineIsHeldToTheSameRuleAsTheOther(t *testing.T) {
+	// workspace_format was checked for {host} and this one was not, though
+	// they are the same string used for the same purpose a moment apart. It is
+	// the worse of the two to get wrong: machines collide only while they are
+	// unreachable, so nothing is wrong until several go at once -- the network
+	// dropping rather than anything done to the config that day -- and then
+	// every unreachable machine is the same space.
+	c := Defaults()
+	c.WorkspaceFormatDown = "offline"
+	found := false
+	for _, p := range c.Problems() {
+		if strings.Contains(p, "workspace_format_down") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a down-format with no {host} was accepted: %q", c.Problems())
+	}
+
+	// And the condition the other check carries: an explicitly chosen
+	// workspace name is used as given, so neither format is consulted and
+	// neither is worth a warning.
+	c.Workspace = "one space for the lot"
+	for _, p := range c.Problems() {
+		if strings.Contains(p, "workspace_format_down") {
+			t.Errorf("warned about a format that is not used: %q", p)
+		}
+	}
+}

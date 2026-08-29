@@ -18,6 +18,7 @@
 ./internal/logfile	2026-08-28	9	9	0	0
 ./internal/mirror	2026-08-28	134	123	11	0
 ./internal/picker	2026-08-28	122	105	17	0
+./internal/picker (since d3fa765)	2026-08-30	2	2	0	0
 ./internal/project	2026-08-28	8	8	0	0
 ./internal/remote	2026-08-28	52	51	1	0
 ./internal/sshconfig	2026-08-29	44	43	1	0

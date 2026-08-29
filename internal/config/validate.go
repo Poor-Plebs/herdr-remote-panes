@@ -39,13 +39,24 @@ func (c Config) Problems() []string {
 		problems = append(problems, fmt.Sprintf(
 			"workspace_format %q has no {host}, so every machine will share one space", c.WorkspaceFormat))
 	}
+	// The same fault in the name used while a machine is unreachable, under
+	// the same condition: an explicitly chosen workspace is used as given, so
+	// neither format is consulted at all. Missed when the check above was
+	// written, and worse where it lands -- machines collide exactly when
+	// several are unreachable at once, which is the network going down rather
+	// than anything anybody did to the config that day.
+	if c.Workspace == "" && !strings.Contains(c.WorkspaceFormatDown, "{host}") {
+		problems = append(problems, fmt.Sprintf(
+			"workspace_format_down %q has no {host}, so every machine that cannot be "+
+				"reached will share one space", c.WorkspaceFormatDown))
+	}
+	// remote_workspace_format is deliberately not checked for {hub}. It names
+	// the space made on the machine, so what would collide is two of these
+	// hubs pointing at one machine -- and a literal name with no placeholder
+	// is the documented way out of exactly that: each hub is given a name of
+	// its own. "from my laptop" is the example in the troubleshooting page.
+	// A check here would warn about the remedy.
 
-	// A path the remote shell would have to expand. It is passed quoted, as
-	// any path holding a space or a metacharacter must be, so "~" and "$HOME"
-	// arrive as those two characters and the machine reports no such file --
-	// and what somebody sees for it is "no herdr found on the machine, set
-	// herdr_bin if it is installed elsewhere there", which is the one thing
-	// they have already done.
 	// How often every machine is reached over ssh. Unparseable or too fast and
 	// the default goes back in its place -- so "30", meaning half a minute,
 	// polls fifteen times a second more often than that instead, quietly, on
@@ -62,6 +73,12 @@ func (c Config) Problems() []string {
 			c.PollInterval, MinPollInterval, c.Interval()))
 	}
 
+	// A path the remote shell would have to expand. It is passed quoted, as
+	// any path holding a space or a metacharacter must be, so "~" and "$HOME"
+	// arrive as those two characters and the machine reports no such file --
+	// and what somebody sees for it is "no herdr found on the machine, set
+	// herdr_bin if it is installed elsewhere there", which is the one thing
+	// they have already done.
 	if unexpanded(c.HerdrBin) {
 		problems = append(problems, fmt.Sprintf(
 			"herdr_bin %q is expanded by a shell, and this one is not run through a "+
