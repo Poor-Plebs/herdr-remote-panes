@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -238,5 +239,45 @@ func TestARealRefusalIsRecognised(t *testing.T) {
 				t.Error("the message Herdr sent was dropped")
 			}
 		})
+	}
+}
+
+// TestARealPluginPaneOpenParses holds the one reply shape that has already
+// broken mirroring once.
+//
+// Herdr nests the new pane under "plugin_pane", and reading a bare "pane"
+// instead yielded an empty id rather than an error. What that costs is not a
+// failure: a caller that cannot learn the pane id cannot track the pane, so it
+// opens another one on the next pass, and another, for as long as it runs.
+//
+// Every other test of this gives it JSON written here. This is what Herdr
+// 0.8.2 actually sent, nesting and all.
+func TestARealPluginPaneOpenParses(t *testing.T) {
+	pane, err := parseOpenedPane(resultOf(t, "plugin-pane-open-0.8.2.json"))
+	if err != nil {
+		t.Fatalf("parsing what Herdr really sent: %v", err)
+	}
+	if pane.PaneID == "" {
+		t.Fatal("no pane id came back, which is the failure this is about: " +
+			"the pane cannot be tracked and another is opened next pass")
+	}
+	// The shape rather than the number: a pane id is scoped to its space, and
+	// refreshing the recording against a newer Herdr should not mean editing
+	// an id in here.
+	if !strings.HasPrefix(pane.PaneID, pane.WorkspaceID+":") {
+		t.Errorf("the pane id %q is not scoped to its space %q, which is what "+
+			"everything that stores one assumes", pane.PaneID, pane.WorkspaceID)
+	}
+	if pane.WorkspaceID == "" {
+		t.Error("the pane names no space, so there is nowhere to place it")
+	}
+	if pane.TerminalID == "" {
+		t.Error("no terminal id, which is what everything about a mirror is keyed by")
+	}
+	// Herdr labels it from the manifest's pane title, before this plugin
+	// renames it after the remote terminal.
+	if pane.Label != "Remote pane" {
+		t.Errorf("the pane arrived labelled %q; the manifest titles it "+
+			"\"Remote pane\"", pane.Label)
 	}
 }

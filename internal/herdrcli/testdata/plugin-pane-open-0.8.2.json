@@ -1,0 +1,27 @@
+{
+  "id": "cli:plugin",
+  "result": {
+    "plugin_pane": {
+      "entrypoint": "mirror",
+      "pane": {
+        "agent_status": "unknown",
+        "cwd": "/home/you/plugin",
+        "focused": true,
+        "foreground_cwd": "/home/you/plugin",
+        "label": "Remote pane",
+        "pane_id": "w1:p3",
+        "revision": 0,
+        "scroll": {
+          "max_offset_from_bottom": 0,
+          "offset_from_bottom": 0,
+          "viewport_rows": 39
+        },
+        "tab_id": "w1:t3",
+        "terminal_id": "term_65a2e320b2b1b3",
+        "workspace_id": "w1"
+      },
+      "plugin_id": "poorplebs.remote-panes"
+    },
+    "type": "plugin_pane_opened"
+  }
+}
