@@ -312,12 +312,18 @@ Which is why the same machine behaved one way through this plugin and another
 way through a terminal: ssh to it and run `herdr` and you are in Herdr's own
 interface, which does not do this. Only `terminal attach` does.
 
-The plugin now drops those five, and only those five, and only from the
-handshake. Anything the far side asks for afterwards is passed through
-untouched — run vim or htop over there and its mouse works as it always did,
-because it turns the mouse on in its own output rather than in Herdr's
-handshake. So the mouse belongs to whatever is using it, and to your terminal
-when nothing is.
+The plugin now drops mouse reporting from that handshake and nothing else. What
+it looks for is every private mode that turns the mouse into reporting rather
+than selection — `?1000h`, `?1002h`, `?1003h`, `?1005h`, `?1006h`, `?1015h` and
+`?1016h` — the five above and two more that `terminal attach` does not send
+today. There is no cost to listing one that never arrives, and the cost of
+missing one is a pane whose text cannot be selected.
+
+Only from the handshake, though. Anything the far side asks for afterwards is
+passed through untouched — run vim or htop over there and its mouse works as it
+always did, because it turns the mouse on in its own output rather than in
+Herdr's handshake. So the mouse belongs to whatever is using it, and to your
+terminal when nothing is.
 
 A plain SSH terminal from this plugin was never affected: nothing sits between
 it and the machine.

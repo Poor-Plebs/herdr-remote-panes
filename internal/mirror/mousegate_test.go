@@ -2,6 +2,7 @@ package mirror
 
 import (
 	"bytes"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/project"
 	"io"
 	"os"
 	"path/filepath"
@@ -369,5 +370,34 @@ func TestNothingMalformedGetsPastTheEnableTest(t *testing.T) {
 	// And the shortest thing that really is one.
 	if !isMouseEnable([]byte("\x1b[?1000h")) {
 		t.Error("a plain mouse enable was not recognised")
+	}
+}
+
+func TestEveryModeDroppedFromTheHandshakeIsWrittenDown(t *testing.T) {
+	// The page explaining why the mouse stopped selecting text listed five
+	// modes and said the plugin drops "those five, and only those five". The
+	// list here has seven: the two extra are ones `terminal attach` does not
+	// send today, kept because listing one that never arrives costs nothing
+	// and missing one costs a pane whose text cannot be selected.
+	//
+	// So the page was precise and wrong, which is worse than vague: somebody
+	// reading it to work out whether their own mouse trouble is this would
+	// check the five, find the mode they are looking at is not among them, and
+	// conclude it is something else.
+	docs, err := project.DocsText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range mouseModes {
+		// As the page writes them, which is how a terminal's documentation
+		// writes them too.
+		written := "?" + string(mode) + "h"
+		if !strings.Contains(docs, written) {
+			t.Errorf("the handshake gate drops %s and no page says so", written)
+		}
+	}
+	if len(mouseModes) < 5 {
+		t.Fatalf("the gate drops %d modes, which is fewer than the handshake sends; "+
+			"this is checking nothing", len(mouseModes))
 	}
 }
