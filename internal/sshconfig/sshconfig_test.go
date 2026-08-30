@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -308,5 +309,65 @@ func TestIncludesAreFollowedAsDeepAsSSHFollowsThem(t *testing.T) {
 	// only against being too small.
 	if machine := fmt.Sprintf("machine%d", beyond); got[machine] {
 		t.Errorf("%q was read from past the depth limit", machine)
+	}
+}
+
+func TestAnIncludeThatCannotBeReadIsSaidSo(t *testing.T) {
+	// An Include is how a config is kept in pieces -- a directory per team, a
+	// file per environment, generated fragments -- so a file that cannot be
+	// read is a whole group of machines missing from the menu at once.
+	//
+	// Unreadable used to look at the top-level file alone: stat it, size it,
+	// scan it. Every one of those had a twin in the reading, and the two
+	// drifted twice. First over the size bound, which is d3fa765. Then over
+	// Include, which this one never followed -- so a config whose fragment was
+	// unreadable was pronounced fine while its machines were gone.
+	home := t.TempDir()
+	ssh := filepath.Join(home, ".ssh")
+	inc := filepath.Join(ssh, "config.d")
+	if err := os.MkdirAll(inc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	top := filepath.Join(ssh, "config")
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(top, "Include "+inc+"/*\n\nHost toplevel\n")
+	write(filepath.Join(inc, "10-fine"), "Host fromtheinclude\n")
+
+	// Nothing wrong yet: an ordinary split config.
+	if why := Unreadable(); why != "" {
+		t.Fatalf("an ordinary config with an include is reported as %q", why)
+	}
+	if hosts := Hosts(); len(hosts) != 2 {
+		t.Fatalf("the machines are %v, and there are two", hosts)
+	}
+
+	// One fragment past the size bound. Its machines go, and that is the whole
+	// of what somebody sees unless this says otherwise.
+	write(filepath.Join(inc, "20-big"),
+		"Host toobig\n"+strings.Repeat("# padding\n", (maxConfigBytes/10)+10))
+
+	hosts := Hosts()
+	for _, host := range hosts {
+		if host == "toobig" {
+			t.Fatal("the oversized fragment was read after all, so this tests nothing")
+		}
+	}
+	why := Unreadable()
+	if why == "" {
+		t.Fatalf("machines are missing (%v) and nothing says why", hosts)
+	}
+	// Which file, because the menu says "could not read ~/.ssh/config" around
+	// this and that is not the file to go and look at.
+	if !strings.Contains(why, "20-big") {
+		t.Errorf("the reason is %q, which does not name the file it is about", why)
+	}
+	if !strings.Contains(why, "larger than") {
+		t.Errorf("the reason is %q, which does not say what is wrong with it", why)
 	}
 }

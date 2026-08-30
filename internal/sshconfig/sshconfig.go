@@ -86,49 +86,26 @@ func Unreadable() string {
 	if path == "" {
 		return ""
 	}
-	// Asked about before it is opened, for the same reason hostsFrom does:
-	// opening a pipe waits for somebody to write to it, and opening a terminal
-	// waits for somebody to type. This runs to draw the menu, so either is a
-	// menu that never appears -- and this function exists to explain an empty
-	// one, which makes hanging in it a particularly poor failure.
-	info, err := os.Stat(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			// No SSH config, which is ordinary.
-			return ""
-		}
-		return err.Error()
+	// The same walk the menu makes, asked for the other half of what it found.
+	//
+	// It used to be a second implementation looking at the top-level file: stat
+	// it, check it is regular, check its size, read it through for a line past
+	// the bound. Every one of those checks had a twin in hostsRead, and the two
+	// drifted -- first over the size bound, which fixed one silent failure and
+	// made another, and then over Include, which this one never followed at all.
+	// A config whose included file could not be read was pronounced fine while
+	// its machines were missing.
+	//
+	// So there is one walk now and this asks it what it skipped. Reading the
+	// whole config to draw a menu is what the menu already does.
+	read := newReading(path)
+	hostsRead(path, 0, read)
+	if len(read.why) == 0 {
+		return ""
 	}
-	if !info.Mode().IsRegular() {
-		// Said plainly, because the file is there and readable in the sense
-		// somebody would test with `cat`, and the machines are still missing.
-		return "not a regular file, so it is not read"
-	}
-	// The same bound the reading applies. Without this the two disagreed: a
-	// config past the bound was skipped by one and pronounced fine by the
-	// other, so the menu was empty with nothing said -- which is the failure
-	// this function exists to prevent, introduced by the bound that fixed
-	// another one.
-	if info.Size() > maxConfigBytes {
-		return fmt.Sprintf("larger than %d bytes, so it is not read", maxConfigBytes)
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return err.Error()
-	}
-	defer file.Close()
-
-	// Read through it, because opening is not the only way a config fails to
-	// be read: a line past the bound ends the scan, and the machines after it
-	// are missing with nothing said. This file is small; the menu already
-	// reads all of it.
-	scanner := scanConfig(file)
-	for scanner.Scan() {
-	}
-	if err := scanner.Err(); err != nil {
-		return err.Error()
-	}
-	return ""
+	// The first, because the menu has one line for it. A config with two
+	// unreadable includes has the same thing to do about either.
+	return read.why[0]
 }
 
 // Hosts returns the concrete host aliases declared in the SSH config, in the
@@ -166,7 +143,37 @@ const maxConfigBytes = 1 << 20
 // The entry point keeps its own record of what has been read, so a file
 // reached twice is read once.
 func hostsFrom(path string, depth int) []string {
-	return hostsRead(path, depth, map[string]bool{})
+	return hostsRead(path, depth, newReading(path))
+}
+
+// reading is what one pass over a config and the files it includes has seen.
+//
+// It carries the reasons as well as the record of what has been read, because
+// the two questions -- which machines are there, and why are some of them not
+// -- are answered by the same walk. Asking them separately is what went wrong
+// before: Unreadable looked at the top-level file alone and pronounced a config
+// fine while an included one was being skipped, so machines went missing from
+// the menu with nothing said. Two answers from one walk cannot disagree.
+type reading struct {
+	done map[string]bool
+	from string
+	// why is every reason a file that is there was not read, in the order met.
+	why []string
+}
+
+func newReading(from string) *reading {
+	return &reading{done: map[string]bool{}, from: filepath.Clean(from)}
+}
+
+// note records why a file was skipped, naming it unless it is the one the walk
+// started from -- that one is named by the caller, which has the path to hand
+// and says "could not read ~/.ssh/config" around it.
+func (r *reading) note(path, why string) {
+	if path == r.from {
+		r.why = append(r.why, why)
+		return
+	}
+	r.why = append(r.why, path+": "+why)
 }
 
 // hostsRead is hostsFrom with that record in hand.
@@ -180,15 +187,15 @@ func hostsFrom(path string, depth int) []string {
 // Skipping a repeat cannot change the answer. What is collected here is host
 // aliases, and those are already deduplicated; reading a file a second time
 // adds nothing but the reading.
-func hostsRead(path string, depth int, read map[string]bool) []string {
+func hostsRead(path string, depth int, read *reading) []string {
 	if path == "" || depth > maxIncludeDepth {
 		return nil
 	}
 	path = filepath.Clean(path)
-	if read[path] {
+	if read.done[path] {
 		return nil
 	}
-	read[path] = true
+	read.done[path] = true
 	// Regular files only. An Include is a glob, and a glob matches whatever is
 	// there: "Include /*/*/0" matches /dev/pts/0 on an ordinary machine, and
 	// reading a terminal blocks until somebody types into it. This file is read
@@ -198,11 +205,27 @@ func hostsRead(path string, depth int, read map[string]bool) []string {
 	// Checked before opening rather than after, because opening some of them
 	// is itself the thing that waits.
 	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > maxConfigBytes {
+	if err != nil {
+		// A config that is not there is ordinary, and an Include matches only
+		// what exists; anything else is a file that is there and unread.
+		if !errors.Is(err, fs.ErrNotExist) {
+			read.note(path, err.Error())
+		}
+		return nil
+	}
+	if !info.Mode().IsRegular() {
+		// Said plainly, because the file is there and readable in the sense
+		// somebody would test with `cat`, and the machines are still missing.
+		read.note(path, "not a regular file, so it is not read")
+		return nil
+	}
+	if info.Size() > maxConfigBytes {
+		read.note(path, fmt.Sprintf("larger than %d bytes, so it is not read", maxConfigBytes))
 		return nil
 	}
 	file, err := os.Open(path)
 	if err != nil {
+		read.note(path, err.Error())
 		return nil
 	}
 	defer file.Close()
@@ -240,10 +263,13 @@ func hostsRead(path string, depth int, read map[string]bool) []string {
 		}
 	}
 	// Nothing to do about it here -- the machines already read are still worth
-	// offering -- but Unreadable asks the same question of the top-level file
-	// and reports it, so an emptier menu than yesterday's has a reason
-	// somewhere.
-	_ = scanner.Err()
+	// offering -- but it is recorded, so that an emptier menu than yesterday's
+	// has a reason. This used to be discarded on the grounds that Unreadable
+	// asked the same question; it asked it of the top-level file only, and a
+	// line past the bound in an included one ended that file's scan in silence.
+	if err := scanner.Err(); err != nil {
+		read.note(path, err.Error())
+	}
 	return hosts
 }
 
