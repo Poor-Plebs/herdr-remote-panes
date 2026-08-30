@@ -1438,3 +1438,37 @@ func TestATargetLongerThanAnyMachineNameIsRefused(t *testing.T) {
 		}
 	}
 }
+
+func TestASelectionAcrossTwoLinesIsToldWhatIsWrong(t *testing.T) {
+	// Dragging over more than one line and pressing the connect key is the
+	// likeliest way to arrive here by accident. The general answer for it was
+	// "contains a control character", which is true and no help: it names the
+	// newline rather than the mistake.
+	//
+	// This check is the one for names that came from nowhere -- a name written
+	// in ~/.ssh/config is held to less, since somebody wrote it down.
+	err := PlausibleTarget("bot\nci")
+	if err == nil {
+		t.Fatal("two lines were offered as a machine to connect to")
+	}
+	if !strings.Contains(err.Error(), "more than one line") {
+		t.Errorf("the reason given is %q, which does not say what was selected", err)
+	}
+
+	// A name written down is still held to the plainer rule, which names the
+	// control character: there is no selection to talk about, and whoever put
+	// one in a config file wants to know which.
+	if err := ValidTarget("bot\nci"); err == nil {
+		t.Error("a target with a newline in it was accepted from a config file")
+	} else if !strings.Contains(err.Error(), "control character") {
+		t.Errorf("a written-down target says %q rather than naming the character", err)
+	}
+
+	// And the checks either side of it still answer for themselves.
+	if err := PlausibleTarget("bot ci"); err == nil || !strings.Contains(err.Error(), "space") {
+		t.Errorf("a selection with a space says %v", err)
+	}
+	if err := PlausibleTarget("deploy@bot"); err != nil {
+		t.Errorf("an ordinary machine was refused: %v", err)
+	}
+}

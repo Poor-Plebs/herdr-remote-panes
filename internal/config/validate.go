@@ -247,6 +247,14 @@ const maxTargetBytes = 320
 // one is a guess about what somebody meant, and a machine written down in
 // ~/.ssh/config needs no guessing.
 func PlausibleTarget(target string) error {
+	// Before the general checks, because this is the likeliest way to arrive
+	// here by accident and the general answer for it is "contains a control
+	// character" -- true, and no help at all to somebody who dragged over two
+	// lines and pressed a key. The selection is trimmed before it gets here,
+	// so a break left in it is one somebody selected across.
+	if strings.ContainsAny(target, "\n\r") {
+		return errors.New("the selection covers more than one line, so it is not a machine")
+	}
 	if err := ValidTarget(target); err != nil {
 		return err
 	}
