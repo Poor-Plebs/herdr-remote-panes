@@ -97,3 +97,49 @@ func TestASummaryTooLongToReadNamesWhatIsWrong(t *testing.T) {
 		t.Errorf("a label carries an escape into the notification: %q", nasty)
 	}
 }
+
+func TestTheSummaryIsDecidedAtTheBoundNotPastIt(t *testing.T) {
+	// Three things in this function survived a mutation sweep, all of them
+	// boundaries the tests approached and never landed on.
+
+	// A line exactly as wide as it is allowed to be is a line that fits. Built
+	// to the column rather than guessed at: anything shorter would pass
+	// against "less than" as well, which is the mutation this is here for.
+	const tail = " 1 mirrored"
+	label := strings.Repeat("a", maxSummary-len(tail))
+	exact := statusSummary([]syncd.HostInfo{{Label: label, Connected: true, Mirrors: 1}})
+	if w := text.Width(exact); w != maxSummary {
+		t.Fatalf("the fixture is %d columns, not the %d this is about", w, maxSummary)
+	}
+	if !strings.Contains(exact, label) {
+		t.Errorf("a summary that fits exactly was shortened anyway: %q", exact)
+	}
+
+	// A machine that has failed without being given up on yet is not working.
+	// Counting it as such is what "and" instead of "or" does here, and every
+	// fixture that had one also had it given up on, so the two agreed.
+	failing := make([]syncd.HostInfo, 0, 20)
+	for i := 0; i < 19; i++ {
+		failing = append(failing, syncd.HostInfo{
+			Label: fmt.Sprintf("machine%02d", i), Connected: true, Mirrors: 1})
+	}
+	failing = append(failing, syncd.HostInfo{Label: "trying", LastError: "connection refused"})
+	got := statusSummary(failing)
+	if !strings.Contains(got, "trying") {
+		t.Errorf("a machine that is failing but not given up on is counted as working: %q", got)
+	}
+	if !strings.Contains(got, "19 connected") {
+		t.Errorf("the count of working machines includes one that is not: %q", got)
+	}
+
+	// And with nothing working there is no count to give. "0 connected" is a
+	// clause that costs room and says only that the rest of the line is all of
+	// it.
+	none := make([]syncd.HostInfo, 0, 20)
+	for i := 0; i < 20; i++ {
+		none = append(none, syncd.HostInfo{Label: fmt.Sprintf("machine%02d", i), GaveUp: true})
+	}
+	if all := statusSummary(none); strings.Contains(all, "0 connected") {
+		t.Errorf("a summary with nothing working counts the nothing: %q", all)
+	}
+}
