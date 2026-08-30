@@ -384,6 +384,12 @@ func parseOpenedPane(result json.RawMessage) (Pane, error) {
 
 // openPaneArgs renders a plugin pane request as CLI arguments. Kept separate
 // so the flag names, which Herdr rejects silently when wrong, can be tested.
+//
+// A test can only hold these to what this file expects, though; whether Herdr
+// takes them is a question only Herdr answers. Asked of 0.8.2, which accepts
+// every one of them -- --plugin, --entrypoint, --placement, --direction,
+// --target-pane, --workspace, --cwd, --env and --focus. It has --no-focus as
+// well, which nothing here wants.
 func openPaneArgs(opts OpenOptions) []string {
 	args := []string{"plugin", "pane", "open",
 		"--plugin", opts.PluginID,
@@ -546,6 +552,10 @@ func SplitPane(direction string) error {
 // when they ask for a terminal somewhere that is not a machine's space, so a
 // flag going unrecognised here is the one case where nothing remote is involved
 // to make the failure obvious.
+//
+// Herdr 0.8.2 takes both of these, and --direction is an enumeration of right
+// and down: a third word would be refused rather than ignored, which is the one
+// mercy in this corner.
 func splitPaneArgs(direction string) []string {
 	return []string{"pane", "split", "--direction", direction, "--focus"}
 }
