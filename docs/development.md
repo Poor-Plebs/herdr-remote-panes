@@ -154,6 +154,15 @@ bytes twice gives the same answer — so they keep working when the wording of
 something changes. `go test ./...` runs their seed corpus; the fuzzing itself is
 opt-in, like the two above.
 
+`FuzzHostsFrom`'s corpus is the reason `internal/sshconfig` takes a few seconds
+of an ordinary run. Its seeds are the inputs that found the five silent failures
+in v0.4.4 — `Include /*/*`, `Include /*/**/**/**/*///`, `Include /l*/d*/*` —
+and they mean what they say: the glob runs against the real filesystem, because
+that is where a pattern matching seventy-five thousand things comes from. One
+seed spends the whole two-second expansion budget every run, which is the budget
+being exercised rather than anything being wrong. It follows that the timing
+varies by machine, and on one with a network mount under `/` it varies a lot.
+
 Give them minutes rather than seconds, and give them to the right target.
 Every one had been run at 45s and was clean; `FuzzHostsFrom` then found five
 separate faults between three and ten minutes, and re-running it after each fix
