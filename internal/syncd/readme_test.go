@@ -6,6 +6,7 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -283,6 +284,29 @@ func TestTheRetryTheDocsPromiseIsTheRetryThatHappens(t *testing.T) {
 	ceiling := fmt.Sprintf("up to every %d minutes", int(autoRetryCeiling.Minutes()))
 	if !strings.Contains(prose, ceiling) {
 		t.Errorf("the docs do not say the backoff settles at %q", ceiling)
+	}
+
+	// And nowhere gives a different one. Asking only whether the right
+	// sequence appears somewhere is satisfied by one page having it while
+	// another contradicts it -- which is what happened: the troubleshooting
+	// page was corrected to include the fourth step and the README was left
+	// listing three, and this test passed the whole time.
+	//
+	// Matched where the sequence ends rather than by the whole run: pages
+	// write it with words in ("5s, then 15s, 45s"), so a run of commas is not
+	// the shape to look for. What every telling has in common is that it stops
+	// at the ceiling -- and the way to get it wrong is to stop before it, so
+	// that the last wait named looks like the one before five minutes.
+	//
+	// Which is exactly what happened twice: three steps then the ceiling, with
+	// 2m15s missing, in both pages. Correcting one left the other passing.
+	last := steps[len(steps)-1]
+	for _, at := range regexp.MustCompile(regexp.QuoteMeta(ceiling)).FindAllStringIndex(prose, -1) {
+		lead := prose[max(0, at[0]-160):at[0]]
+		if !strings.Contains(lead, last) {
+			t.Errorf("a page works up to %q without naming %s, the wait before it: %q",
+				ceiling, last, lead)
+		}
 	}
 
 	// And how many attempts a failure that might pass on its own is given. The

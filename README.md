@@ -342,11 +342,11 @@ the machine from the menu, which is how you say "try now".
 
 **Unless every machine goes at once**, which is not about the machines. A lid
 closing or a VPN dropping fails all of them in the same pass, so that case
-retries itself: 5s, then 15s, 45s, and on up to every 5 minutes for as long as
-it takes. They still show as unreachable in the meantime, and you can still
-press enter on one to try it now. A machine that fails while the others are
-fine has something wrong with *it* and waits for you, as above — and if any of
-them failed for a reason that will not clear on its own, none of it retries,
+retries itself: 5s, then 15s, 45s, 2m15s, and on up to every 5 minutes for as
+long as it takes. They still show as unreachable in the meantime, and you can
+still press enter on one to try it now. A machine that fails while the others
+are fine has something wrong with *it* and waits for you, as above — and if any
+of them failed for a reason that will not clear on its own, none of it retries,
 because that is not a link that went away.
 
 **Who else can see your space on a machine.** The space this plugin makes there
