@@ -135,7 +135,7 @@ and the last one found here did.
 Anything that reads what another machine said has a fuzz target, because the
 input is not this plugin's to predict: a terminal's own title, a machine's
 `~/.ssh/config`, the base64 frames of an observe stream, whatever Herdr printed
-beside its JSON.
+beside its JSON, and what a failure said on its way out of `status`.
 
 ```bash
 go test -run XXX -fuzz FuzzHostsFrom -fuzztime 180s ./internal/sshconfig/
