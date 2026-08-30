@@ -415,6 +415,21 @@ func expand(pattern string) []string {
 		done <- globbed{matches, err}
 	}()
 
+	// No budget at all means do not wait, rather than race a timer that has
+	// already fired against a glob that may finish first. A select with both
+	// cases ready picks between them at random, so with the budget wound down
+	// far enough to test this, the answer came out either way -- which is a
+	// test that fails once in a while for reasons that have nothing to do with
+	// the code, and it did.
+	//
+	// Nothing configures this: it is a constant of two seconds. The case
+	// exists so that abandoning can be asked for exactly rather than
+	// approached with a small number and hoped for.
+	if includeGlobBudget <= 0 {
+		slowGlobs.Store(pattern, struct{}{})
+		return nil
+	}
+
 	var matches []string
 	select {
 	case got := <-done:

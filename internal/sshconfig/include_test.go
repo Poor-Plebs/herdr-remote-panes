@@ -140,7 +140,11 @@ func TestAnIncludeThatTakesTooLongToExpandIsAbandoned(t *testing.T) {
 	}
 
 	was := includeGlobBudget
-	includeGlobBudget = time.Nanosecond
+	// Nought rather than a nanosecond. With a budget that small the timer has
+	// fired and the glob may also have finished, and a select between two ready
+	// cases picks at random -- so this asked a question with two right answers
+	// and failed about one run in twenty. Nought asks it exactly.
+	includeGlobBudget = 0
 	t.Cleanup(func() {
 		includeGlobBudget = was
 		slowGlobs.Delete(filepath.Join(dir, "*"))
