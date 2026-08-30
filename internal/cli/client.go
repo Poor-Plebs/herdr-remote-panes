@@ -281,5 +281,43 @@ func statusSummary(hosts []syncd.HostInfo) string {
 			parts = append(parts, fmt.Sprintf("%s %d mirrored", name, h.Mirrors))
 		}
 	}
-	return strings.Join(parts, " · ")
+	full := strings.Join(parts, " · ")
+	if text.Width(full) <= maxSummary {
+		return full
+	}
+
+	// Too long to be read whole. This goes to a desktop notification, which is
+	// drawn by something else and cut wherever that decides -- and the order
+	// here is the order of the config file, which puts the machines that are
+	// fine in front of the ones that are not. So with enough machines the part
+	// that survives is "a 1 mirrored · b 1 mirrored", and the one that told
+	// somebody something is the part that went.
+	//
+	// What is wrong is named and what is working is counted, because a machine
+	// doing its job needs no name in a line this size.
+	var wrong []string
+	working := 0
+	for _, h := range hosts {
+		if h.GaveUp || !h.Connected {
+			wrong = append(wrong, text.Sanitize(h.Label))
+			continue
+		}
+		working++
+	}
+	if len(wrong) == 0 {
+		return fmt.Sprintf("%d machines connected", working)
+	}
+	short := fmt.Sprintf("%d unreachable: %s", len(wrong), strings.Join(wrong, ", "))
+	if working > 0 {
+		short = fmt.Sprintf("%d connected · %s", working, short)
+	}
+	// Enough machines can be unreachable at once that naming them all runs
+	// past the bound as well, and then the cut is back where it started --
+	// except that everything before it is now worth reading.
+	return text.Truncate(short, maxSummary)
 }
+
+// maxSummary bounds the line a notification is made of. It is not what the
+// notification will show, which nothing here can know: it is short enough that
+// whatever does the showing is unlikely to have to choose.
+const maxSummary = 120
