@@ -76,6 +76,17 @@ func runeWidth(r rune) int {
 	case unicode.Is(unicode.Mn, r), unicode.Is(unicode.Me, r), unicode.Is(unicode.Cf, r):
 		// Combining marks and format characters sit on the previous cell.
 		return 0
+	case r >= 0x1F3FB && r <= 0x1F3FF:
+		// A skin tone, which is not a character anybody writes on its own: it
+		// recolours the emoji in front of it, and the pair is drawn in the two
+		// cells that emoji already had. Counted as a character of its own it
+		// measures a label two cells wider than the screen shows, and every
+		// column after it is out by that much -- the same fault the emoji
+		// presentation selector above is handled for, and the same fix.
+		//
+		// Unlike a zero-width joiner, there is nothing to weigh up: a modifier
+		// never stands alone, so no terminal has anything to draw for it.
+		return 0
 	case isWide(r):
 		return 2
 	default:

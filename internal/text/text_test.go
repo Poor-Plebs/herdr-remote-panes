@@ -349,3 +349,45 @@ func TestCuttingAnEmojiLabelMeasuresItTheSameWay(t *testing.T) {
 		}
 	}
 }
+
+func TestASkinToneIsPartOfTheEmojiItRecolours(t *testing.T) {
+	// A modifier never stands alone: it recolours the emoji in front of it,
+	// and the pair is drawn in the two cells that emoji already had. Counted
+	// as a character of its own, a label measures two cells wider than the
+	// screen shows -- and in a menu that pads every name to a column, every
+	// column after it is out by that much.
+	//
+	// The same fault the emoji presentation selector is handled for, and
+	// unlike a zero-width joiner there is nothing to weigh up: no terminal has
+	// anything to draw for a modifier by itself.
+	plain := "\U0001F44D"           // thumbs up
+	toned := "\U0001F44D\U0001F3FD" // the same, recoloured
+	if Width(plain) != 2 {
+		t.Fatalf("the fixture is wrong: an emoji is %d cells", Width(plain))
+	}
+	if got := Width(toned); got != Width(plain) {
+		t.Errorf("recolouring an emoji changed its width from %d to %d",
+			Width(plain), got)
+	}
+
+	// And the column it is padded into is the width asked for, which is the
+	// thing that goes wrong downstream.
+	if got := Width(Pad(toned, 6)); got != 6 {
+		t.Errorf("padding a recoloured emoji to six cells gave %d", got)
+	}
+
+	// Every tone, since they are a contiguous block and picking one would test
+	// the boundary of nothing.
+	for tone := rune(0x1F3FB); tone <= 0x1F3FF; tone++ {
+		if got := Width(plain + string(tone)); got != 2 {
+			t.Errorf("an emoji with tone %U is %d cells", tone, got)
+		}
+	}
+	// The characters either side of the block are not tones and keep their own
+	// width: a bound that swallows its neighbours is a different bug.
+	for _, notATone := range []rune{0x1F3FA, 0x1F400} {
+		if Width(string(notATone)) == 0 {
+			t.Errorf("%U is not a skin tone and was given no width", notATone)
+		}
+	}
+}
