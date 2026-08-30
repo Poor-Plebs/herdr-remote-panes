@@ -2895,7 +2895,7 @@ func (d *Daemon) findLocalWorkspace(state *hostSync) (bool, error) {
 		return false, err
 	}
 	label := d.config().WorkspaceFor(state.host)
-	if id, ok := pickWorkspace(workspaces, label, state.host.DisplayLabel()); ok {
+	if id, ok := pickWorkspace(workspaces, label, state.host.DisplayLabel(), d.spacesOfOtherMachines(state.host)); ok {
 		state.workspaceID = id
 		return true, nil
 	}
@@ -3293,7 +3293,7 @@ func (d *Daemon) ensureWorkspace(state *hostSync, index *paneIndex) (string, err
 	if err != nil {
 		return "", err
 	}
-	if id, ok := pickWorkspace(workspaces, label, state.host.DisplayLabel()); ok {
+	if id, ok := pickWorkspace(workspaces, label, state.host.DisplayLabel(), d.spacesOfOtherMachines(state.host)); ok {
 		state.workspaceID = id
 		return id, nil
 	}
@@ -3340,13 +3340,25 @@ const markerRunes = "☁⛅⚠🔴🟢 \t"
 //
 // An exact match is the space this made; anything else is a guess, and a guess
 // should not win over a certainty.
-func pickWorkspace(workspaces []herdrcli.Workspace, label, hostLabel string) (string, bool) {
+func pickWorkspace(workspaces []herdrcli.Workspace, label, hostLabel string, theirs map[string]bool) (string, bool) {
 	for _, ws := range workspaces {
 		if ws.Label == label {
 			return ws.WorkspaceID, true
 		}
 	}
 	for _, ws := range workspaces {
+		// Not one that is exactly another machine's. The tolerant match takes
+		// off a marker, and taking off enough of them brings "☁  ☁bot" down to
+		// "bot" -- so a machine called bot could be handed the space belonging
+		// to one somebody had labelled ☁bot, which is not a strange label when
+		// the marker is the glyph this plugin decorates spaces with.
+		//
+		// Two machines in one space is the arrangement where each pass reads
+		// the other's terminals as strays and closes them, so a guess is only
+		// better than a second space while nothing else has a claim on it.
+		if theirs[ws.Label] {
+			continue
+		}
 		if sameWorkspace(ws.Label, hostLabel) {
 			return ws.WorkspaceID, true
 		}
@@ -3354,9 +3366,33 @@ func pickWorkspace(workspaces []herdrcli.Workspace, label, hostLabel string) (st
 	return "", false
 }
 
+// spacesOfOtherMachines is the name every other configured machine's space
+// would carry, reachable or not, so the tolerant match above can leave them
+// alone.
+func (d *Daemon) spacesOfOtherMachines(mine config.Host) map[string]bool {
+	cfg := d.config()
+	out := map[string]bool{}
+	for _, h := range cfg.Hosts {
+		if h.Target == mine.Target {
+			continue
+		}
+		out[cfg.WorkspaceLabelFor(h, true)] = true
+		out[cfg.WorkspaceLabelFor(h, false)] = true
+	}
+	return out
+}
+
 // sameWorkspace reports whether a workspace label names this host, ignoring any
 // leading marker. Without this, changing workspace_format would orphan the
 // workspace a host's panes already live in.
+//
+// As far as the markers below, which is both defaults and the whitespace either
+// puts between itself and the name. A format built on some other glyph is not
+// recognised across a change to it: the space keeps the old name, this makes a
+// new one, and the panes are left in the old. Recoverable by hand and not worth
+// guessing at, since the alternative -- trimming whatever is not a letter --
+// would let two machines whose names differ only by a symbol claim each
+// other's space, which is the worse failure and a silent one.
 func sameWorkspace(label, hostLabel string) bool {
 	return strings.TrimLeft(label, markerRunes) == hostLabel
 }

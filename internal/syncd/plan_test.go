@@ -2620,7 +2620,7 @@ func TestAnExactlyNamedSpaceWinsOverAGuess(t *testing.T) {
 	ours := herdrcli.Workspace{WorkspaceID: "w2", Label: "☁  bot"} // this plugin's
 
 	for _, order := range [][]herdrcli.Workspace{{mine, ours}, {ours, mine}} {
-		got, ok := pickWorkspace(order, "☁  bot", "bot")
+		got, ok := pickWorkspace(order, "☁  bot", "bot", nil)
 		if !ok || got != "w2" {
 			t.Errorf("listed as %v, picked %q; want the one named exactly", labelsOf(order), got)
 		}
@@ -2633,7 +2633,7 @@ func TestAGuessIsStillBetterThanMakingASecondSpace(t *testing.T) {
 	// is there.
 	for _, existing := range []string{"bot", "⚠  bot", "🔴 bot"} {
 		list := []herdrcli.Workspace{{WorkspaceID: "w9", Label: existing}}
-		got, ok := pickWorkspace(list, "☁  bot", "bot")
+		got, ok := pickWorkspace(list, "☁  bot", "bot", nil)
 		if !ok || got != "w9" {
 			t.Errorf("a space called %q was not recognised as the machine's", existing)
 		}
@@ -2641,7 +2641,7 @@ func TestAGuessIsStillBetterThanMakingASecondSpace(t *testing.T) {
 
 	// And nothing that is not the machine's.
 	none := []herdrcli.Workspace{{WorkspaceID: "w1", Label: "~"}, {WorkspaceID: "w2", Label: "☁  other"}}
-	if id, ok := pickWorkspace(none, "☁  bot", "bot"); ok {
+	if id, ok := pickWorkspace(none, "☁  bot", "bot", nil); ok {
 		t.Errorf("claimed %q, which is not this machine's space", id)
 	}
 }
@@ -4221,5 +4221,60 @@ func TestDisconnectingForgetsTheSpaceItWasUsing(t *testing.T) {
 	if _, ok := d.markedWorkspaces["w5"]; ok {
 		t.Error("the mark put on that space is still remembered, so a space that " +
 			"takes the id next is thought to be marked already")
+	}
+}
+
+func TestAMachineDoesNotTakeASpaceThatIsAnothersExactly(t *testing.T) {
+	// The tolerant match takes a marker off a space's name so that changing
+	// workspace_format does not orphan the panes already in it. Taking off
+	// enough of them brings "☁  ☁bot" down to "bot" -- so a machine called bot
+	// could be handed the space belonging to one somebody had labelled ☁bot.
+	// That is not a strange label: the marker is the glyph this plugin puts on
+	// spaces, and somebody naming a machine after what it is has every reason
+	// to reach for it.
+	//
+	// Two machines in one space is the arrangement where each pass reads the
+	// other's terminals as strays and closes them, which is the worst thing
+	// here and a silent one. A guess is better than a second space only while
+	// nothing else has a claim.
+	decorated := []herdrcli.Workspace{{WorkspaceID: "w7", Label: "☁  ☁bot"}}
+
+	// Without knowing whose it is, the old rule hands it over.
+	if id, ok := pickWorkspace(decorated, "☁  bot", "bot", nil); !ok || id != "w7" {
+		t.Fatal("the fixture no longer reproduces the tolerant match, so this " +
+			"proves nothing about excluding it")
+	}
+
+	// Knowing it, this leaves it alone and makes its own.
+	theirs := map[string]bool{"☁  ☁bot": true}
+	if id, ok := pickWorkspace(decorated, "☁  bot", "bot", theirs); ok {
+		t.Errorf("took %q, which is exactly another machine's space", id)
+	}
+
+	// And the machine it belongs to still finds it, by the exact match, which
+	// runs first and is not filtered.
+	if id, ok := pickWorkspace(decorated, "☁  ☁bot", "☁bot", nil); !ok || id != "w7" {
+		t.Error("the machine that owns the space cannot find it")
+	}
+}
+
+func TestTheSpacesLeftAloneAreEveryOtherMachinesBothWays(t *testing.T) {
+	// Both names, because a machine that cannot be reached has its space
+	// renamed to say so -- and the whole point is to recognise a space
+	// belonging to a machine that is not answering, which is when the mistake
+	// would be made.
+	cfg := machineConfig("bot", "ci")
+	d := New(cfg)
+	theirs := d.spacesOfOtherMachines(config.Host{Target: "bot"})
+
+	for _, want := range []string{"☁  ci", "⚠  ci"} {
+		if !theirs[want] {
+			t.Errorf("%q is another machine's space and is not being left alone", want)
+		}
+	}
+	for _, mine := range []string{"☁  bot", "⚠  bot"} {
+		if theirs[mine] {
+			t.Errorf("%q is this machine's own space and is being left alone", mine)
+		}
 	}
 }
