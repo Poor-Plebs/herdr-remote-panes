@@ -439,3 +439,64 @@ func TestTheMenuAndTheListingBlameTheSameThingFirst(t *testing.T) {
 			listing, menu)
 	}
 }
+
+// TestEverythingTheDaemonReportsReachesSomebody holds the daemon's report of a
+// machine to the two things that show it.
+//
+// HostInfo is what the daemon says about a machine, and it is filled in whether
+// or not anybody reads it. A field added to it and wired into the listing but
+// not the menu costs nothing at compile time and nothing at run time: the menu
+// simply omits it, and the machine shows a number lower than the machine has
+// with no reason given.
+//
+// That has happened twice. Three fields reached neither surface until 45431e2,
+// and Unmirrored -- the only one of them that is a failure rather than a
+// setting -- reached only the listing until 91999ab. Both times the field was
+// found by looking rather than by anything failing.
+func TestEverythingTheDaemonReportsReachesSomebody(t *testing.T) {
+	inRoot(t)
+
+	read := func(file string) string {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	menu := read(filepath.Join("internal", "picker", "picker.go"))
+	listing := read(filepath.Join("internal", "cli", "client.go"))
+
+	// Read by the menu and not by the listing, with the reason.
+	menuOnly := map[string]string{
+		// The listing shows the label, which is what somebody wrote down; the
+		// menu matches on the target because that is what it connects to.
+		"Target": "the listing shows the label instead",
+	}
+
+	source, err := os.ReadFile(filepath.Join("internal", "syncd", "state.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := regexp.MustCompile(`(?s)type HostInfo struct \{(.*?)\n\}`).FindStringSubmatch(string(source))
+	if body == nil {
+		t.Fatal("HostInfo is no longer declared there, so this is checking nothing")
+	}
+	fields := regexp.MustCompile(`(?m)^\t([A-Z]\w*)\s+\S`).FindAllStringSubmatch(body[1], -1)
+	if len(fields) < 10 {
+		t.Fatalf("found %d things the daemon reports, which is fewer than it does", len(fields))
+	}
+
+	for _, f := range fields {
+		name := f[1]
+		inMenu := strings.Contains(menu, "info."+name) || strings.Contains(menu, "entry."+name)
+		inListing := strings.Contains(listing, "h."+name)
+		if !inMenu {
+			t.Errorf("the daemon reports %s about a machine and the menu never reads it, "+
+				"so the menu shows a machine without it and nothing says why", name)
+		}
+		if !inListing && menuOnly[name] == "" {
+			t.Errorf("the daemon reports %s about a machine and `status` never reads it; "+
+				"add it there, or say here why the listing does without it", name)
+		}
+	}
+}
