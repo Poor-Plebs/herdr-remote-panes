@@ -77,3 +77,61 @@ func TestTheBuildSaysWhenGoIsMissing(t *testing.T) {
 		t.Errorf("the build does not mention PATH, which is the other way this happens:\n%s", said)
 	}
 }
+
+func TestWhatCheckRunsIsWhatCIRuns(t *testing.T) {
+	// `make check` prints "ok — this is what CI runs" when it finishes, which
+	// is the sentence everything in this repository is committed on. Nothing
+	// held it to anything: a step added to check would be run by nobody else,
+	// and a step added to CI would fail on a push after a green run here.
+	//
+	// The claim is about the first job. The second builds and tests on the
+	// oldest supported Go and deliberately skips gofmt and staticcheck, which
+	// are about the source rather than about the toolchain.
+	inRoot(t)
+
+	makefile, err := os.ReadFile("Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := regexp.MustCompile(`(?m)^check:(.*)$`).FindSubmatch(makefile)
+	if declared == nil {
+		t.Fatal("the Makefile no longer has a check target")
+	}
+	wanted := map[string]bool{}
+	for _, step := range strings.Fields(string(declared[1])) {
+		wanted[step] = true
+	}
+	if len(wanted) < 3 {
+		t.Fatalf("check runs %d things, which is fewer than it does; this is "+
+			"checking nothing", len(wanted))
+	}
+
+	workflow, err := os.ReadFile(filepath.Join(".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Up to the second job, which is held to less on purpose.
+	first := string(workflow)
+	if i := strings.Index(first, "\n  floor:"); i > 0 {
+		first = first[:i]
+	}
+	run := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^\s*run: make (.+)$`).FindAllStringSubmatch(first, -1) {
+		for _, step := range strings.Fields(m[1]) {
+			run[step] = true
+		}
+	}
+
+	for step := range wanted {
+		if !run[step] {
+			t.Errorf("check runs %q and CI does not, so a push can go green on "+
+				"less than was run here", step)
+		}
+	}
+	for step := range run {
+		if !wanted[step] {
+			t.Errorf("CI runs %q and check does not, so a push can fail after a "+
+				"green run here", step)
+		}
+	}
+}
