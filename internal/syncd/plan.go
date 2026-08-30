@@ -600,6 +600,18 @@ var knownFailures = []knownFailure{
 	// reworded on a quiet afternoon -- and a needle that no longer matches does
 	// not fail, it just stops recognising a machine without Herdr on it.
 	{remote.ErrNoHerdr.Error(), "herdr not found on the machine", true},
+	// Herdr is there and its session is not. The message Herdr gives is a
+	// socket path and then what to run, which is sound advice about the
+	// machine and unreadable where this is shown: the menu has room for the
+	// path and loses the rest, so what somebody reads is half of a directory
+	// name on a machine they are not looking at.
+	//
+	// Not settled, and the reason is waitForRemote: it returns the last ping
+	// when it runs out of time, so this is also what a machine that is still
+	// starting its session looks like. Retrying a machine whose session is
+	// coming up costs an attempt; giving up on it costs the machine.
+	{"server_not_running", "no herdr session on the machine — run `herdr session attach` " +
+		"there, or turn auto_start on and this will", false},
 }
 
 // summarizeError reduces a failure to one line fit for a list.

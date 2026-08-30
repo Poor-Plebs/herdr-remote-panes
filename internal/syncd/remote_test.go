@@ -842,8 +842,14 @@ func TestWithoutAutoStartAMachineWithNoSessionIsNotStarted(t *testing.T) {
 	// here used to claim it connected anyway and it does not. Reporting
 	// success would be the worse of the two: the menu would show a machine
 	// connected and mirroring, with nothing on it and no reason given, and
-	// "no herdr server is running" is the one sentence that says what to do
-	// about it.
+	// saying what to do about it is the whole use of the reply.
+	//
+	// Herdr's own sentence is a socket path followed by the command, which is
+	// too long for the line the menu gives it -- the path fills the room and
+	// the command is what gets cut. So it is summarised, and what the summary
+	// has to keep is the command: this is the reply somebody reads when
+	// nothing happened, and "no session" without "start one" is a diagnosis
+	// with no next step.
 	here := withFakeHerdr(t)
 	heldOn, _ := withRemoteHerdrRunning(t, false)
 	there := func() fakeHerdr { return heldOn("bot") }
@@ -860,8 +866,11 @@ func TestWithoutAutoStartAMachineWithNoSessionIsNotStarted(t *testing.T) {
 	if reply.OK {
 		t.Errorf("connecting to a machine with no session to mirror reported success: %q", reply.Message)
 	}
-	if !strings.Contains(reply.Message, "no herdr server is running") {
+	if !strings.Contains(reply.Message, "no herdr session on the machine") {
 		t.Errorf("the reply does not say what is wrong: %q", reply.Message)
+	}
+	if !strings.Contains(reply.Message, "herdr session attach") {
+		t.Errorf("the reply says what is wrong and not what to do: %q", reply.Message)
 	}
 	// And it does not open by saying the machine connected. Letting this get
 	// as far as opening a terminal produces "connected to bot, but could not

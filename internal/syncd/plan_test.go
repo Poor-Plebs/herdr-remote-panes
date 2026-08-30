@@ -2813,6 +2813,11 @@ func TestEveryNamedFailureIsReachableAndDecided(t *testing.T) {
 		"Connection closed by":        false,
 		"Connection reset by peer":    false,
 		"No route to host":            false,
+		// Herdr is installed and its session is not up. Trying again is worth
+		// it: waitForRemote hands back the last ping when it runs out of time,
+		// so a machine still binding its socket fails with exactly this, and
+		// giving up on it would be giving up on a machine that was working.
+		"server_not_running": false,
 	}
 
 	for _, known := range knownFailures {
@@ -4144,5 +4149,36 @@ func TestAFailureIsNamedByTheFirstThingThatWentWrong(t *testing.T) {
 	typo := errors.New("/home/u/.ssh/config: line 12: Bad configuration option: Prot 22")
 	if got := summarizeError(typo); !strings.Contains(got, "~/.ssh/config") {
 		t.Errorf("a bad line in the ssh config is reported as %q", got)
+	}
+}
+
+func TestAMachineWithNoHerdrSessionSaysThatMuch(t *testing.T) {
+	// What Herdr says when its session is not up is a socket path followed by
+	// the command to start one. That is sound advice about the machine and
+	// unreadable where the menu puts it: the path fills the room and the
+	// advice is what gets cut, so somebody reads half a directory name on a
+	// machine they are not looking at.
+	//
+	// The message is Herdr 0.8.2's own, from the recording in herdrcli.
+	err := errors.New("bot: herdr pane list: server_not_running: no herdr server is " +
+		"running at /home/deploy/.config/herdr/sessions/hub/herdr.sock; " +
+		"run `herdr session attach hub` to start or attach it")
+
+	got := summarizeError(err)
+	if !strings.Contains(got, "no herdr session on the machine") {
+		t.Errorf("a machine whose session is not up is reported as %q", got)
+	}
+	// The part the menu shows is what comes before the dash, and a path is not
+	// it.
+	cause, _, _ := strings.Cut(got, " — ")
+	if strings.Contains(cause, "/") {
+		t.Errorf("the menu would show %q, which is a path rather than a cause", cause)
+	}
+
+	// And it keeps being tried. waitForRemote hands back the last ping when it
+	// runs out of time, so a machine still binding its socket fails with
+	// exactly this -- giving up here gives up on a machine that was working.
+	if planGiveUp(0, err) {
+		t.Error("a machine whose session may still be starting is given up on")
 	}
 }
