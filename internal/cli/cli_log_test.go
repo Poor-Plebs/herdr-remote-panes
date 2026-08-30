@@ -151,3 +151,47 @@ func TestMainAsksForTheDateOnEveryLine(t *testing.T) {
 			"of restarts with nothing saying which day any of them was")
 	}
 }
+
+func TestVersionDoesNotClaimTheDaemonIsDownWhenItCannotAsk(t *testing.T) {
+	// This command exists to compare the build installed against the one
+	// running, which is the question after an upgrade. Run from an ordinary
+	// shell rather than through Herdr there is no state directory, so no
+	// socket to knock on -- and every failure read as "not running", which is
+	// a definite answer to a question that was never put. The daemon may be up
+	// and mirroring; this process cannot see it either way.
+	//
+	// Believing it costs a restart of Herdr to no purpose, or the opposite
+	// conclusion: that the new build is the one running.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", "")
+	t.Setenv("HERDR_SESSION", "")
+
+	var out, warn strings.Builder
+	if err := reportVersion(&out, &warn, "abc1234"); err != nil {
+		t.Fatal(err)
+	}
+	said := out.String()
+	if strings.Contains(said, "not running") {
+		t.Errorf("with no way to ask, the report says the daemon is not running:\n%s", said)
+	}
+	if !strings.Contains(said, "cannot tell") {
+		t.Errorf("the report does not say it could not ask:\n%s", said)
+	}
+	// And no stale-build warning either: comparing against a build nothing
+	// reported is comparing against nothing.
+	if warn.Len() != 0 {
+		t.Errorf("a warning was given about a daemon that was never reached: %q", warn.String())
+	}
+
+	// With somewhere to look and nothing there, "not running" is the right
+	// answer and still gets given.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "nobody")
+	out.Reset()
+	warn.Reset()
+	if err := reportVersion(&out, &warn, "abc1234"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "not running") {
+		t.Errorf("with a socket to knock on and no answer, the report says:\n%s", out.String())
+	}
+}

@@ -274,7 +274,21 @@ func printVersion() error {
 func reportVersion(out, warn io.Writer, installed string) error {
 	running := ""
 	reply, err := syncd.Ask(syncd.Command{Cmd: "status"})
+	// Whether the question could be put at all. Run from an ordinary shell
+	// rather than through Herdr, there is no state directory and so no socket
+	// to knock on -- and every failure here read as "not running", which is a
+	// definite answer to a question that was never asked. The daemon may be up
+	// and mirroring; this process cannot see it either way.
+	//
+	// Worth telling apart because of what this command is for: comparing the
+	// build installed against the one running, after an upgrade. Told the
+	// daemon is not running, somebody restarts Herdr to no purpose -- or
+	// concludes the new build is in use, which is the opposite of what this is
+	// asked to establish.
+	_, reachable := syncd.ControlSocket()
 	switch {
+	case reachable != nil:
+		running = "cannot tell from here — run this through Herdr"
 	case err != nil:
 		// Not an error. Asking which build you have installed is a reasonable
 		// thing to do when the daemon is not running -- it is a reasonable
@@ -294,6 +308,9 @@ func reportVersion(out, warn io.Writer, installed string) error {
 	// Only when something answered. A daemon that is not running is not a
 	// daemon running an older build, and saying both at once is a
 	// contradiction in four lines of output.
+	// Only err, and not reachable as well: Ask asks ControlSocket first and
+	// hands back its error, so anything that answered was reached. The pair
+	// read as belt and braces and the braces were sewn to the belt.
 	if err == nil {
 		if stale := version.StaleMessageFor(reply.Revision, installed); stale != "" {
 			fmt.Fprintf(warn, "warning: %s\n", stale)
