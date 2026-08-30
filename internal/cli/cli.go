@@ -14,6 +14,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
@@ -79,7 +80,26 @@ func hostFor(args []string) (host string, named bool) {
 	return "", false
 }
 
+// takesNoArgument names the commands that read nothing from argv, so that one
+// given anyway can be said to have been ignored.
+//
+// Said rather than refused. These are Herdr actions as well as things somebody
+// can type, and the manifest invokes them with no arguments -- but an action
+// that started failing because this got stricter would take the menu with it,
+// and a warning costs nothing if that assumption is ever wrong.
+var takesNoArgument = map[string]bool{
+	"status": true, "refresh": true, "version": true, "--version": true,
+	"menu": true, "picker": true,
+}
+
 func run(command string, args []string) error {
+	// "status bot" reads as asking about one machine and reports them all,
+	// which is the shape of mistake this plugin keeps finding in itself:
+	// something quietly not doing what it was asked.
+	if len(args) > 0 && takesNoArgument[command] {
+		log.Printf("%s takes no arguments, so %s was ignored",
+			command, strings.Join(quoteEach(args), " and "))
+	}
 	switch command {
 	case "daemon":
 		// A configuration that cannot be read must not stop the daemon: the
@@ -183,6 +203,16 @@ func run(command string, args []string) error {
 		usage(os.Stderr)
 		return fmt.Errorf("unknown command %q", command)
 	}
+}
+
+// quoteEach renders arguments for a message, so that an empty one or one made
+// of spaces is visible as something rather than as a gap in a sentence.
+func quoteEach(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, a := range args {
+		out = append(out, strconv.Quote(a))
+	}
+	return out
 }
 
 // hostArg resolves the host for connect/disconnect. When invoked as a plugin

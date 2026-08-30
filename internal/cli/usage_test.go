@@ -819,3 +819,49 @@ func TestWhatTheCommandExitsWith(t *testing.T) {
 		}
 	}
 }
+
+func TestACommandThatIgnoresAnArgumentSaysSo(t *testing.T) {
+	// "status bot" reads as asking about one machine and reports every one,
+	// which is the shape of mistake this plugin keeps finding in itself:
+	// something quietly not doing what it was asked. There is nothing wrong
+	// with the answer; there is something wrong with giving it in silence.
+	var said strings.Builder
+	restore, prefix, out := log.Flags(), log.Prefix(), log.Writer()
+	t.Cleanup(func() {
+		log.SetFlags(restore)
+		log.SetPrefix(prefix)
+		log.SetOutput(out)
+	})
+	log.SetFlags(0)
+	log.SetOutput(&said)
+
+	// Nowhere to reach a daemon, so run gets no further than the warning --
+	// which is the part under test.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "nobody")
+	_ = run("status", []string{"bot"})
+
+	if !strings.Contains(said.String(), "status takes no arguments") {
+		t.Errorf("an ignored argument was ignored in silence: %q", said.String())
+	}
+	// Which argument, since a command can be given several and a message that
+	// does not name them leaves somebody counting.
+	if !strings.Contains(said.String(), `"bot"`) {
+		t.Errorf("the warning does not name what was ignored: %q", said.String())
+	}
+
+	// A command that reads one does not complain about being given one.
+	said.Reset()
+	_ = run("disconnect", []string{"bot"})
+	if strings.Contains(said.String(), "takes no arguments") {
+		t.Errorf("a command that uses its argument called it ignored: %q", said.String())
+	}
+
+	// And no argument at all is the ordinary case, which is how every action
+	// in the manifest invokes these.
+	said.Reset()
+	_ = run("status", nil)
+	if strings.Contains(said.String(), "takes no arguments") {
+		t.Errorf("a command given nothing was warned about arguments: %q", said.String())
+	}
+}
