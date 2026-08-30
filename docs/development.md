@@ -137,6 +137,13 @@ input is not this plugin's to predict: a terminal's own title, a machine's
 `~/.ssh/config`, the base64 frames of an observe stream, whatever Herdr printed
 beside its JSON, and what a failure said on its way out of `status`.
 
+The command line sent to a machine has one too, and it asks a real shell rather
+than a model of one: quote a string, hand it to `sh`, and the argument that
+arrives must be the string that went in. Slow — a process per input, so
+thousands rather than millions of runs — and worth it, because a
+reimplementation of the shell's quoting rules would only be the function under
+test again with the same blind spots.
+
 ```bash
 go test -run XXX -fuzz FuzzHostsFrom -fuzztime 180s ./internal/sshconfig/
 ```
