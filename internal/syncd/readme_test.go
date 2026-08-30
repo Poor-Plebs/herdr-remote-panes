@@ -2,6 +2,7 @@ package syncd
 
 import (
 	"errors"
+	"fmt"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 	"os"
@@ -242,4 +243,59 @@ func TestTheREADMERequiresWhatTheProjectRequires(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestTheRetryTheDocsPromiseIsTheRetryThatHappens(t *testing.T) {
+	// The page gives the backoff as a sequence, because that is the shape of
+	// the question: a laptop comes back from sleep, every machine has stopped,
+	// and what somebody wants to know is how long before they come back on
+	// their own. Four numbers in prose, and nothing held any of them to the
+	// two constants they come from -- while the poll interval in the same
+	// paragraph is pinned, which is the half that had already been got wrong
+	// once.
+	prose := readmeProse(t)
+
+	// Derived rather than written out again: the sequence is whatever tripling
+	// from the first wait gives, and saying so twice is how the two stop
+	// agreeing.
+	var steps []string
+	for i := 0; ; i++ {
+		wait := planAutoRetryWait(i)
+		if wait >= autoRetryCeiling {
+			break
+		}
+		steps = append(steps, wait.String())
+		if i > 10 {
+			t.Fatal("the backoff no longer reaches its ceiling, so this would not stop")
+		}
+	}
+	if len(steps) < 2 {
+		t.Fatalf("the backoff reaches its ceiling in %d steps, which is not a sequence "+
+			"worth printing; the page says one", len(steps))
+	}
+	sequence := strings.Join(steps, ", ")
+	if !strings.Contains(prose, sequence) {
+		t.Errorf("the docs do not give the backoff as %q, which is what it is", sequence)
+	}
+
+	// The ceiling in the words the page uses for it, since a duration prints
+	// as "5m0s" and nobody writes that in a sentence.
+	ceiling := fmt.Sprintf("up to every %d minutes", int(autoRetryCeiling.Minutes()))
+	if !strings.Contains(prose, ceiling) {
+		t.Errorf("the docs do not say the backoff settles at %q", ceiling)
+	}
+
+	// And how many attempts a failure that might pass on its own is given. The
+	// page says "a second attempt", which is prose for this number and cannot
+	// be derived from it -- so the number is held instead, and changing it
+	// fails here with the sentence to go and fix.
+	if maxHostAttempts != 2 {
+		t.Errorf("a machine now gets %d attempts, and the page still says it gets "+
+			"a second one; the sentence about what stops at once needs rewriting",
+			maxHostAttempts)
+	}
+	if !strings.Contains(prose, "gets a second attempt") {
+		t.Error("the docs no longer say a failure that could pass on its own gets " +
+			"a second attempt, which is what maxHostAttempts makes it")
+	}
 }

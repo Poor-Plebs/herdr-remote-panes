@@ -158,8 +158,8 @@ about within a few seconds rather than filling the log for the rest of the
 session. The cost is that a network away for longer than that — a laptop coming
 back from sleep, a VPN reconnecting — is long enough for its machines to stop
 too. After a sleep it is usually all of them, and that is the case the daemon
-retries on its own — 5s, 15s, 45s, up to every 5 minutes — so a lid closing
-mostly sorts itself out while you are opening it.
+retries on its own — 5s, 15s, 45s, 2m15s, up to every 5 minutes — so a lid
+closing mostly sorts itself out while you are opening it.
 
 To not wait, there is a way back for all of them at once: the connect action
 with no machine named reconnects every one you have configured, given up on or
