@@ -517,6 +517,48 @@ func (c Config) Describe() []string {
 		out = append(out, line)
 	}
 	sort.Strings(out)
+
+	// The machines that are not simply taking the settings above. A per-machine
+	// override is where "why is this one attaching when the default is ssh"
+	// comes from, and the count on its own answers none of it.
+	//
+	// After the settings and in the order the file lists them, which is the
+	// order somebody wrote them in and the order the daemon reports them in.
+	// Sorted with the rest, "host" would land between herdr_bin and hosts and
+	// read as another setting.
+	for _, h := range c.Hosts {
+		if set := h.overrides(); len(set) > 0 {
+			out = append(out, fmt.Sprintf("config: host %s: %s",
+				strconv.Quote(h.Target), strings.Join(set, ", ")))
+		}
+	}
+	return out
+}
+
+// overrides is what a machine says for itself, rather than taking the setting
+// above it. Only what is set: a machine with nothing of its own has nothing
+// worth a line, and most of them have nothing of their own.
+func (h Host) overrides() []string {
+	shape := reflect.TypeOf(h)
+	value := reflect.ValueOf(h)
+	var out []string
+	for i := 0; i < shape.NumField(); i++ {
+		name, _, _ := strings.Cut(shape.Field(i).Tag.Get("json"), ",")
+		// target is which machine this is rather than something set about it,
+		// and it is already in the line.
+		if name == "" || name == "-" || name == "target" {
+			continue
+		}
+		field := value.Field(i)
+		if field.IsZero() {
+			continue
+		}
+		shown := fmt.Sprintf("%v", field.Interface())
+		if field.Kind() == reflect.String {
+			shown = strconv.Quote(field.String())
+		}
+		out = append(out, fmt.Sprintf("%s = %s", name, shown))
+	}
 	return out
 }
 

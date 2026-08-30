@@ -65,6 +65,12 @@ func TestTheREADMEShowsAWarningThisCanProduce(t *testing.T) {
 	// shown anywhere and a reader meets them the same way in a log.
 	settings := regexp.MustCompile(`^[a-z_]+ = `)
 	names := jsonNames(reflect.TypeOf(Config{}))
+	// A third shape with the same prefix: one machine's own settings. Held to
+	// the fields a machine has rather than the ones the file has, which are
+	// different lists -- label and disabled belong to a machine only, and
+	// max_mirrors to the file only.
+	perHost := regexp.MustCompile(`^host "[^"]*": (.+)$`)
+	hostNames := jsonNames(reflect.TypeOf(Host{}))
 
 	checked := 0
 	for _, m := range shown {
@@ -74,6 +80,16 @@ func TestTheREADMEShowsAWarningThisCanProduce(t *testing.T) {
 				continue
 			}
 			checked++
+			if m := perHost.FindStringSubmatch(example); m != nil {
+				for _, pair := range strings.Split(m[1], ", ") {
+					name, _, ok := strings.Cut(pair, " = ")
+					if !ok || !hostNames[name] {
+						t.Errorf("the docs show a machine being reported with %q, "+
+							"which is not something a machine has", pair)
+					}
+				}
+				continue
+			}
 			if settings.MatchString(example) {
 				// A line from Describe. What it has to be is a setting that
 				// exists: an example naming one that does not is the same kind

@@ -703,3 +703,57 @@ func TestTheDaemonCanSayWhatItIsRunningWith(t *testing.T) {
 		t.Errorf("an empty setting trails off instead of showing as empty:\n%s", said)
 	}
 }
+
+func TestAMachineWithSettingsOfItsOwnSaysSo(t *testing.T) {
+	// The count of machines answers none of the question a per-machine setting
+	// raises. "Why is this one attaching when the default is ssh" is asked
+	// about one machine, and the answer is one line in the file that the
+	// report of the settings above it cannot contain.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	written := `{"hosts":[
+		{"target":"plain"},
+		{"target":"ci","mode":"attach","placement":"tab"},
+		{"target":"old","disabled":true}
+	]}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(written), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := cfg.Describe()
+	joined := strings.Join(said, "\n")
+
+	if !strings.Contains(joined, `config: host "ci": mode = "attach", placement = "tab"`) {
+		t.Errorf("a machine with settings of its own does not report them:\n%s", joined)
+	}
+	// Turned off is a setting like any other, and the one most likely to
+	// explain a machine that is not there at all.
+	if !strings.Contains(joined, `config: host "old": disabled = true`) {
+		t.Errorf("a machine turned off in the file does not say so:\n%s", joined)
+	}
+	// A machine taking everything from above has nothing worth a line, and
+	// most machines are that. A line each would bury the ones that differ.
+	if strings.Contains(joined, `host "plain"`) {
+		t.Errorf("a machine with nothing of its own takes a line anyway:\n%s", joined)
+	}
+	// Which machine it is, rather than something set about it.
+	if strings.Contains(joined, "target = ") {
+		t.Errorf("target is reported as though somebody had overridden it:\n%s", joined)
+	}
+
+	// After the settings, not sorted in among them: "host" falls between
+	// herdr_bin and hosts, where it reads as another setting.
+	settingsEnd := -1
+	for i, line := range said {
+		if strings.HasPrefix(line, "config: host ") && settingsEnd == -1 {
+			settingsEnd = i
+		}
+		if settingsEnd != -1 && !strings.HasPrefix(line, "config: host ") {
+			t.Errorf("a setting is listed after the machines, at line %d:\n%s", i, joined)
+			break
+		}
+	}
+}

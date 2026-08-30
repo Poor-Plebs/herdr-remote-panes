@@ -125,7 +125,12 @@ starts. Every setting and its value, with the ones you chose marked:
 config: max_mirrors = 32
 config: mode = "ssh"
 config: placement = "split" (config.json)
+config: host "ci": mode = "attach"
 ```
+
+A machine with settings of its own gets a line too, which is where "why is this
+one attaching" is answered. Machines taking everything from above are left out,
+so what is listed is what differs.
 
 The file itself does not answer this. It holds what you chose, and everything
 absent takes the default of whatever version is installed — so a setting that
