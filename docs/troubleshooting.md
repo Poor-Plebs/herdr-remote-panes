@@ -145,7 +145,9 @@ How soon it stops depends on the cause. A failure that could pass on its own —
 refused, timed out, no route, a machine still booting — gets a second attempt.
 One that needs you gets none, because the second attempt would fail in exactly
 the same way: a changed host key, a name that does not resolve, a key the
-machine will not take. Those stop at once and say what to go and fix.
+machine will not take, a key file this side that anybody can read, or a machine
+old enough that it and your ssh have no algorithm in common. Those stop at once
+and say what to go and fix.
 
 A machine whose terminals keep dropping stops the same way, after a couple of
 replacements that did not last either.

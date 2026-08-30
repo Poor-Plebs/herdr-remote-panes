@@ -2790,9 +2790,20 @@ func TestEveryNamedFailureIsReachableAndDecided(t *testing.T) {
 		"Permission denied (":                 true,
 		"Permission denied, please try again": true,
 		"Too many authentication failures":    true,
-		"Name or service not known":           true,
-		"Could not resolve hostname":          true,
-		remote.ErrNoHerdr.Error():             true,
+		// A file this side, with a mode nobody but its owner may have. Nothing
+		// about waiting changes it, and ssh refuses to use the key until it
+		// does.
+		"are too open": true,
+		// The machine and this ssh have no algorithm in common. Both ends are
+		// what they are until somebody names an older one for that machine.
+		"Unable to negotiate with": true,
+		// A typo in ~/.ssh/config. It fails before the network is reached, so
+		// it fails the same way for every machine and for as long as the line
+		// is there.
+		"Bad configuration option":   true,
+		"Name or service not known":  true,
+		"Could not resolve hostname": true,
+		remote.ErrNoHerdr.Error():    true,
 
 		"Connection refused":          false,
 		"Connection timed out":        false,
@@ -4082,5 +4093,56 @@ func TestEverythingTheDaemonRemembersIsCleanedBySomething(t *testing.T) {
 	if found < 7 {
 		t.Fatalf("found %d things the daemon remembers, which is fewer than there "+
 			"are -- this is checking nothing", found)
+	}
+}
+
+func TestAFailureIsNamedByTheFirstThingThatWentWrong(t *testing.T) {
+	// ssh prints everything it has to say, so one failure can carry two
+	// causes. Which of them the machine is reported by is the order of the
+	// table, and getting it wrong sends somebody to the wrong file.
+	//
+	// The messages here are the shapes OpenSSH actually produces, taken from
+	// the strings in the binary rather than remembered.
+	unprotected := errors.New(
+		"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n" +
+			"@         WARNING: UNPROTECTED PRIVATE KEY FILE!          @\n" +
+			"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n" +
+			"Permissions 0644 for '/home/u/.ssh/id_rsa' are too open.\n" +
+			"It is required that your private key files are NOT accessible by others.\n" +
+			"This private key will be ignored.\n" +
+			"Load key \"/home/u/.ssh/id_rsa\": bad permissions\n" +
+			"u@bot: Permission denied (publickey).")
+	// A key with a mode anybody can read is a file here, fixed with chmod. A
+	// key the machine will not take is a different file, in a different place,
+	// belonging to a different problem -- and this message contains the words
+	// for both.
+	if got := summarizeError(unprotected); !strings.Contains(got, "chmod") {
+		t.Errorf("a key file readable by others is reported as %q", got)
+	}
+
+	// The family of algorithm mismatches, all inside one sentence and all with
+	// one remedy. What the machine offered instead stays in the full message,
+	// which is what the log has.
+	for _, message := range []string{
+		"Unable to negotiate with 10.0.0.5 port 22: no matching host key type found. Their offer: ssh-rsa",
+		"Unable to negotiate with 10.0.0.5 port 22: no matching key exchange method found. Their offer: diffie-hellman-group1-sha1",
+		"Unable to negotiate with 10.0.0.5 port 22: no matching cipher found. Their offer: aes128-cbc",
+	} {
+		got := summarizeError(errors.New(message))
+		if !strings.Contains(got, "no algorithms in common") {
+			t.Errorf("%q was summarised as %q", message, got)
+		}
+		// Naming the file to change is the whole use of it: the machine is not
+		// going to get newer.
+		if !strings.Contains(got, "~/.ssh/config") {
+			t.Errorf("the summary does not say where to fix it: %q", got)
+		}
+	}
+
+	// And a typo in the config, which fails before the network is reached and
+	// so fails the same way for every machine at once.
+	typo := errors.New("/home/u/.ssh/config: line 12: Bad configuration option: Prot 22")
+	if got := summarizeError(typo); !strings.Contains(got, "~/.ssh/config") {
+		t.Errorf("a bad line in the ssh config is reported as %q", got)
 	}
 }

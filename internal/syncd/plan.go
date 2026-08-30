@@ -544,6 +544,13 @@ type knownFailure struct {
 var knownFailures = []knownFailure{
 	{"REMOTE HOST IDENTIFICATION HAS CHANGED", "host key changed — verify it, then update ~/.ssh/known_hosts", true},
 	{"Host key verification failed", "host key not accepted", true},
+	// Before the two below, and the order is the whole of it: ssh prints this
+	// warning and then carries on to fail with "Permission denied
+	// (publickey)", so both are in the one message. Matched the other way
+	// round, a file this side that anybody can read is reported as a key the
+	// machine would not take -- which is a different file, in a different
+	// place, belonging to a different problem.
+	{"are too open", "your key file can be read by others — chmod 600 it", true},
 	// Matched on ssh's own wording rather than on the words alone. What is
 	// classified here is the whole failure text, and that carries whatever the
 	// command on the machine printed: "bash: /opt/herdr: Permission denied" is
@@ -561,6 +568,23 @@ var knownFailures = []knownFailure{
 	// fall through and print the raw ssh line instead.
 	{"Operation timed out", "connection timed out", false},
 	{"Network is unreachable", "no network — check you are online", false},
+	// Every one of "no matching host key type found", "no matching key
+	// exchange method found", "no matching cipher found" and the MAC one
+	// arrives inside this sentence, and they have one remedy between them:
+	// name the older algorithm for that machine. Which of them it was, and
+	// what the machine offered instead, is in the line this came from, which
+	// is in the log.
+	//
+	// It is a machine older than the ssh in front of it, which is not a rare
+	// arrangement -- an appliance, a router, a server nobody has touched in
+	// years -- and every attempt fails identically until a person changes
+	// something.
+	{"Unable to negotiate with", "no algorithms in common — the machine is older than this ssh; " +
+		"set KexAlgorithms or HostKeyAlgorithms for it in ~/.ssh/config", true},
+	// A typo in ~/.ssh/config, which stops ssh before it reaches the network,
+	// so it fails the same way for every machine at once. Which line is in the
+	// message.
+	{"Bad configuration option", "~/.ssh/config has a setting ssh does not know", true},
 	// Checked before the generic closed/reset rules below: the real message
 	// is usually "kex_exchange_identification: Connection closed by remote
 	// host", and the specific cause is the more useful of the two.
