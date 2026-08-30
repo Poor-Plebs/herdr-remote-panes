@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -252,5 +253,51 @@ func TestADaemonWritesDownWhatItIsRunningWith(t *testing.T) {
 	if !strings.Contains(body, "d.logConfig()") {
 		t.Error("Run no longer says what the daemon is running with, so the log " +
 			"has the version and the socket and nothing about the settings")
+	}
+}
+
+func TestHerdrBeingAwayIsSaidOnceRatherThanEveryPass(t *testing.T) {
+	// A pass comes round every couple of seconds and cannot do anything
+	// without listing the panes here, so a Herdr that has gone away fails
+	// every one of them. Said each time, that is thirty lines a minute into
+	// the file somebody opens to find out what happened -- which rolls at a
+	// quarter of a megabyte, so a couple of hours of it takes the history with
+	// it. The complaint fills the place the explanation would have been.
+	//
+	// Rereading the config already says its complaint once per distinct
+	// message, for the same reason and on the same schedule.
+	here := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	d.dispatch(Command{Cmd: "connect", Host: "bot"})
+	settle(t, d, here, 1)
+
+	logged := captureLog(t)
+	broken := filepath.Join(t.TempDir(), "herdr")
+	if err := os.WriteFile(broken, []byte("#!/bin/sh\necho 'gone' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_BIN_PATH", broken)
+
+	for i := 0; i < 5; i++ {
+		d.reconcileOnce()
+	}
+	if n := strings.Count(logged.String(), "skipping this pass"); n != 1 {
+		t.Errorf("five passes with Herdr away said so %d times:\n%s", n, logged.String())
+	}
+
+	// And said when it comes back. A log that only ever reports trouble leaves
+	// somebody unable to tell a problem that is over from one that is still
+	// going -- which matters most here, where the complaint stops being
+	// repeated precisely when nothing has changed.
+	t.Setenv("HERDR_BIN_PATH", fakeHerdrBin)
+	d.reconcileOnce()
+	if !strings.Contains(logged.String(), "passes are running again") {
+		t.Errorf("Herdr came back and nothing said so:\n%s", logged.String())
+	}
+
+	// Not said twice, either: it is news once.
+	d.reconcileOnce()
+	if n := strings.Count(logged.String(), "passes are running again"); n != 1 {
+		t.Errorf("recovery was reported %d times", n)
 	}
 }

@@ -62,6 +62,11 @@ type Daemon struct {
 	// this daemon started with being unreadable, and the menu says so.
 	configStamp   time.Time
 	configReadErr string
+	// skipReason is the last complaint about not being able to list panes
+	// here, so a Herdr that is away is said once rather than once a pass. Two
+	// seconds between passes is thirty lines a minute, and daemon.log is the
+	// thing that would explain what happened.
+	skipReason string
 
 	// configErr records a configuration that could not be read. The daemon
 	// still runs, so the menu and actions work and can say what is wrong,
@@ -2136,8 +2141,28 @@ func (d *Daemon) reconcileOnce() {
 
 	local, err := herdrcli.PaneList()
 	if err != nil {
-		log.Printf("skipping this pass: %v", err)
+		// Once per distinct complaint, as rereading the config already does.
+		// Herdr being away is not a thing that resolves between one pass and
+		// the next, and a pass comes round every couple of seconds: said every
+		// time, the file that would say what happened is filled by the saying.
+		d.mu.Lock()
+		newly := d.skipReason != err.Error()
+		d.skipReason = err.Error()
+		d.mu.Unlock()
+		if newly {
+			log.Printf("skipping this pass: %v", err)
+		}
 		return
+	}
+	// And said when it stops, because a log that only ever reports trouble
+	// leaves somebody reading it unable to tell a problem that is over from
+	// one that is still going.
+	d.mu.Lock()
+	recovered := d.skipReason != ""
+	d.skipReason = ""
+	d.mu.Unlock()
+	if recovered {
+		log.Print("passes are running again")
 	}
 	index := newPaneIndex(local)
 
