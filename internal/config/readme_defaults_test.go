@@ -233,3 +233,31 @@ func TestTheProseAgreesWithTheTableAboutDefaults(t *testing.T) {
 			"checking nothing; the wording it looks for has changed")
 	}
 }
+
+func TestTheFloorOnPollingIsTheOneTheDocsGive(t *testing.T) {
+	// The settings table says poll_interval "cannot go below 500ms". That is a
+	// constant written out in prose, and the one place a reader checks before
+	// deciding whether the number they want is allowed.
+	//
+	// Everything else about this floor is derived: the warning names
+	// MinPollInterval, and the value used when a setting is refused is
+	// Defaults(). The table alone is a copy, and a copy of a constant is a
+	// thing that stops being one.
+	docs := docsText(t)
+	floor := MinPollInterval.String()
+
+	// Every telling of it, not merely one that is right. A page saying the
+	// floor is somewhere else is worse than no page saying it: the check that
+	// asked whether the right sequence appeared anywhere in these documents
+	// passed for a week while two pages disagreed about the retry backoff.
+	said := regexp.MustCompile("go below `([^`]+)`").FindAllStringSubmatch(docs, -1)
+	if len(said) == 0 {
+		t.Fatal("no page says how low poll_interval may go, and one used to")
+	}
+	for _, m := range said {
+		if m[1] != floor {
+			t.Errorf("a page says poll_interval cannot go below %s, and the floor is %s",
+				m[1], floor)
+		}
+	}
+}
