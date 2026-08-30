@@ -116,6 +116,13 @@ func TestAPaneToldNothingUsefulSaysSo(t *testing.T) {
 	// These come from the daemon, so a pane missing one of them means a bug
 	// here rather than anything a user did -- and a pane that exits without
 	// saying why is a pane nobody can debug.
+	//
+	// It is also five seconds of a terminal somebody is looking at, which is
+	// how this was noticed: a real session has two of these in its log, and
+	// what they said was the name of an environment variable. So both halves
+	// are held here. The name, for whoever comes to debug it; and what
+	// happened and what to do instead, for whoever is looking at the pane and
+	// has never heard of HRP_TARGET.
 	t.Run("no machine", func(t *testing.T) {
 		recordingSSH(t)
 		t.Setenv(EnvTarget, "")
@@ -127,6 +134,10 @@ func TestAPaneToldNothingUsefulSaysSo(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), EnvTarget) {
 			t.Errorf("the error is %q, which does not name what was missing", err)
+		}
+		if !strings.Contains(err.Error(), "from the menu") {
+			t.Errorf("the error is %q, which tells somebody watching the pane "+
+				"what is wrong and not what to do about it", err)
 		}
 	})
 
@@ -143,6 +154,10 @@ func TestAPaneToldNothingUsefulSaysSo(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), EnvTerminal) {
 			t.Errorf("the error is %q, which does not name what was missing", err)
+		}
+		if !strings.Contains(err.Error(), "from the menu") {
+			t.Errorf("the error is %q, which tells somebody watching the pane "+
+				"what is wrong and not what to do about it", err)
 		}
 	})
 }

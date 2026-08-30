@@ -185,7 +185,20 @@ func bridge() error {
 
 	target := os.Getenv(EnvTarget)
 	if target == "" {
-		return fmt.Errorf("%s must be set", EnvTarget)
+		// Seen twice in a real session, five seconds each time, saying the
+		// name of an environment variable to somebody who has never heard of
+		// it. This runs as a pane's command and is given the machine in its
+		// environment; without one there is nothing it could connect to, and
+		// nothing it can do about that from here.
+		//
+		// The likely cause is Herdr bringing a pane back by running its
+		// command again without what the daemon set alongside it. The daemon
+		// notices such a pane and replaces it, so the thing to do is wait or
+		// open one from the menu -- neither of which "HRP_TARGET must be set"
+		// suggests.
+		return fmt.Errorf("this terminal was started without a machine to connect to "+
+			"(%s is unset), which happens when a pane is restored without its "+
+			"settings; open a terminal from the menu instead", EnvTarget)
 	}
 	client := remote.NewWithBin(target, os.Getenv(EnvSession), os.Getenv(EnvBin))
 
@@ -196,7 +209,13 @@ func bridge() error {
 
 	terminal := os.Getenv(EnvTerminal)
 	if terminal == "" {
-		return fmt.Errorf("%s must be set", EnvTerminal)
+		// The same, one step further along: the machine is known and which of
+		// its terminals to mirror is not. A pane that is mirroring is always
+		// told both.
+		return fmt.Errorf("this terminal knows which machine it belongs to and not "+
+			"which terminal on it to mirror (%s is unset), which happens when a pane "+
+			"is restored without its settings; open a terminal from the menu instead",
+			EnvTerminal)
 	}
 
 	switch config.Mode(os.Getenv(EnvMode)) {
