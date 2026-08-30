@@ -500,3 +500,53 @@ func TestEverythingTheDaemonReportsReachesSomebody(t *testing.T) {
 		}
 	}
 }
+
+// TestBothCommandRunnersGuardInTheSameOrder holds the two places that run a
+// command to the same sequence of checks.
+//
+// One runs ssh, the other runs the Herdr on this machine, and neither can use
+// the other's error type -- so they are two functions doing one job. The capped
+// package exists because of exactly this: its own comment says the twenty lines
+// it replaced were written twice and got backwards in one of them.
+//
+// The order is the part worth holding. A command that printed too much is
+// stopped, which is what makes its deadline pass -- so a runner that asked
+// about the deadline first would blame a timeout for an overrun, and report a
+// machine as slow when it was loud. Both ask about the overrun first today.
+func TestBothCommandRunnersGuardInTheSameOrder(t *testing.T) {
+	inRoot(t)
+
+	// The checks each runner makes, in the order it makes them.
+	order := func(file, from string) []string {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := string(raw)
+		start := strings.Index(body, from)
+		if start < 0 {
+			t.Fatalf("%s no longer has %q, so this is checking nothing", file, from)
+		}
+		body = body[start:]
+		if end := strings.Index(body[1:], "\nfunc "); end >= 0 {
+			body = body[:end]
+		}
+		steps := regexp.MustCompile(`WaitDelay|Overran|DeadlineExceeded|cmd\.Run\(\)`)
+		var seen []string
+		for _, step := range steps.FindAllString(body, -1) {
+			if len(seen) == 0 || seen[len(seen)-1] != step {
+				seen = append(seen, step)
+			}
+		}
+		return seen
+	}
+
+	ssh := order(filepath.Join("internal", "remote", "exec.go"), "func runCommand(")
+	local := order(filepath.Join("internal", "herdrcli", "herdrcli.go"), "func Run(")
+	if len(ssh) < 4 {
+		t.Fatalf("the ssh runner makes %d of these checks and it makes four: %v", len(ssh), ssh)
+	}
+	if !reflect.DeepEqual(ssh, local) {
+		t.Errorf("the two runners guard in different orders:\n  ssh:   %v\n  local: %v", ssh, local)
+	}
+}
