@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -315,5 +316,79 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 	if !answering(current, 20*time.Second) {
 		t.Errorf("nothing answers after upgrading from %s.\nnew daemon said:\n%s\n%s daemon said:\n%s",
 			previous, replacingSaid, previous, oldSaid)
+	}
+}
+
+func TestEveryVersionTheDocsNameIsOneThatExists(t *testing.T) {
+	// The docs say when things changed -- "it did not until v0.4.0", "requires
+	// Herdr 0.8.0+" -- and a release named there is a thing somebody can go and
+	// install, or look for in the list of releases to see what else came with
+	// it. One that was never cut sends them looking for nothing.
+	//
+	// This is not hypothetical. The README credited the config reread to
+	// v0.3.2, which does not exist and never did; the change shipped in v0.4.0.
+	// Nothing minded, because a version in prose is a string.
+	inRoot(t)
+
+	// The tags come from git, a subprocess, so nothing ties this result to the
+	// documents it is about.
+	cacheDependsOnTheTree(t, ".", func(name string) bool {
+		return strings.HasSuffix(name, ".md")
+	})
+	if err := exec.Command("git", "rev-parse", "--git-dir").Run(); err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatal("no git repository in CI, so no tag list; actions/checkout needs fetch-depth: 0")
+		}
+		t.Skip("not a git repository, so there is no list of releases to check against")
+	}
+	out, err := exec.Command("git", "tag").Output()
+	if err != nil {
+		t.Fatalf("listing tags: %v", err)
+	}
+	released := map[string]bool{}
+	for _, tag := range strings.Fields(string(out)) {
+		released[tag] = true
+	}
+	if len(released) < 5 {
+		t.Fatalf("found %d releases, which is fewer than there are; this is checking nothing",
+			len(released))
+	}
+
+	// The one in the manifest is allowed whether or not it is tagged: at the
+	// moment a release is prepared the version is written down and the tag
+	// does not exist yet, which is the same reason the version test holds the
+	// README and the manifest to each other rather than to the tag.
+	manifest, err := os.ReadFile("herdr-plugin.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := regexp.MustCompile(`(?m)^version = "([^"]+)"`).FindSubmatch(manifest); m != nil {
+		released["v"+string(m[1])] = true
+	}
+
+	pages, err := DocPages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Herdr's versions are written bare and are not this project's to have
+	// tagged, so only the v-prefixed ones are ours to answer for.
+	named := regexp.MustCompile(`\bv[0-9]+\.[0-9]+\.[0-9]+\b`)
+	checked := 0
+	for _, page := range pages {
+		raw, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, found := range named.FindAllString(string(raw), -1) {
+			checked++
+			if !released[found] {
+				t.Errorf("%s names %s, which was never released",
+					filepath.Base(page), found)
+			}
+		}
+	}
+	if checked < 3 {
+		t.Fatalf("found %d versions named in the docs, which is fewer than there "+
+			"are; this is checking nothing", checked)
 	}
 }

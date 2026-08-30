@@ -298,7 +298,7 @@ does, so anything running in one of those is lost. Worth finishing what you are
 doing first.
 
 **Editing the config takes effect on the next pass**, within a couple of
-seconds, with no restart. It did not until v0.3.2: the daemon read the file
+seconds, with no restart. It did not until v0.4.0: the daemon read the file
 when it started and again only as a side effect of pressing `m`, so every other
 setting was fixed for the session while the file plainly said otherwise. If you
 set `placement` to `tab` and watched terminals keep arriving as splits, that is

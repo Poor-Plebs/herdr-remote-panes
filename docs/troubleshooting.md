@@ -417,10 +417,25 @@ hosts "bot" and "ci" are both called "build", so they would share one space and 
 A machine answers to its `label`, or to its target when it has none, so this
 also happens when one machine's label is another machine's target.
 
-**A change to `config.json` has not taken effect.** The daemon reads that file
-when it starts, so edits apply from the next time Herdr starts. Toggling
-mirroring from the menu also rereads it, which is a quick way to apply an edit
-— though it applies every other pending edit in the file at the same time.
+**A change to `config.json` has not taken effect.** The daemon rereads the file
+when it changes, so an edit applies on the next pass — a couple of seconds, no
+restart. That has been true since v0.4.0; before it, the file was read at
+startup and again only as a side effect of pressing `m`.
+
+So if an edit has not taken effect, the reread is not what to look at:
+
+- The file did not parse. Saving is not atomic in every editor and a pass comes
+  round every couple of seconds, so a file caught half-written is skipped and
+  the settings in use stay the ones that last parsed. `daemon.log` says so,
+  once per distinct complaint rather than once per pass.
+- The setting is not what it looks like. A misspelled key is dropped in
+  silence by the decoder, and a value that parses and means nothing takes the
+  default; both are reported in the menu, in `status`, and in the log.
+- It is a different file. The one being read is
+  `$(herdr plugin config-dir poorplebs.remote-panes)/config.json`.
+
+`daemon.log` settles all three: it opens with every setting and its value, and
+marks the ones that came from the file.
 
 
 **An update does not seem to have changed anything.** Installing replaces the
