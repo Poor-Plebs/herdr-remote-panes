@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,6 +93,11 @@ type Config struct {
 	// silently substituting a value leaves the file saying one thing and the
 	// plugin doing another, with nothing to look at.
 	ignored []string
+	// written holds the settings the file names, which is not the same as the
+	// settings in force: everything absent takes its default, and since a
+	// first run writes nothing down that is most of them. Kept so that a value
+	// somebody chose can be told from one that came with the version.
+	written []string
 	// unknown holds settings read from the file that mean nothing here. Not a
 	// setting itself, so it is neither read from nor written back to JSON.
 	unknown []string
@@ -250,6 +256,7 @@ func Load() (Config, error) {
 	cfg = cfg.normalized()
 	cfg.unknown = unknownKeys(raw)
 	cfg.ignored = ignoredValues(raw)
+	cfg.written = writtenKeys(raw)
 	return cfg, nil
 }
 
@@ -435,6 +442,84 @@ func ignoredValues(raw []byte) []string {
 		cap, Defaults().MaxMirrors)}
 }
 
+// writtenKeys is the settings the file names that this version knows about.
+//
+// The other half of unknownKeys, from the same parse: that one reports what was
+// written and means nothing, this one what was written and means something.
+// Which matters because the file no longer says what is in force -- it holds
+// what somebody chose, and everything else takes its default.
+func writtenKeys(raw []byte) []string {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return nil
+	}
+	known := jsonNames(reflect.TypeOf(Config{}))
+	var out []string
+	for name := range top {
+		if known[name] {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Describe is every setting and what it is set to, for the daemon's log.
+//
+// The file used to be the answer to "what is this running with", holding every
+// setting at its value. It no longer does -- it holds what somebody chose --
+// so something else has to, and the log is where the troubleshooting page
+// already sends people.
+func (c Config) Describe() []string {
+	fromFile := map[string]bool{}
+	for _, name := range c.written {
+		fromFile[name] = true
+	}
+
+	shape := reflect.TypeOf(c)
+	value := reflect.ValueOf(c)
+	out := make([]string, 0, shape.NumField())
+	for i := 0; i < shape.NumField(); i++ {
+		name, _, _ := strings.Cut(shape.Field(i).Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		field := value.Field(i)
+		if name == "hosts" {
+			// A list of machines rather than a setting, and the machines
+			// themselves are reported one by one as they are connected to.
+			out = append(out, fmt.Sprintf("config: %s = %d", name, field.Len()))
+			continue
+		}
+		// A pointer is a setting that can be turned off explicitly, so that
+		// leaving it out and setting it to false stay different things.
+		if field.Kind() == reflect.Ptr {
+			if field.IsNil() {
+				continue
+			}
+			field = field.Elem()
+		}
+		// Quoted, so that a setting left empty is visibly empty rather than a
+		// line that trails off, and so that the two spaces in the workspace
+		// formats are countable -- they are there on purpose, and a report
+		// nobody can check the spacing in is no use for the one question these
+		// get asked.
+		shown := fmt.Sprintf("%v", field.Interface())
+		if field.Kind() == reflect.String {
+			shown = strconv.Quote(field.String())
+		}
+		line := fmt.Sprintf("config: %s = %s", name, shown)
+		if fromFile[name] {
+			// Which of them somebody chose is the question being asked when a
+			// setting is not doing what the README says it does.
+			line += " (config.json)"
+		}
+		out = append(out, line)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // unknownKeys lists settings in the file that mean nothing here.
 //
 // Anything not recognised is dropped in silence by the decoder, so a setting
@@ -571,6 +656,7 @@ func loadRaw() (Config, error) {
 	// file unchanged and still wrong.
 	cfg.unknown = unknownKeys(raw)
 	cfg.ignored = ignoredValues(raw)
+	cfg.written = writtenKeys(raw)
 	return cfg, nil
 }
 

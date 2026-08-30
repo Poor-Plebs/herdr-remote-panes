@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -206,5 +207,50 @@ func TestADeadControlSocketSaysSoRatherThanLookingHealthy(t *testing.T) {
 	}
 	if listener.calls() < 2 {
 		t.Errorf("gave up after %d attempts, which is not a grace period", listener.calls())
+	}
+}
+
+func TestADaemonWritesDownWhatItIsRunningWith(t *testing.T) {
+	// The config file used to be the answer to this, holding every setting at
+	// its value. It now holds what somebody chose, so the log has to carry it
+	// -- and the log is where the troubleshooting page already sends people
+	// when a setting is not doing what the README says it does.
+	//
+	// Which settings are covered, and how they are marked, is
+	// TestTheDaemonCanSayWhatItIsRunningWith over in config. This is the half
+	// that lives here: that a daemon starting says any of it at all.
+	logged := captureLog(t)
+
+	New(machineConfig("bot")).logConfig()
+
+	said := logged.String()
+	for _, want := range []string{"config: placement = ", "config: mode = ", "config: max_mirrors = "} {
+		if !strings.Contains(said, want) {
+			t.Errorf("a daemon starting does not say %q:\n%s", want, said)
+		}
+	}
+
+	// And that starting is when it happens. Calling the method proves the
+	// method works, which is not the claim: Run is where a daemon says this,
+	// and deleting the one line there leaves everything above passing. Run
+	// cannot be called from a test -- it returns on a signal, and a daemon
+	// left running would put its polling into the goroutine count that
+	// TestNothingIsLeftRunning measures -- so the call is read instead.
+	source, err := os.ReadFile("daemon.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	start := strings.Index(body, "func (d *Daemon) Run() error {")
+	if start < 0 {
+		t.Fatal("Run is no longer declared here, so this is checking nothing")
+	}
+	body = body[start:]
+	if end := strings.Index(body[1:], "\nfunc "); end >= 0 {
+		body = body[:end]
+	}
+	if !strings.Contains(body, "d.logConfig()") {
+		t.Error("Run no longer says what the daemon is running with, so the log " +
+			"has the version and the socket and nothing about the settings")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -57,14 +58,43 @@ func TestTheREADMEShowsAWarningThisCanProduce(t *testing.T) {
 		t.Fatal("no config warning is shown in the README; this test needs rewriting")
 	}
 
+	// Two different things are logged with this prefix, and the docs show
+	// both: a warning about a setting, which is prose, and the report of what
+	// the daemon is running with, which is "name = value". Telling them apart
+	// by shape rather than by which block they are in, since either can be
+	// shown anywhere and a reader meets them the same way in a log.
+	settings := regexp.MustCompile(`^[a-z_]+ = `)
+	names := jsonNames(reflect.TypeOf(Config{}))
+
+	checked := 0
 	for _, m := range shown {
-		example := strings.TrimSpace(m[1])
-		// The quoted value is whatever somebody typed; the wording around it is
-		// what this produces.
-		shape := regexp.MustCompile(`"[^"]*"`).ReplaceAllString(example, "%q")
-		if !strings.Contains(string(source), shape) {
-			t.Errorf("the README shows a warning this does not produce:\n  %s", example)
+		for _, line := range strings.Split(strings.TrimSpace(m[1]), "\n") {
+			example := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "config: "))
+			if example == "" {
+				continue
+			}
+			checked++
+			if settings.MatchString(example) {
+				// A line from Describe. What it has to be is a setting that
+				// exists: an example naming one that does not is the same kind
+				// of stale as a warning nothing produces.
+				name, _, _ := strings.Cut(example, " ")
+				if !names[name] {
+					t.Errorf("the docs show %q being reported, and there is no such setting", name)
+				}
+				continue
+			}
+			// The quoted value is whatever somebody typed; the wording around
+			// it is what this produces.
+			shape := regexp.MustCompile(`"[^"]*"`).ReplaceAllString(example, "%q")
+			if !strings.Contains(string(source), shape) {
+				t.Errorf("the README shows a warning this does not produce:\n  %s", example)
+			}
 		}
+	}
+	if checked < 2 {
+		t.Fatalf("only %d example lines were checked, which is fewer than the docs "+
+			"show -- this is checking nothing", checked)
 	}
 }
 

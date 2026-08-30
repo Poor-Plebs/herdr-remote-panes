@@ -486,6 +486,19 @@ func (d *Daemon) rememberedHosts() []string {
 	return planSnapshotRestore(remembered, connected, disabled)
 }
 
+// logConfig writes down what the daemon is running with.
+//
+// The config file used to answer this: it held every setting at its value. It
+// now holds what somebody chose, so a question like "why is placement split
+// for me" has nowhere else to go -- and the troubleshooting page already sends
+// people to this log. A healthy daemon says nothing else for the rest of its
+// life, so the cost is once.
+func (d *Daemon) logConfig() {
+	for _, line := range d.config().Describe() {
+		log.Print(line)
+	}
+}
+
 // Run starts the control listener and blocks, polling every connected host.
 func (d *Daemon) Run() error {
 	socket, err := ControlSocket()
@@ -501,6 +514,8 @@ func (d *Daemon) Run() error {
 	// reads the same whether the socket was bound or the binding is what went
 	// wrong -- and "no running daemon" is the report either way.
 	log.Printf("listening on %s", socket)
+
+	d.logConfig()
 	// Closing is the whole of it: a Unix listener unlinks the path it bound.
 	//
 	// Removing the file separately as well is a hazard now that a replacing

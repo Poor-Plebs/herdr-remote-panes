@@ -652,3 +652,54 @@ func TestAFirstRunWritesNothingItWouldHaveToLiveWith(t *testing.T) {
 			again.Placement, again.ShouldAutoStart())
 	}
 }
+
+func TestTheDaemonCanSayWhatItIsRunningWith(t *testing.T) {
+	// The file used to answer this by holding every setting at its value. It
+	// now holds what somebody chose, so "why is placement split for me" has
+	// nowhere else to go -- and that question is asked precisely when a
+	// setting is not doing what the README says the default is.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	written := `{"placement":"split","close_propagates":false,"hosts":[{"target":"bot"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(written), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := strings.Join(cfg.Describe(), "\n")
+
+	// Every setting, whether or not the file mentions it: what is in force is
+	// the question, and most of it will not be in the file.
+	shape := reflect.TypeOf(Config{})
+	for i := 0; i < shape.NumField(); i++ {
+		name, _, _ := strings.Cut(shape.Field(i).Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		if !strings.Contains(said, "config: "+name+" = ") {
+			t.Errorf("%s is not in what the daemon says it is running with:\n%s", name, said)
+		}
+	}
+
+	// And which of them somebody chose, which is the whole point: a value that
+	// came with the version and one written down behave the same and mean
+	// completely different things when something is wrong.
+	if !strings.Contains(said, `config: placement = "split" (config.json)`) {
+		t.Errorf("a setting from the file is not marked as coming from it:\n%s", said)
+	}
+	if !strings.Contains(said, `config: mode = "ssh"`) || strings.Contains(said, `config: mode = "ssh" (config.json)`) {
+		t.Errorf("a setting nobody wrote down is reported as chosen:\n%s", said)
+	}
+	// A setting turned off on purpose is written down as much as one turned
+	// on, and the pointer is what keeps those apart.
+	if !strings.Contains(said, "config: close_propagates = false (config.json)") {
+		t.Errorf("a setting turned off in the file is not shown as such:\n%s", said)
+	}
+	// Quoted, so an empty setting is visibly empty and the two spaces in the
+	// workspace formats can be counted.
+	if !strings.Contains(said, `config: herdr_bin = ""`) {
+		t.Errorf("an empty setting trails off instead of showing as empty:\n%s", said)
+	}
+}

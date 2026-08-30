@@ -118,6 +118,20 @@ else are reported when the daemon starts, in `status`, and in the menu:
 config: mode "shh" is not one of ssh, attach or observe; machines default to a plain SSH terminal
 ```
 
+**What is it actually running with?** `daemon.log` says, once, when the daemon
+starts. Every setting and its value, with the ones you chose marked:
+
+```
+config: max_mirrors = 32
+config: mode = "ssh"
+config: placement = "split" (config.json)
+```
+
+The file itself does not answer this. It holds what you chose, and everything
+absent takes the default of whatever version is installed — so a setting that
+is not doing what the table above says is either written down, and this shows
+it, or it is not, and the default has moved.
+
 **A machine says `unreachable, not retrying`.** It stops rather than
 reconnecting forever in the background. Fix the cause, then pick it from the
 menu again to retry.
