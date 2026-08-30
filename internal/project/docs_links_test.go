@@ -3,6 +3,7 @@ package project
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -374,5 +375,67 @@ func TestWhatTheDocsSayAMachineSaysIsSomethingItCanSay(t *testing.T) {
 	if checked < 5 {
 		t.Fatalf("matched %d quoted messages, which is fewer than the page quotes; "+
 			"this is checking nothing", checked)
+	}
+}
+
+// TestTheMenuAndTheListingBlameTheSameThingFirst holds two orderings to each
+// other.
+//
+// A machine can mirror fewer terminals than it has for four reasons at once: a
+// name shared with another space, the mirror cap, terminals the scope leaves
+// alone, and terminals that would not mirror. Both the listing and the menu
+// pick one to show -- the listing has room for a sentence, the menu for two
+// words -- and the wording differs on purpose. The choice must not.
+//
+// A machine blamed on the scope in one and on the cap in the other sends
+// somebody to change the wrong thing, and nobody sees both at once to notice.
+// They did differ: the listing had these first, in the order it explains, and
+// the menu's copy swapped two and left the fourth out. Nothing compared them.
+//
+// Read rather than run, because the menu's rendering is unexported and the
+// package that could call it is the one it imports.
+func TestTheMenuAndTheListingBlameTheSameThingFirst(t *testing.T) {
+	inRoot(t)
+
+	causes := regexp.MustCompile(`SharedName|AtCapacity|OutsideShared|Unmirrored`)
+	order := func(file, from string) []string {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := string(raw)
+		start := strings.Index(body, from)
+		if start < 0 {
+			t.Fatalf("%s no longer has %q, so this is checking nothing", file, from)
+		}
+		body = body[start:]
+		if end := strings.Index(body[1:], "\nfunc "); end >= 0 {
+			body = body[:end]
+		}
+		// Comments name these too, and in prose rather than in order.
+		var code strings.Builder
+		for _, line := range strings.Split(body, "\n") {
+			if trimmed := strings.TrimSpace(line); !strings.HasPrefix(trimmed, "//") {
+				code.WriteString(line + "\n")
+			}
+		}
+		var seen []string
+		for _, name := range causes.FindAllString(code.String(), -1) {
+			if len(seen) == 0 || seen[len(seen)-1] != name {
+				seen = append(seen, name)
+			}
+		}
+		return seen
+	}
+
+	listing := order(filepath.Join("internal", "cli", "client.go"), "func statusLines(")
+	menu := order(filepath.Join("internal", "picker", "picker.go"), "func whyTheCountIsLow(")
+	if len(menu) < 4 {
+		t.Fatalf("the menu weighs %d of these, and there are four: %v", len(menu), menu)
+	}
+	if !reflect.DeepEqual(listing, menu) {
+		t.Errorf("the listing blames these in the order %v and the menu %v; a machine "+
+			"is then sent to two different settings depending on where it is read",
+			listing, menu)
 	}
 }

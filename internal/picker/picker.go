@@ -65,6 +65,10 @@ type Entry struct {
 	// this machine's terminals live under. Nothing fails; the terminals in the
 	// others cannot be seen, and the only sign is a count that reads low.
 	SharedName bool
+	// Unmirrored is how many of the machine's terminals were given up on after
+	// failing to mirror. They are still open over there, and this is the only
+	// one of these that is a failure rather than a setting doing what it says.
+	Unmirrored int
 }
 
 // Connect asks the daemon to connect to a machine.
@@ -458,6 +462,7 @@ func collect() ([]Entry, string) {
 			entry.NoHerdr = info.NoHerdr
 			entry.AtCapacity = info.AtCapacity
 			entry.SharedName = info.SharedName
+			entry.Unmirrored = info.Unmirrored
 			entry.Mirroring = info.Mirroring
 			entry.GaveUp = info.GaveUp
 			entry.Reason = shortReason(info.LastError)
@@ -642,21 +647,26 @@ func isMirroring(entry Entry) bool {
 // mirrors that failed, and `status` prints all of them for somebody who wants
 // the rest.
 //
-// The most permanent first, since that is the one whose absence would mislead.
-// A terminal the scope skips arrives by moving it; one past the limit or in a
-// space with a name it shares does not arrive at all until a setting changes.
+// The order is `status`'s, which had these first and gives the reasoning: most
+// wrong first, the ones that mean no mirroring at all before the ones that mean
+// some of it. Two lists in one order rather than two orders, because a machine
+// answering one way here and another there is worse than either order being
+// wrong -- and the menu's own first ordering differed from it by a place, which
+// nothing noticed until the two were compared.
 //
 // Keeping it to one slot is also what keeps the state column inside its width.
 // Every column this takes comes off the machine names, for every machine, on
 // every row -- including the machines with nothing wrong with them.
 func whyTheCountIsLow(entry Entry) []span {
 	switch {
-	case entry.AtCapacity:
-		return []span{{" · at limit", yellow}}
 	case entry.SharedName:
 		return []span{{" · shared name", yellow}}
+	case entry.AtCapacity:
+		return []span{{" · at limit", yellow}}
 	case entry.OutsideShared > 0:
 		return []span{{fmt.Sprintf(" · %d elsewhere", entry.OutsideShared), dim}}
+	case entry.Unmirrored > 0:
+		return []span{{fmt.Sprintf(" · %d unmirrored", entry.Unmirrored), yellow}}
 	}
 	return nil
 }
@@ -802,6 +812,7 @@ func widestStatus() int {
 		{Connected: true, Mirroring: true, ReadOnly: true, Mirrors: 99, OutsideShared: 99},
 		{Connected: true, Mirroring: true, ReadOnly: true, Mirrors: 99, AtCapacity: true},
 		{Connected: true, Mirroring: true, ReadOnly: true, Mirrors: 99, SharedName: true},
+		{Connected: true, Mirroring: true, ReadOnly: true, Mirrors: 99, Unmirrored: 99},
 		{Connected: true, Terminals: 99, NoHerdr: true},
 		{Connected: true, Terminals: 99},
 		{Connected: true, NoHerdr: true},

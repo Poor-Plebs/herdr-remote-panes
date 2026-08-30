@@ -383,7 +383,8 @@ for every machine, not one per machine:
 }
 ```
 
-**A machine says `n could not be mirrored`.** Those were tried and failed —
+**A machine says `n could not be mirrored`.** In the menu it reads
+`connected · 3 mirrored · 2 unmirrored`. Those were tried and failed —
 a terminal that went away between being listed and being opened, or a machine
 that stopped answering partway through a pass. Unlike the limit above, trying
 again may work: connect to the machine again from the menu. The daemon's log

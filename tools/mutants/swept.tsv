@@ -16,6 +16,7 @@
 ./internal/cli (since v0.4.4)	2026-08-30	9	9	0	0
 ./internal/config	2026-08-29	137	135	2	0
 ./internal/config (since v0.4.4)	2026-08-30	20	20	0	0
+./internal/config (since v0.4.5)	2026-08-30	3	3	0	0
 ./internal/herdrcli	2026-08-29	60	60	0	0
 ./internal/logfile	2026-08-28	9	9	0	0
 ./internal/logfile (since v0.4.4)	2026-08-30	2	2	0	0
