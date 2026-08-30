@@ -1578,6 +1578,22 @@ func (d *Daemon) disconnect(target string) error {
 		}
 	}
 	state.client.Close()
+	// What was remembered about the space this machine had. Only forgetWorkspace
+	// cleared these, and it runs when Herdr says a space is gone -- not when the
+	// plugin stops managing one that is still there.
+	//
+	// rootPanes is the one that bites. It holds the placeholder pane Herdr
+	// makes with a new workspace, to be closed once a mirror has taken its
+	// place; disconnecting before that leaves the record behind, the space
+	// empties and closes itself, and Herdr hands the id to something else.
+	// Then this finds a space by that id, puts a mirror in it, retires the
+	// "placeholder" -- and closes a pane in somebody's space that it never
+	// opened. The comment on forgetWorkspace warns about exactly this and the
+	// path it warns on was not the only one.
+	if state.workspaceID != "" {
+		delete(d.markedWorkspaces, state.workspaceID)
+		delete(d.rootPanes, state.workspaceID)
+	}
 	d.mu.Unlock()
 
 	// Outside the lock, which persist takes for itself. Immediately, though, so

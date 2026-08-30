@@ -2243,10 +2243,15 @@ var perPaneFields = []string{
 	"labels", "reportedAgents", "shellPanes", "shellPlacement",
 }
 
-// perWorkspaceFields is what the daemon itself remembers per space, cleared by
-// forgetWorkspace. The daemon's own state had no list of this kind, and
-// rootPanes was cleared only where the placeholder was deliberately retired --
-// never on the path that says the space is gone.
+// perWorkspaceFields is what the daemon itself remembers per space. The
+// daemon's own state had no list of this kind, and rootPanes was cleared only
+// where the placeholder was deliberately retired -- never on the path that says
+// the space is gone.
+//
+// Two paths clear these now, and the second was missing for as long as the
+// first: forgetWorkspace, when Herdr says a space is gone, and disconnect, when
+// the plugin stops managing one that is still there. A list of what is
+// remembered says nothing about how many ways there are to stop needing it.
 var perWorkspaceFields = []string{
 	"markedWorkspaces", "rootPanes",
 }
@@ -4180,5 +4185,41 @@ func TestAMachineWithNoHerdrSessionSaysThatMuch(t *testing.T) {
 	// exactly this -- giving up here gives up on a machine that was working.
 	if planGiveUp(0, err) {
 		t.Error("a machine whose session may still be starting is given up on")
+	}
+}
+
+func TestDisconnectingForgetsTheSpaceItWasUsing(t *testing.T) {
+	// Herdr opens a placeholder shell with every new workspace, and this
+	// remembers it so it can be closed once a mirror has taken its place.
+	// Disconnecting before that happens used to leave the record behind.
+	//
+	// Then: the space empties and closes itself, Herdr gives the id to another
+	// space, this finds that space by id, puts a mirror in it, retires the
+	// "placeholder" -- and closes a pane in somebody's space that it never
+	// opened. forgetWorkspace warns about a recycled id belonging to a pane
+	// somebody is in; it just was not the only way to get one.
+	d := New(machineConfig("bot"))
+	state := &hostSync{
+		host:        config.Host{Target: "bot"},
+		workspaceID: "w5",
+		client:      remote.New("bot", "hub"),
+	}
+	d.hosts["bot"] = state
+	d.rootPanes["w5"] = "w5:p1"
+	d.markedWorkspaces["w5"] = workspaceMark{label: "bot"}
+
+	if err := d.disconnect("bot"); err != nil {
+		t.Fatal(err)
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if root, ok := d.rootPanes["w5"]; ok {
+		t.Errorf("the placeholder %q is still remembered for a space this no longer "+
+			"has, so a space that takes the id next is one pane short", root)
+	}
+	if _, ok := d.markedWorkspaces["w5"]; ok {
+		t.Error("the mark put on that space is still remembered, so a space that " +
+			"takes the id next is thought to be marked already")
 	}
 }
