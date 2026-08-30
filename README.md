@@ -64,6 +64,21 @@ description = "connect to a machine"
 Pick keys Herdr does not already use — a clash is silent, and the built-in wins.
 `prefix+shift+r`, for instance, is `reload_config`.
 
+Or take the key. A built-in bound to nothing gives it up, which is how
+`prefix+c` — the obvious key for a new tab — can open one on the machine you are
+looking at instead:
+
+```toml
+[keys]
+new_tab = ""
+```
+
+Those go directly under `[keys]`, and `[keys]` has to come before the
+`[[keys.command]]` blocks. Written after one, a line like `new_tab = ""` becomes
+part of that block rather than a setting: TOML reads it as another field of the
+binding above it. Nothing complains, because the file is valid — and the
+built-in keeps the key.
+
 `herdr config check` will not tell you: a config binding a plugin action to a
 key Herdr already owns is reported as `config: ok`. What you see instead is a
 key that does the built-in thing, and nothing anywhere saying why. If a binding
