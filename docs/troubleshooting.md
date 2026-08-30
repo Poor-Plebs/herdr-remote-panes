@@ -223,7 +223,7 @@ so a pass costs about what the slowest of them costs — but one machine slow
 enough still makes a pass last longer than the gap between passes, at which
 point one starts as the last ends and the daemon is never idle.
 
-It says so when that happens, once, in `mirror.log`:
+It says so when that happens, once, in `daemon.log`:
 
 ```
 a pass took 2.31s, longer than the 2s between passes: machines are polled
@@ -236,7 +236,7 @@ gives the gap back — machines are then noticed a little later, which is the
 trade — and so does not mirroring the machine it names. A plain SSH machine is
 never polled, so it costs nothing here however many you have.
 
-**Which Herdr is a machine running?** `mirror.log` says, once, when the
+**Which Herdr is a machine running?** `daemon.log` says, once, when the
 machine is connected:
 
 ```
@@ -352,7 +352,7 @@ any other: it can fail. When it does, the tab has gone here and the work is
 still running there.
 
 Nothing else will tell you. The terminal is recorded as one you closed, so it
-is not mirrored again and does not come back on its own. `mirror.log` has a
+is not mirrored again and does not come back on its own. `daemon.log` has a
 line naming the machine and the terminal:
 
 ```
