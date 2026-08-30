@@ -1072,24 +1072,34 @@ func (d *Daemon) findRemoteWorkspace(state *hostSync) (bool, error) {
 		}
 	}
 
-	for _, ws := range workspaces {
-		if ws.Label == label || sameWorkspace(ws.Label, config.HubName()) {
-			if duplicates > 1 && !state.duplicateSpaces {
-				// Not "give this machine its own": remote_workspace_format is
-				// one setting for every machine, so advice to set it per
-				// machine sends somebody looking for a key that is not there.
-				log.Printf("%s: %d spaces there are called %q; using %s. "+
-					"Rename the others there, or change remote_workspace_format, "+
-					"which names this space on every machine you connect to",
-					state.host.Target, duplicates, label, ws.WorkspaceID)
-			}
-			state.duplicateSpaces = duplicates > 1
-			state.remoteWorkspaceID = ws.WorkspaceID
-			return true, nil
-		}
+	// The exact name first, and only then the tolerant one. Both in a single
+	// test meant whichever space came back first won, so a machine holding one
+	// space named exactly this and another that merely matches loosely settled
+	// on whichever Herdr happened to list first.
+	//
+	// The loose one can be another hub's: the markers come off greedily, so a
+	// space called "☁  ☁laptop" -- another machine's, whose name starts with
+	// the glyph -- comes down to "laptop" and answers to a hub of that name.
+	// Mirroring into somebody else's space is the thing the duplicate warning
+	// below exists to save people from, and this could arrange it without two
+	// spaces sharing a name at all.
+	chosen, found := pickRemoteWorkspace(workspaces, label, config.HubName())
+	if !found {
+		state.duplicateSpaces = false
+		return false, nil
 	}
-	state.duplicateSpaces = false
-	return false, nil
+	if duplicates > 1 && !state.duplicateSpaces {
+		// Not "give this machine its own": remote_workspace_format is one
+		// setting for every machine, so advice to set it per machine sends
+		// somebody looking for a key that is not there.
+		log.Printf("%s: %d spaces there are called %q; using %s. "+
+			"Rename the others there, or change remote_workspace_format, "+
+			"which names this space on every machine you connect to",
+			state.host.Target, duplicates, label, chosen.WorkspaceID)
+	}
+	state.duplicateSpaces = duplicates > 1
+	state.remoteWorkspaceID = chosen.WorkspaceID
+	return true, nil
 }
 
 // ensureRemoteWorkspace finds or creates the workspace on the remote machine
@@ -3364,6 +3374,32 @@ func pickWorkspace(workspaces []herdrcli.Workspace, label, hostLabel string, the
 		}
 	}
 	return "", false
+}
+
+// pickRemoteWorkspace chooses the space on a machine that belongs to this one,
+// preferring the one carrying the name exactly.
+//
+// Two passes, as pickWorkspace does for the local side. Written as one test of
+// "exact or loose" it was whichever Herdr listed first, so a machine holding a
+// space named exactly this and another that merely matches loosely settled on
+// either -- and the loose one can be another hub's, since the markers come off
+// greedily and "☁  ☁laptop" comes down to "laptop".
+//
+// Mirroring into somebody else's space is what the duplicate warning beside
+// this exists to save people from. Reaching it without two spaces sharing a
+// name was not a route anybody had thought of.
+func pickRemoteWorkspace(workspaces []herdrcli.Workspace, label, hub string) (herdrcli.Workspace, bool) {
+	for _, ws := range workspaces {
+		if ws.Label == label {
+			return ws, true
+		}
+	}
+	for _, ws := range workspaces {
+		if sameWorkspace(ws.Label, hub) {
+			return ws, true
+		}
+	}
+	return herdrcli.Workspace{}, false
 }
 
 // spacesOfOtherMachines is the name every other configured machine's space

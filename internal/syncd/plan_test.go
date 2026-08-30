@@ -4278,3 +4278,42 @@ func TestTheSpacesLeftAloneAreEveryOtherMachinesBothWays(t *testing.T) {
 		}
 	}
 }
+
+func TestTheSpaceOnAMachineIsChosenByItsExactNameFirst(t *testing.T) {
+	// The local lookup has always made two passes: the name exactly, then the
+	// name with a marker taken off. The far side asked both at once, so
+	// whichever space Herdr listed first won.
+	//
+	// That matters because the loose rule takes markers off greedily, and
+	// "☁  ☁laptop" -- another machine's space, whose owner's name starts with
+	// the glyph this plugin decorates spaces with -- comes down to "laptop".
+	// Listed first, it was taken in preference to the space actually called
+	// "☁  laptop", and this machine's terminals went into somebody else's
+	// space. Mirroring into somebody else's space is what the warning beside
+	// this exists to save people from.
+	const hub = "laptop"
+	label := "☁  " + hub
+
+	// The loose match first in the list, the exact one after it.
+	list := []herdrcli.Workspace{
+		{WorkspaceID: "w1", Label: "☁  ☁laptop"},
+		{WorkspaceID: "w2", Label: label},
+	}
+	if got, ok := pickRemoteWorkspace(list, label, hub); !ok || got.WorkspaceID != "w2" {
+		t.Errorf("chose %+v, and the space named exactly this is w2", got)
+	}
+
+	// The tolerance itself is untouched: with nothing named exactly, a space
+	// under another marker is still this machine's, which is what keeps
+	// terminals where they are when remote_workspace_format changes.
+	loose := []herdrcli.Workspace{{WorkspaceID: "w3", Label: "⚠  " + hub}}
+	if got, ok := pickRemoteWorkspace(loose, label, hub); !ok || got.WorkspaceID != "w3" {
+		t.Errorf("a space named by an older format was not recognised: %+v", got)
+	}
+
+	// And nothing that is nobody's business of ours.
+	none := []herdrcli.Workspace{{WorkspaceID: "w4", Label: "~"}, {WorkspaceID: "w5", Label: "☁  someone-else"}}
+	if got, ok := pickRemoteWorkspace(none, label, hub); ok {
+		t.Errorf("claimed %+v, which is not this machine's space", got)
+	}
+}
