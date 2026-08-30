@@ -114,6 +114,25 @@ func markLive(paneID, terminalID string) func() {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		return func() {}
 	}
+
+	// Whatever failed on this pane id, it was not this. A mark is left behind
+	// when a pane goes without the daemon noticing -- a crash, a machine
+	// losing power, a session that never came back -- and Herdr hands out pane
+	// ids afresh each time it starts, so the next session's third pane is
+	// w1:p3 again and inherits it.
+	//
+	// Prune clears marks no live pane claims, which is every stale one except
+	// the kind that matters: an id that has been reused is claimed, so its
+	// mark is kept. Then the pane is closed on purpose, the daemon reads the
+	// mark left by something else entirely, and opens it again -- which is the
+	// one thing closing a pane is supposed to be able to stop.
+	//
+	// Here rather than in the daemon because this is the moment it stops being
+	// true: something is running on this id now. The mark this run writes is
+	// written after the bridge returns and after the deferred clean-up below,
+	// so nothing here can erase it.
+	ClearFailed(paneID)
+
 	return func() { _ = os.Remove(path) }
 }
 

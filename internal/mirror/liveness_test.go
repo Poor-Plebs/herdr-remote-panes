@@ -585,3 +585,43 @@ func TestWithoutAStateDirectoryNothingIsWrittenAnywhere(t *testing.T) {
 		t.Errorf("with no state directory, %v was written into the working directory", names)
 	}
 }
+
+func TestAPaneStartingIsNotAPaneThatFailed(t *testing.T) {
+	// Herdr hands out pane ids afresh each time it starts, so the third pane
+	// of the next session is w1:p3 again. A mark left behind by a pane that
+	// went without the daemon noticing -- a crash, a machine losing power, a
+	// session that never came back -- is then wearing the id of something
+	// else entirely.
+	//
+	// Prune clears marks no live pane claims, which covers every stale one
+	// except this: a reused id *is* claimed, so its mark survives. Then the
+	// pane is closed on purpose, the daemon reads a mark left by a different
+	// pane in a different session, and opens it again -- which is the one
+	// thing closing a pane is meant to stop.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	MarkFailed("w1:p3", "ssh: connection reset by peer")
+	if !Failed("w1:p3") {
+		t.Fatal("the fixture did not leave a mark, so this proves nothing")
+	}
+
+	// A bridge starting on that id.
+	done := markLive("w1:p3", "term_abc")
+	if Failed("w1:p3") {
+		t.Error("a pane that has just started is still marked as having failed, " +
+			"so closing it will bring it back")
+	}
+	if reason := FailureReason("w1:p3"); reason != "" {
+		t.Errorf("the reason left by something else survives as %q", reason)
+	}
+	done()
+
+	// And the mark this run writes is its own business: reportFailure runs
+	// after the bridge returns, which is after the clean-up above, so nothing
+	// here erases it.
+	MarkFailed("w1:p3", "host key changed")
+	if !Failed("w1:p3") {
+		t.Error("a pane that failed after running is not marked as having failed")
+	}
+}
