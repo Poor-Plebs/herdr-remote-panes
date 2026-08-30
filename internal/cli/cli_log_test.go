@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -103,5 +104,50 @@ func TestNoStateDirectoryMeansNoLogRatherThanACrash(t *testing.T) {
 	if closeLog := daemonLog(); closeLog != nil {
 		closeLog()
 		t.Error("a log was opened with nowhere to put it")
+	}
+}
+
+func TestTheDaemonLogSaysWhichDaySomethingHappened(t *testing.T) {
+	// daemon.log is kept until it rolls at a quarter of a megabyte, which for a
+	// healthy daemon is days. With the time alone, the page runs backwards
+	// every time Herdr is restarted on a later day -- a real one here has
+	// "stopping on terminated" at 21:29 directly above "starting" at 12:24 --
+	// and placing an entry means counting restarts.
+	//
+	// mirror.log, written beside it, has carried a full timestamp all along.
+	var written strings.Builder
+	restore := log.Flags()
+	prefix := log.Prefix()
+	out := log.Writer()
+	t.Cleanup(func() {
+		log.SetFlags(restore)
+		log.SetPrefix(prefix)
+		log.SetOutput(out)
+	})
+
+	// Set the way Main sets them, so this is about what a daemon writes rather
+	// than about the defaults.
+	log.SetFlags(log.Ldate | log.Ltime)
+	log.SetOutput(&written)
+	log.Print("listening on /somewhere/control-hub.sock")
+
+	line := written.String()
+	if !regexp.MustCompile(`\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}`).MatchString(line) {
+		t.Errorf("a log line reads %q, without a date on it", strings.TrimSpace(line))
+	}
+}
+
+func TestMainAsksForTheDateOnEveryLine(t *testing.T) {
+	// The flags above are set once, in Main, and the test beside this one sets
+	// them itself -- so it would pass with the line in Main deleted. Read
+	// instead: Main cannot be called from a test without it taking over the
+	// process's logger and arguments for the rest of the run.
+	source, err := os.ReadFile("cli.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), "log.SetFlags(log.Ldate | log.Ltime)") {
+		t.Error("the daemon no longer asks for the date, so daemon.log covers days " +
+			"of restarts with nothing saying which day any of them was")
 	}
 }

@@ -56,8 +56,8 @@ it to run at all, which the same log shows as a `build` entry.
 A daemon that came up says so, once:
 
 ```
-herdr-remote-panes: 21:11:17 herdr-remote-panes 200aec5 starting
-herdr-remote-panes: 21:11:17 listening on /home/you/.local/state/herdr/.../control-hub.sock
+herdr-remote-panes: 2026/08/27 21:11:17 herdr-remote-panes 200aec5 starting
+herdr-remote-panes: 2026/08/27 21:11:17 listening on /home/you/.local/state/.../control-hub.sock
 ```
 
 It says nothing else for the rest of its life unless something goes wrong, so
@@ -73,9 +73,9 @@ burst. A burst clears, so it is retried for two minutes; if it does not clear,
 the log says so and what to do:
 
 ```
-herdr-remote-panes: 09:02:41 could not accept on the control socket: accept unix
+herdr-remote-panes: 2026/08/27 09:02:41 could not accept on the control socket: accept unix
   /home/you/.local/state/.../control-hub.sock: too many open files (retrying)
-herdr-remote-panes: 09:04:41 giving up on the control socket after 2m0s -- mirroring
+herdr-remote-panes: 2026/08/27 09:04:41 giving up on the control socket after 2m0s -- mirroring
   continues, but no action can reach this daemon; stop it and start it again
 ```
 

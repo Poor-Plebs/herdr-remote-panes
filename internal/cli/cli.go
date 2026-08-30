@@ -31,7 +31,14 @@ import (
 // for being asked for something that is not a command, 1 for a command that
 // was understood and did not work.
 func Main() int {
-	log.SetFlags(log.Ltime)
+	// The date as well as the time. daemon.log is kept until it rolls at a
+	// quarter of a megabyte, which is days of a healthy daemon, and the times
+	// alone then run backwards down the page every time Herdr is restarted on
+	// a later day -- "stopping" at 21:29 above "starting" at 12:24. Anyone
+	// working out when something happened has to count restarts to place it.
+	//
+	// mirror.log, written beside it, has carried a full timestamp all along.
+	log.SetFlags(log.Ldate | log.Ltime)
 	log.SetPrefix("herdr-remote-panes: ")
 	// Every command's failure is reported through this logger, and a failure
 	// that came from a machine carries whatever that machine said. Herdr shows
