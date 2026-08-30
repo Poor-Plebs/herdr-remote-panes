@@ -168,3 +168,70 @@ func TestTheDocumentationReadsAsOne(t *testing.T) {
 			"so nothing beyond it was read", len(text), len(readme))
 	}
 }
+
+func TestAPlanIsNotDocumentationOfWhatThisDoes(t *testing.T) {
+	// Several packages read DocsText to ask whether something is explained to
+	// somebody who went looking: a state the menu can show, a warning the
+	// config can produce, a setting with a default. docs/pairing.md is a design
+	// for something not built, kept so that decisions already taken are not
+	// argued again -- and a phrase found only there is documented nowhere a
+	// reader can act on. The guard would pass and the reader would be lost.
+	inRoot(t)
+
+	plan, err := os.ReadFile(filepath.Join("docs", "pairing.md"))
+	if err != nil {
+		t.Skip("no pairing plan to check against; this test needs rewriting")
+	}
+	if !Planned(plan) {
+		t.Fatal("docs/pairing.md is no longer recognised as a plan, so its text " +
+			"now counts as documentation of what this does")
+	}
+
+	text, err := DocsText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A phrase from the plan and from nowhere else. If this ever appears in a
+	// page about what the plugin does, it stops being a test of anything and
+	// wants replacing rather than deleting.
+	const fromThePlan = "takeover war"
+	if !strings.Contains(string(plan), fromThePlan) {
+		t.Fatalf("the plan no longer says %q, so this is checking nothing", fromThePlan)
+	}
+	if strings.Contains(text, fromThePlan) {
+		t.Error("what the documentation says includes a page about something not built")
+	}
+
+	// The pages themselves still name it: the links in it are checked like any
+	// other page's, and it is linked from the README on purpose.
+	pages, err := DocPages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	named := false
+	for _, page := range pages {
+		if filepath.Base(page) == "pairing.md" {
+			named = true
+		}
+	}
+	if !named {
+		t.Error("DocPages has stopped naming the plan, so nothing checks its links")
+	}
+}
+
+func TestOnlyAWholePageAboutSomethingUnbuiltCounts(t *testing.T) {
+	// Searched for loosely, the word appears in prose about features that do
+	// exist -- and a page dropped from the documentation is a page whose
+	// promises nothing holds any more.
+	for _, page := range [][]byte{
+		[]byte("# Mirroring\n\nThis was planned for a while and is now built.\n"),
+		[]byte("# Settings\n\nStatus is reported per machine. Planned work is elsewhere.\n"),
+	} {
+		if Planned(page) {
+			t.Errorf("a page about something built is being dropped from the docs:\n%s", page)
+		}
+	}
+	if !Planned([]byte("# Pairing\n\nStatus: **planned, nothing built.**\n")) {
+		t.Error("a page declaring itself a plan is being read as documentation")
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 )
 
 // Root is the top of the repository: the directory holding go.mod.
@@ -62,7 +63,31 @@ func DocPages() ([]string, error) {
 	return append([]string{filepath.Join(root, "README.md")}, pages...), nil
 }
 
-// DocsText is every page from [DocPages] joined together.
+// Planned reports a page that describes something not built yet.
+//
+// docs/pairing.md is a design written down so that decisions already taken are
+// not argued again, and it says so at the top. It is documentation of the
+// project rather than of the plugin, and that difference matters to everything
+// which reads the docs to find out what this does.
+func Planned(page []byte) bool {
+	return plannedMarker.Match(page)
+}
+
+// plannedMarker is held to a shape rather than searched for loosely, so that a
+// page using the word in a sentence somewhere is not mistaken for one that is
+// entirely about something unbuilt.
+var plannedMarker = regexp.MustCompile(`(?mi)^Status: \*\*planned`)
+
+// DocsText is every page from [DocPages] that describes what the plugin does,
+// joined together.
+//
+// Pages about what it does not do yet are left out. Several guards read this to
+// ask whether something is explained to somebody who went looking -- a menu
+// state, a warning, a setting -- and a page describing a feature that does not
+// exist answers none of those. Being satisfied by one is worse than failing:
+// the phrase is then documented nowhere a reader can act on.
+//
+// [DocPages] still names every page, which is what the link checking wants.
 //
 // Held in one place because five packages were each keeping their own copy of
 // this, which is the arrangement where one of them quietly stops matching the
@@ -77,6 +102,9 @@ func DocsText() (string, error) {
 		raw, err := os.ReadFile(page)
 		if err != nil {
 			return "", err
+		}
+		if Planned(raw) {
+			continue
 		}
 		all = append(all, raw...)
 		all = append(all, '\n')
