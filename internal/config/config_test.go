@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -584,5 +585,70 @@ func TestAConfigWrittenByAnOlderVersionKeepsTheDefaultsOfItsDay(t *testing.T) {
 	// it came to be there.
 	if problems := cfg.Problems(); len(problems) > 0 {
 		t.Errorf("a config pinning an old default is reported as faulty: %v", problems)
+	}
+}
+
+func TestAFirstRunWritesNothingItWouldHaveToLiveWith(t *testing.T) {
+	// Writing every setting at its default made them discoverable in the file
+	// and pinned them there: nothing downstream can tell a value somebody
+	// chose from a value this wrote for them, so a default improved later
+	// reached new installs only. placement went from "split" to "follow" in
+	// v0.4.0 and reached nobody who was already here.
+	//
+	// So the file records what somebody chose, which on a first run is
+	// nothing.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	written, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatalf("a first run left no config file at all: %v", err)
+	}
+	shape := reflect.TypeOf(Config{})
+	for i := 0; i < shape.NumField(); i++ {
+		name, _, _ := strings.Cut(shape.Field(i).Tag.Get("json"), ",")
+		// hosts is the one thing written: it is what somebody came to the file
+		// to add, and an empty list says where it goes.
+		if name == "" || name == "-" || name == "hosts" {
+			continue
+		}
+		if strings.Contains(string(written), `"`+name+`"`) {
+			t.Errorf("a first run writes %s down, which pins whatever it means today:\n%s",
+				name, written)
+		}
+	}
+
+	// What is run has to be unchanged by any of that. Every setting absent
+	// from the file takes the current default, and the four that default to on
+	// are the ones this could quietly get wrong -- a bool that is missing and
+	// a bool that is false are the same bool, which is why they are pointers.
+	if cfg.Placement != Defaults().Placement || cfg.MaxMirrors != Defaults().MaxMirrors {
+		t.Errorf("a first run is not running the defaults: placement %q, max_mirrors %d",
+			cfg.Placement, cfg.MaxMirrors)
+	}
+	for what, on := range map[string]bool{
+		"close_propagates":  cfg.ShouldClosePropagate(),
+		"capture_new_panes": cfg.ShouldCaptureNewPanes(),
+		"auto_start":        cfg.ShouldAutoStart(),
+		"takeover":          cfg.ShouldTakeover(),
+	} {
+		if !on {
+			t.Errorf("%s is off on a first run, having been left out of the file", what)
+		}
+	}
+
+	// And reading back what was just written gives the same thing, which is
+	// the half that would break if an absent setting were read as its zero.
+	again, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Placement != cfg.Placement || !again.ShouldAutoStart() {
+		t.Errorf("the file this wrote does not read back the same: placement %q, auto_start %v",
+			again.Placement, again.ShouldAutoStart())
 	}
 }

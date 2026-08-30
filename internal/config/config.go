@@ -211,7 +211,22 @@ func Load() (Config, error) {
 	raw, err := readConfigFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		cfg := Defaults()
-		if err := Save(cfg); err != nil {
+		// An empty configuration rather than the defaults written out. What is
+		// run is the same either way -- everything absent is filled from
+		// Defaults on the way in -- but what is on disk is the difference
+		// between a file that records what somebody chose and one that records
+		// what this version happened to think in the month they installed it.
+		//
+		// Nothing downstream can tell those apart, so writing them pins them:
+		// placement defaulted to "split" until v0.4.0, and everyone who
+		// installed before that kept it through the change that existed to
+		// take it away from them.
+		//
+		// Files already written are left alone. This is not something to
+		// correct on somebody's behalf -- a value in the file may well be one
+		// they chose -- so it fixes what happens next rather than what
+		// happened.
+		if err := saveRaw(Config{Hosts: []Host{}}); err != nil {
 			return cfg, err
 		}
 		return cfg, nil
