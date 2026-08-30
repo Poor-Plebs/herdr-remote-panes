@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // visible strips the escape sequences so a line can be measured as drawn.
@@ -1803,5 +1804,62 @@ func TestTheQuestionSaysHowMuchThereIsToLose(t *testing.T) {
 		if tt.terminals == 1 && strings.Contains(question, "1 terminals") {
 			t.Errorf("the question says %q for one terminal", "1 terminals")
 		}
+	}
+}
+
+func TestTheMenuStaysDrawableWithAVeryLongSSHConfig(t *testing.T) {
+	// The menu is redrawn on every keypress, and two of the things it does
+	// before drawing a row look at every machine rather than the screenful
+	// being shown: the name column is measured across all of them so it does
+	// not change width as the list scrolls, and the names are made all at once
+	// so that two which shorten to the same text can be told apart. Both are
+	// deliberate, and both are linear.
+	//
+	// What this holds is the shape rather than the speed. A time on its own
+	// says as much about the machine running it as about the code: the first
+	// try here bounded a redraw at half a second, and a quadratic version of
+	// the duplicate check -- comparing every name with every other rather than
+	// counting them in a map -- came in at a tenth of that and passed.
+	//
+	// So it measures the same work at two sizes and compares the two. Machine
+	// speed divides out: whatever the hardware, quadrupling the list costs a
+	// linear pass about two and a half times, and a quadratic one twelve to
+	// sixteen depending on where the sizes fall. Both were measured, with and
+	// without the race detector, before the eight between them was chosen --
+	// and the sizes are the smallest that kept the two apart, since this runs
+	// on every push.
+	drawn := func(n int) time.Duration {
+		entries := make([]Entry, n)
+		for i := range entries {
+			entries[i] = Entry{
+				Target:     fmt.Sprintf("deploy@machine%05d", i),
+				Configured: i%3 == 0,
+				Connected:  i%2 == 0,
+				Mirroring:  i%5 == 0,
+				Mirrors:    i % 7,
+			}
+		}
+		start := time.Now()
+		const redraws = 5
+		for i := 0; i < redraws; i++ {
+			// A different position each time, as scrolling gives: ten redraws
+			// of one screenful would not exercise a window computed once.
+			_ = render(entries, i*n/redraws, 100, 40, "")
+		}
+		return time.Since(start) / redraws
+	}
+
+	// Neither is an absurd config. A host block per machine in a fleet, or a
+	// generated one, reaches the first easily; sshconfig will read a megabyte
+	// of such a file, which is some twenty thousand of them.
+	small, large := drawn(2000), drawn(8000)
+	if small <= 0 {
+		t.Skip("the clock here cannot measure a redraw, so there is nothing to compare")
+	}
+	if grew := float64(large) / float64(small); grew > 8 {
+		t.Errorf("four times the machines costs %.1f times the redraw (%s to %s), "+
+			"which is not a slower machine but a different shape of work: "+
+			"something now looks at every machine once per machine",
+			grew, small, large)
 	}
 }
