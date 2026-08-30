@@ -224,9 +224,19 @@ func planLabels(panes []herdrcli.Pane) map[string]string {
 // exists to hold one machine's terminals, that is nearly always a mistake: the
 // pane is on the wrong host. It is replaced with a terminal on that machine.
 //
-// Only panes noticed for the first time are replaced. A pane already seen and
-// left alone stays left alone, so nothing is fought over repeatedly, and a
-// pane deliberately kept there survives a daemon restart.
+// Only panes noticed for the first time are replaced, so nothing is fought over
+// repeatedly -- a pane still there after this has had its turn is left where it
+// is rather than being moved again two seconds later, forever.
+//
+// One way to be in that state: the replacement could not be opened, so the
+// local pane was never closed. That record is this daemon's and is not written
+// down, so the next one reconsiders the pane and tries again -- which is what
+// should happen to a capture that failed because the machine was briefly away.
+//
+// It does mean nothing here outlives a restart. The comment above this used to
+// say a pane deliberately kept survives one; it does not, and there is no
+// deliberate keeping to survive -- a pane that this is allowed to move is moved
+// the moment it is seen.
 func planStrayPane(capture, isMirror, seenBefore bool) bool {
 	if !capture || isMirror || seenBefore {
 		return false
