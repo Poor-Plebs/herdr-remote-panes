@@ -383,9 +383,9 @@ that stopped answering partway through a pass. Unlike the limit above, trying
 again may work: connect to the machine again from the menu. The daemon's log
 says what each one said.
 
-**A machine says `more than one space has this machine's name`.** In the menu
-it reads `connected · 2 mirrored · shared name`. Two spaces on
-that machine answer to the name this plugin looks for, so which one you get
+**A machine says `more than one space on the machine has this machine's name`.**
+In the menu it reads `connected · 2 mirrored · shared name`. Two spaces on that
+machine answer to the name this plugin looks for, so which one you get
 depends on which came back first — and it need not be the same one each time,
 or the same one the other end picked. Nothing fails; you simply cannot see
 what is in the other space, and the count reads lower than what is there.

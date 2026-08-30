@@ -308,3 +308,71 @@ func staticRuns(t *testing.T, dir string) []string {
 func flattened(s string) string {
 	return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
 }
+
+// TestWhatTheDocsSayAMachineSaysIsSomethingItCanSay holds each entry's heading
+// to the message it is about.
+//
+// The troubleshooting page is a list of things this prints, each quoted so it
+// can be recognised and searched for. A quotation that has drifted is worse
+// than no entry at all: somebody looks for it in their own output, does not
+// find it, and concludes the page is about some other problem.
+//
+// One had. The entry for two spaces sharing a name quoted "more than one space
+// has this machine's name" and the message is "more than one space on the
+// machine has this machine's name" -- three words that are not a substring, so
+// searching for the documented phrase found nothing.
+func TestWhatTheDocsSayAMachineSaysIsSomethingItCanSay(t *testing.T) {
+	inRoot(t)
+
+	var source strings.Builder
+	for _, dir := range []string{"internal/cli", "internal/syncd", "internal/picker", "internal/mirror"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			raw, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			source.Write(raw)
+		}
+	}
+	// Adjacent literals joined, as elsewhere: every message long enough to
+	// quote is written across several lines.
+	said := regexp.MustCompile(`"\s*\+\s*"`).ReplaceAllString(source.String(), "")
+
+	pages, err := DocPages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := regexp.MustCompile("(?m)^\\*\\*[^*]*? says `([^`]+)`")
+	checked := 0
+	for _, page := range pages {
+		raw, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range claim.FindAllStringSubmatch(string(raw), -1) {
+			quoted := m[1]
+			// The page writes a count as "n" where the message has a verb, so
+			// that the entry reads as a sentence rather than a format string.
+			// Both spellings are tried rather than one being preferred.
+			if strings.Contains(said, quoted) ||
+				strings.Contains(said, strings.Replace(quoted, "n ", "%d ", 1)) {
+				checked++
+				continue
+			}
+			t.Errorf("%s says a machine says %q, and nothing here says that",
+				filepath.Base(page), quoted)
+		}
+	}
+	if checked < 5 {
+		t.Fatalf("matched %d quoted messages, which is fewer than the page quotes; "+
+			"this is checking nothing", checked)
+	}
+}
