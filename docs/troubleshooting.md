@@ -84,6 +84,28 @@ Restarting Herdr is the fix. If it recurs, the descriptor limit is the lever —
 its own pane process holding its own connection, so that setting bounds
 something other than what the daemon has open.
 
+**Machines are missing from the menu.** The menu offers everything in
+`~/.ssh/config` as well as everything you have configured, so a machine absent
+from it is usually a file that was not read rather than a machine that was not
+listed. When that happens the menu says so on the line above the list, naming
+the file if it is one an `Include` pulled in.
+
+What stops a file being read:
+
+- It is not a regular file. An `Include` is a glob, and a glob matches whatever
+  is there — a pipe, a device, a terminal. Reading some of those waits for
+  somebody to type, which is a menu that never opens, so they are skipped.
+- It is larger than 1 MB, or has a single line longer than that. Neither is a
+  configuration anybody wrote by hand.
+- One `Include` matched more than 256 files, or took more than two seconds to
+  work out what it matched. `Include /*/*` matches tens of thousands of things
+  on an ordinary machine.
+- Includes nested more than 16 deep, which is what ssh itself allows.
+
+Files that include each other are read once each rather than once per path
+through them, so a directory of fragments that all include their own directory
+is not the problem it looks like.
+
 **A machine's space is missing.** You closed its terminals, and a space with
 nothing in it does not exist. The machine is still connected — the menu says so
 — and `enter` on it opens a terminal again.

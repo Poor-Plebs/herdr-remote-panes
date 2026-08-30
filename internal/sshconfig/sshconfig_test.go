@@ -2,6 +2,7 @@ package sshconfig
 
 import (
 	"fmt"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/project"
 	"os"
 	"path/filepath"
 	"strings"
@@ -369,5 +370,47 @@ func TestAnIncludeThatCannotBeReadIsSaidSo(t *testing.T) {
 	}
 	if !strings.Contains(why, "larger than") {
 		t.Errorf("the reason is %q, which does not say what is wrong with it", why)
+	}
+}
+
+func TestTheBoundsTheDocsGiveAreTheBoundsThatApply(t *testing.T) {
+	// The page says why machines can be missing from the menu, and every
+	// reason is a number here. Numbers in prose go stale in silence: the size
+	// bound already moved once, taking a silent failure with it, and the page
+	// that explains it to somebody staring at an empty menu is the last place
+	// that should still be quoting the old one.
+	//
+	// Derived where a number can be written the way the page writes it, and
+	// held to the constant where it cannot.
+	docs, err := project.DocsText()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Sizes are given in megabytes, because "1048576 bytes" in a sentence is
+	// a number nobody checks.
+	if maxConfigBytes != 1<<20 || maxConfigLine != 1<<20 {
+		t.Errorf("a config may now be %d bytes and a line %d, and the page says 1 MB "+
+			"for both", maxConfigBytes, maxConfigLine)
+	}
+	if !strings.Contains(docs, "larger than 1 MB") {
+		t.Error("the page does not say how large a config may be")
+	}
+
+	for what, bound := range map[string]int{
+		"files one Include may match": maxIncludeMatches,
+		"how deep Includes may nest":  maxIncludeDepth,
+	} {
+		if !strings.Contains(docs, fmt.Sprintf("%d", bound)) {
+			t.Errorf("the page does not give %s, which is %d", what, bound)
+		}
+	}
+	if !strings.Contains(docs, "two seconds") {
+		t.Errorf("the page does not say how long an Include may take to expand, "+
+			"which is %s", includeGlobBudget)
+	}
+	if includeGlobBudget != 2*time.Second {
+		t.Errorf("an Include may now take %s to expand and the page says two seconds",
+			includeGlobBudget)
 	}
 }
