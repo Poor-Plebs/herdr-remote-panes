@@ -1394,3 +1394,47 @@ func TestTheNameForAnUnreachableMachineIsHeldToTheSameRuleAsTheOther(t *testing.
 		}
 	}
 }
+
+func TestATargetLongerThanAnyMachineNameIsRefused(t *testing.T) {
+	// A target reaches here from a file somebody edited or from whatever text
+	// was selected when an action was invoked, and a selection is a line of
+	// somebody else's output as readily as a name. A base64 blob or a long URL
+	// has no space in it and no dash at the front, which is everything else
+	// this asks about -- so sixty thousand characters were accepted as a
+	// machine.
+	//
+	// The failed connection is not what it costs. The target is in the message
+	// the failure is reported with, and that message goes into a log that rolls
+	// at a quarter of a megabyte: one selection could take the history with it.
+	long := strings.Repeat("aB3", 20000)
+	err := ValidTarget(long)
+	if err == nil {
+		t.Fatalf("a %d-character selection was accepted as a machine", len(long))
+	}
+	// The message must not carry the thing it is refusing, which would put it
+	// in the log by another route.
+	if len(err.Error()) > 200 {
+		t.Errorf("refusing it produced a %d-character message", len(err.Error()))
+	}
+	if !strings.Contains(err.Error(), "longer than any machine") {
+		t.Errorf("the reason given is %q", err)
+	}
+
+	// The guess about a selection refuses it too, since it asks this first.
+	if PlausibleTarget(long) == nil {
+		t.Error("a selection that long is offered as a machine to connect to")
+	}
+
+	// And a name of an ordinary length is untouched, including a long one:
+	// this is a bound on what cannot be a name, not a limit somebody has to
+	// think about.
+	for _, ok := range []string{
+		"bot",
+		"deploy@bot",
+		"deploy@" + strings.Repeat("a", 200) + ".example.com",
+	} {
+		if err := ValidTarget(ok); err != nil {
+			t.Errorf("ValidTarget(%d characters) = %v", len(ok), err)
+		}
+	}
+}

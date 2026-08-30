@@ -208,6 +208,21 @@ func ValidTarget(target string) error {
 	if strings.HasPrefix(target, "-") {
 		return fmt.Errorf("target %q starts with a dash, which ssh reads as an option", target)
 	}
+	if len(target) > maxTargetBytes {
+		// Not a machine, whoever offered it. A name reaches here from a file
+		// somebody edited or from whatever text was selected when an action
+		// was invoked, and a selection is a line of somebody else's output as
+		// readily as a name -- a base64 blob or a long URL has no space in it
+		// and no dash at the front, which is everything else this asks about.
+		//
+		// Bounded rather than merely refused later by ssh, because what it
+		// costs is not the failed connection: the target is in the message
+		// that failure is reported with, and that message goes into a log that
+		// rolls at a quarter of a megabyte. One selection could take the
+		// history with it.
+		return fmt.Errorf("target is %d characters, which is longer than any machine's name",
+			len(target))
+	}
 	for _, r := range target {
 		if unicode.IsControl(r) {
 			return fmt.Errorf("target %q contains a control character", target)
@@ -215,6 +230,11 @@ func ValidTarget(target string) error {
 	}
 	return nil
 }
+
+// maxTargetBytes is the longest a machine's name may be. A hostname stops at
+// 253 by the standard that defines them, and what goes in front of one here is
+// a user name; anything past this was not typed by somebody naming a machine.
+const maxTargetBytes = 320
 
 // PlausibleTarget reports why a target nobody wrote down cannot be used.
 //
