@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -755,5 +756,60 @@ func TestAMachineWithSettingsOfItsOwnSaysSo(t *testing.T) {
 			t.Errorf("a setting is listed after the machines, at line %d:\n%s", i, joined)
 			break
 		}
+	}
+}
+
+func TestASettingThatSaysWhatWouldHaveHappenedAnywaySaysSo(t *testing.T) {
+	// A file written by an older version holds every setting at whatever the
+	// default was then, so most of its lines say what would have happened
+	// without them -- until a default improves, at which point those lines are
+	// exactly what stops it arriving. Thirteen of the fourteen settings in one
+	// real config are this.
+	//
+	// From the file there is no telling those apart from the one that was
+	// chosen, and this report is the one place with both to hand.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	d := Defaults()
+	written := fmt.Sprintf(`{"max_mirrors": %d, "placement": "tab", `+
+		`"close_propagates": false, "takeover": true, "hosts": []}`, d.MaxMirrors)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(written), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := strings.Join(cfg.Describe(), "\n")
+
+	// Written, and the same as this version would have used anyway.
+	if !strings.Contains(said, fmt.Sprintf("config: max_mirrors = %d (config.json, unchanged from the default)", d.MaxMirrors)) {
+		t.Errorf("a setting restating the default is not marked as one:\n%s", said)
+	}
+	// Written, and doing something. Marked as chosen and nothing more: saying
+	// "unchanged" here would be false, and this is the line somebody is
+	// looking for.
+	if !strings.Contains(said, `config: placement = "tab" (config.json)`) ||
+		strings.Contains(said, `config: placement = "tab" (config.json, unchanged`) {
+		t.Errorf("the one setting that was chosen is not shown as chosen:\n%s", said)
+	}
+	// The settings that can be turned off are pointers, so that leaving one
+	// out and setting it to false stay different things -- and the comparison
+	// has to read through that. Both sides are needed: one written to what the
+	// default already is, and one written against it. Without the first, never
+	// dereferencing at all passes, since nothing would be equal to a pointer.
+	if !strings.Contains(said, "config: takeover = true (config.json, unchanged from the default)") {
+		t.Errorf("a setting written to what it would have been anyway is not "+
+			"marked as one, because it is a pointer:\n%s", said)
+	}
+	// A setting turned off where the default is on.
+	if !strings.Contains(said, "config: close_propagates = false (config.json)") ||
+		strings.Contains(said, "config: close_propagates = false (config.json, unchanged") {
+		t.Errorf("a setting turned off against the default is called unchanged:\n%s", said)
+	}
+	// Not in the file at all: neither mark belongs, since nothing was written
+	// down to be unchanged from.
+	if strings.Contains(said, "config: scope = \"shared\" (") {
+		t.Errorf("a setting nobody wrote down is marked as though they had:\n%s", said)
 	}
 }

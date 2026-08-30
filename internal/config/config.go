@@ -478,6 +478,9 @@ func (c Config) Describe() []string {
 
 	shape := reflect.TypeOf(c)
 	value := reflect.ValueOf(c)
+	// What this version would use for anything the file leaves out, so a
+	// setting written down can be told from one that is doing something.
+	fallback := reflect.ValueOf(Defaults())
 	out := make([]string, 0, shape.NumField())
 	for i := 0; i < shape.NumField(); i++ {
 		name, _, _ := strings.Cut(shape.Field(i).Tag.Get("json"), ",")
@@ -512,7 +515,21 @@ func (c Config) Describe() []string {
 		if fromFile[name] {
 			// Which of them somebody chose is the question being asked when a
 			// setting is not doing what the README says it does.
-			line += " (config.json)"
+			line += " (config.json"
+			// And whether choosing it made any difference. A file written by
+			// an older version holds every setting at whatever the default was
+			// then, so most of its lines say what would have happened anyway --
+			// until a default improves, at which point those lines are what
+			// stops it arriving. Thirteen of the fourteen in one real config
+			// are this.
+			//
+			// Worth saying here rather than left to be worked out: from the
+			// file there is no telling the two apart, and this is the one
+			// place that has both to hand.
+			if same(field, fallback.Field(i)) {
+				line += ", unchanged from the default"
+			}
+			line += ")"
 		}
 		out = append(out, line)
 	}
@@ -533,6 +550,22 @@ func (c Config) Describe() []string {
 		}
 	}
 	return out
+}
+
+// same reports whether a setting holds what this version would have used
+// anyway. Both are read through the pointer where there is one, so a setting
+// written as false and a default of false are the same answer.
+func same(written, fallback reflect.Value) bool {
+	if fallback.Kind() == reflect.Ptr {
+		if fallback.IsNil() {
+			return false
+		}
+		fallback = fallback.Elem()
+	}
+	if written.Kind() != fallback.Kind() {
+		return false
+	}
+	return written.Interface() == fallback.Interface()
 }
 
 // overrides is what a machine says for itself, rather than taking the setting

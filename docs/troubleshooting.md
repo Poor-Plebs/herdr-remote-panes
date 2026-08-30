@@ -123,10 +123,16 @@ starts. Every setting and its value, with the ones you chose marked:
 
 ```
 config: max_mirrors = 32
-config: mode = "ssh"
+config: mode = "ssh" (config.json, unchanged from the default)
 config: placement = "split" (config.json)
 config: host "ci": mode = "attach"
 ```
+
+A line written in the file but saying what would have happened anyway is marked
+as such. A config written by an older version holds every setting at whatever
+the default was then — thirteen of fourteen, in one real one — and those lines
+do nothing until a default improves, at which point they are what stops it
+arriving. Deleting them changes nothing today.
 
 A machine with settings of its own gets a line too, which is where "why is this
 one attaching" is answered. Machines taking everything from above are left out,
