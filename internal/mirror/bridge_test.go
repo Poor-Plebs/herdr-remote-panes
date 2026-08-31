@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
 )
 
 // bridge is the pane's entrypoint: it reads what the daemon told it through the
@@ -437,5 +439,52 @@ func TestWhatAMachineSaysCannotRepaintThePaneOrTheLog(t *testing.T) {
 	last := strings.Split(strings.TrimRight(string(after), "\n"), "\n")
 	if grew := len(last[len(last)-1]); grew > 400 {
 		t.Errorf("a machine wrote %d characters into one log entry", grew)
+	}
+}
+
+// failingSSH puts an ssh on PATH that writes a reason to standard error and
+// exits the way ssh does when it could not connect.
+func failingSSH(t *testing.T, reason string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"last=\"\"; for a in \"$@\"; do last=\"$a\"; done\n" +
+		"case \"$last\" in\n" +
+		"  *command\\ -v\\ herdr*) echo /usr/bin/herdr; exit 0;;\n" +
+		"esac\n" +
+		"echo \"" + reason + "\" >&2\n" +
+		"exit 255\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestAMirrorThatCouldNotConnectRecordsWhy(t *testing.T) {
+	// ssh writes why it could not connect to standard error, and for a pane
+	// that is the pane -- so somebody watching sees "Host key verification
+	// failed." and the file the troubleshooting page tells them to read held
+	// "exit status 255", which is the number for "ssh could not connect" and
+	// not a reason at all.
+	//
+	// shell was given the fix. attach was not, and attach is what a mirrored
+	// machine uses: one real mirror.log has a hundred and forty-one of those
+	// and not one reason among them.
+	failingSSH(t, "Host key verification failed.")
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	client := remote.NewWithBin("bot", "hub", "/usr/bin/herdr")
+	err := attach(client, "term_1")
+	if err == nil {
+		t.Fatal("attaching to a machine that refused the connection reported no error")
+	}
+	if !strings.Contains(err.Error(), "Host key verification failed") {
+		t.Errorf("the failure reads %q, and ssh said why on standard error", err)
+	}
+	// And the command is still named, which is what says which machine and
+	// which terminal it was.
+	if !strings.Contains(err.Error(), "ssh") {
+		t.Errorf("the failure does not say what was run: %q", err)
 	}
 }

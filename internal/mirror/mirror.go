@@ -363,15 +363,27 @@ func attach(client *remote.Client, terminal string) error {
 	gate := newMouseGate(os.Stdout)
 	defer gate.flush()
 	cmd.Stdout = gate
-	cmd.Stderr = os.Stderr
+	// Still the pane, so nothing changes for somebody watching it; kept as
+	// well, so the record says why rather than only that. The same thing shell
+	// does, for the same reason -- ssh writes why it could not connect to
+	// standard error, and that is the pane, so the file the troubleshooting
+	// page tells people to read held "exit status 255" and nothing else. One
+	// real mirror.log has a hundred and forty-one of those and not one reason
+	// among them.
+	//
+	// The remote command's own output comes back through the pty rather than
+	// here, so what this keeps is ssh's side of it: the host key, the refused
+	// connection, the key it would not take.
+	said := &tail{max: maxSaid}
+	cmd.Stderr = io.MultiWriter(os.Stderr, said)
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("%w running: %s", err, describeCommand(argv))
+		return failed(err, argv, said)
 	}
 	stop := watchForStop(cmd.Process)
 	defer stop()
 
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("%w running: %s", err, describeCommand(argv))
+		return failed(err, argv, said)
 	}
 	return nil
 }
