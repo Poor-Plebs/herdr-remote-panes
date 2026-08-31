@@ -102,7 +102,10 @@ The key you bound opens this:
 
 Every machine you can reach is listed, whether or not this plugin knows about
 it: the ones you have configured come first, then everything else in your
-`~/.ssh/config`. Each says how it is reached and how it is doing.
+`~/.ssh/config`, and last a machine you have connected to that is in neither
+file — connecting to a name you selected in a terminal makes one of those, and
+it stays listed while it is connected, since this is the screen that
+disconnects it. Each says how it is reached and how it is doing.
 
 `enter` connects and gives you a terminal — on a machine that has been given up
 on, it is also how you say "try again now". `d` closes a machine's panes here,
