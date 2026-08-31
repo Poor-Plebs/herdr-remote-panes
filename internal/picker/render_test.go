@@ -1970,3 +1970,41 @@ func TestTheFloorForHalfAPieceIsWhereItSaysItIs(t *testing.T) {
 			"a piece stops being worth the ellipsis", plainOf(got))
 	}
 }
+
+func TestALongReasonDoesNotCrowdOutWhatToDoAboutIt(t *testing.T) {
+	// The reason comes off a machine and can be any length ssh cares to print.
+	// The pieces of the line drop off the end in order, and the reminder is
+	// last -- so an uncapped reason takes the room the reminder needed and the
+	// row says what went wrong with no way to act on it.
+	//
+	// maxReasonWidth is what leaves room for both. Removing it changed no test
+	// at all: an audit that took each Truncate out in turn found this one had
+	// nothing behind it.
+	long := "the machine said something extremely long about why it would not " +
+		"let us in, at considerable length, and went on about it"
+	entry := Entry{Target: "prod", Configured: true, GaveUp: true, Reason: shortReason(long)}
+
+	for _, cols := range []int{100, 120, 160} {
+		line := ""
+		for _, l := range strings.Split(visible(render([]Entry{entry}, 0, cols, 20, "")), "\r\n") {
+			if strings.Contains(l, "prod") {
+				line = l
+			}
+		}
+		if !strings.Contains(line, "unreachable") {
+			t.Fatalf("at %d columns the row says nothing about the machine: %q", cols, line)
+		}
+		if !strings.Contains(line, "the machine said") {
+			t.Errorf("at %d columns the reason is gone: %q", cols, line)
+		}
+		if !strings.Contains(line, "enter to retry") {
+			t.Errorf("at %d columns the reason crowded out what to do about it: %q", cols, line)
+		}
+	}
+
+	// And the cap is what does it, rather than the terminal happening to be
+	// wide: the reason itself is bounded before it is ever drawn.
+	if got := text.Width(entry.Reason); got > maxReasonWidth {
+		t.Errorf("the reason kept is %d cells, and the bound is %d", got, maxReasonWidth)
+	}
+}
