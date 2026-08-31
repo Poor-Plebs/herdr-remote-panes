@@ -1142,7 +1142,11 @@ func render(entries []Entry, selected, cols, rows int, warning string) string {
 	}
 
 	if frame.counter {
-		b.WriteString("  " + dim + fmt.Sprintf("showing %d-%d of %d", first+1, last, len(entries)) + reset + "\r\n")
+		// Truncated like the heading above it. It is the one line of the menu
+		// written without asking how wide the popup is, and "showing 1-3 of 6"
+		// is eighteen columns whatever the terminal says.
+		counter := fmt.Sprintf("showing %d-%d of %d", first+1, last, len(entries))
+		b.WriteString("  " + dim + text.Truncate(counter, cols-4) + reset + "\r\n")
 	}
 	if frame.hints {
 		b.WriteString("\r\n")

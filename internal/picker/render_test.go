@@ -851,17 +851,34 @@ func TestNothingInTheMenuRunsOffTheSide(t *testing.T) {
 		{Target: "gone", Configured: true, GaveUp: true, Reason: "connection refused"},
 		{Target: "mirrored-one", Configured: true, Connected: true, Mirroring: true, Mirrors: 4},
 	}
+	// Heights as well as widths. At one height nothing scrolls, and the
+	// "showing 1-3 of 6" line is only drawn when something does -- so a sweep
+	// of every width at one tall popup never once drew it, and it was the one
+	// line written without asking how wide the popup is.
+	counted := false
 	// From the narrowest popup the layout claims to serve: see nameWidth.
 	for cols := chromeWidth + 8; cols <= 200; cols++ {
-		for _, warning := range []string{"", "could not read ~/.ssh/config"} {
-			for _, selected := range []int{0, len(entries) - 1} {
-				for _, line := range strings.Split(render(entries, selected, cols, 24, warning), "\r\n") {
-					if got := text.Width(visible(line)); got > cols {
-						t.Fatalf("at %d columns a line is %d wide: %q", cols, got, visible(line))
+		for rows := 1; rows <= 24; rows++ {
+			for _, warning := range []string{"", "could not read ~/.ssh/config"} {
+				for _, selected := range []int{0, len(entries) - 1} {
+					drawn := render(entries, selected, cols, rows, warning)
+					if strings.Contains(drawn, "showing ") {
+						counted = true
+					}
+					for _, line := range strings.Split(drawn, "\r\n") {
+						if got := text.Width(visible(line)); got > cols {
+							t.Fatalf("at %d columns and %d rows a line is %d wide: %q",
+								cols, rows, got, visible(line))
+						}
 					}
 				}
 			}
 		}
+	}
+	// Otherwise this stops covering the counter the day the layout stops
+	// scrolling at these sizes, and goes on passing.
+	if !counted {
+		t.Error("no size in the sweep scrolled, so the counter line was never drawn")
 	}
 }
 
