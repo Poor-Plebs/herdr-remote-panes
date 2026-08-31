@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -4394,5 +4395,54 @@ func TestAStrayIsOnlyClosedIfItIsStillTheSamePane(t *testing.T) {
 	}
 	if got := describePane("", true); got != "unnamed" {
 		t.Errorf("a pane with no name is described as %q", got)
+	}
+}
+
+func TestTheControlSocketIsPrivateWhateverTheUmaskIs(t *testing.T) {
+	// What this socket accepts is instructions to open SSH connections to
+	// other machines, so its mode is not a detail. It was left to the umask
+	// once, and the trouble with that is invisible: on an ordinary account the
+	// umask makes it 0600 by itself, so a machine with a loose umask is the
+	// only one where the difference shows, and no test run on an ordinary one
+	// can tell the two apart. This sets the umask to give everything away, so
+	// what is left is what this code does rather than what the account does.
+	//
+	// Both ways in. The second binds after clearing a socket left by a daemon
+	// that was killed, and had its own call to restrict -- one line further
+	// from the first than it looks.
+	for _, tt := range []struct {
+		what   string
+		before func(t *testing.T, socket string)
+	}{
+		{"a fresh socket", func(*testing.T, string) {}},
+		{"one bound after clearing what a killed daemon left", func(t *testing.T, socket string) {
+			t.Helper()
+			if err := os.WriteFile(socket, nil, 0o666); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			previous := syscall.Umask(0)
+			defer syscall.Umask(previous)
+
+			socket := filepath.Join(t.TempDir(), "control.sock")
+			tt.before(t, socket)
+
+			listener, err := listenControl(socket)
+			if err != nil {
+				t.Fatalf("listenControl: %v", err)
+			}
+			defer listener.Close()
+
+			info, err := os.Stat(socket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode := info.Mode().Perm(); mode != 0o600 {
+				t.Errorf("the control socket is %04o with the umask giving "+
+					"everything away, and it is what opens SSH connections", mode)
+			}
+		})
 	}
 }
