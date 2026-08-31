@@ -4431,7 +4431,14 @@ func TestTheControlSocketIsPrivateWhateverTheUmaskIs(t *testing.T) {
 			previous := syscall.Umask(0)
 			defer syscall.Umask(previous)
 
-			socket := filepath.Join(t.TempDir(), "control.sock")
+			// Through socketPathFor, as every other socket test here does.
+			// Built by hand from t.TempDir() this bound fine on Linux and
+			// failed on macOS with "bind: invalid argument": temp directories
+			// there start /var/folders/../T/ and the test's own name is in the
+			// path, which together run past what a sockaddr holds. That is the
+			// whole reason socketPathFor has a fallback, and building the path
+			// by hand walked around it.
+			socket := testSocket(t)
 			tt.before(t, socket)
 
 			listener, err := listenControl(socket)
