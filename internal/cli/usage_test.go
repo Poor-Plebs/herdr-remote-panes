@@ -6,7 +6,6 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
 	"io"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -452,52 +451,15 @@ func TestTheREADMEShowsTheVersionOutputThatIsPrinted(t *testing.T) {
 	}
 }
 
-// answerAs stands a daemon up on the control socket and has it answer every
-// command with the reply given, until the test ends. Every test here used to run with
-// nothing listening, which exercises exactly one of the three answers
-// reportVersion can give -- and the switch it picks with was invisible to the
-// mutation sweep until case expressions were included in it. `status` had no
-// test at all for the same reason.
-func answerAs(t *testing.T, reply syncd.Reply) {
-	t.Helper()
-	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
-	t.Setenv("HERDR_SESSION", "hub")
-
-	socket, err := syncd.ControlSocket()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	listener, err := net.Listen("unix", socket)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	served := make(chan struct{})
-	go func() {
-		defer close(served)
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			var cmd syncd.Command
-			if err := json.NewDecoder(conn).Decode(&cmd); err == nil {
-				_ = json.NewEncoder(conn).Encode(reply)
-			}
-			conn.Close()
-		}
-	}()
-	t.Cleanup(func() {
-		listener.Close()
-		<-served
-	})
-}
-
+// TestVersionNamesTheBuildTheDaemonAnswersWith covers the answer given when a
+// daemon is running.
+//
+// Every test here used to run with nothing listening, which exercises exactly
+// one of the three answers reportVersion can give -- and the switch it picks
+// with was invisible to the mutation sweep until case expressions were
+// included in it. `status` had no test at all for the same reason.
 func TestVersionNamesTheBuildTheDaemonAnswersWith(t *testing.T) {
-	answerAs(t, syncd.Reply{OK: true, Revision: "9fcc667"})
+	answerWith(t, syncd.Reply{OK: true, Revision: "9fcc667"})
 
 	var out, warn strings.Builder
 	if err := reportVersion(&out, &warn, "9fcc667"); err != nil {
@@ -519,7 +481,7 @@ func TestVersionNamesTheBuildTheDaemonAnswersWith(t *testing.T) {
 func TestVersionSaysUnknownWhenTheDaemonNamesNoBuild(t *testing.T) {
 	// What `go run` and a test binary look like: something answers, but it has
 	// no commit of its own to report. A blank column reads as a bug.
-	answerAs(t, syncd.Reply{OK: true})
+	answerWith(t, syncd.Reply{OK: true})
 
 	var out, warn strings.Builder
 	if err := reportVersion(&out, &warn, "9fcc667"); err != nil {
@@ -590,7 +552,7 @@ func captureOutput(t *testing.T, run func() error) (string, string) {
 }
 
 func TestStatusPrintsTheMachinesTheDaemonReports(t *testing.T) {
-	answerAs(t, syncd.Reply{OK: true, Hosts: []syncd.HostInfo{
+	answerWith(t, syncd.Reply{OK: true, Hosts: []syncd.HostInfo{
 		{Target: "deploy@vm", Label: "vm", Connected: true, Mirrors: 3},
 		{Target: "ci@build", Label: "build", Connected: true, SSHOnly: true, Terminals: 1},
 	}})
@@ -610,7 +572,7 @@ func TestStatusPrintsTheMachinesTheDaemonReports(t *testing.T) {
 func TestStatusSaysSoWhenThereIsNothingToShow(t *testing.T) {
 	// A blank answer to `status` reads as a broken command. It has to say that
 	// there is nothing connected, in the words everything else here uses.
-	answerAs(t, syncd.Reply{OK: true})
+	answerWith(t, syncd.Reply{OK: true})
 
 	printed, _ := captureOutput(t, status)
 
@@ -626,7 +588,7 @@ func TestStatusPassesOnWhatTheDaemonIsWarningAbout(t *testing.T) {
 	// The daemon is the only one that can see a config it could not read. If
 	// status drops that, the machines simply are not listed and nothing says
 	// why.
-	answerAs(t, syncd.Reply{OK: true, Warning: "machine \"vm\" has no target"})
+	answerWith(t, syncd.Reply{OK: true, Warning: "machine \"vm\" has no target"})
 
 	printed, warned := captureOutput(t, status)
 
@@ -643,7 +605,7 @@ func TestADaemonThatRefusesIsAnError(t *testing.T) {
 	// whatever is calling has one thing to check rather than two. Neither had
 	// a test: a reply carrying OK false and a reason could be read as success,
 	// and the reason -- the only thing saying what went wrong -- dropped.
-	answerAs(t, syncd.Reply{Message: `no machine called "vm" is configured`})
+	answerWith(t, syncd.Reply{Message: `no machine called "vm" is configured`})
 
 	if _, err := ask(syncd.Command{Cmd: "connect", Host: "vm"}); err == nil {
 		t.Error("ask read a refusal as success")
@@ -661,7 +623,7 @@ func TestADaemonThatRefusesIsAnError(t *testing.T) {
 func TestACommandThatWorkedSaysSo(t *testing.T) {
 	// Action stdout only reaches the plugin log, so a result nobody printed is
 	// a command that looks like it did nothing.
-	answerAs(t, syncd.Reply{OK: true, Message: "connected to vm"})
+	answerWith(t, syncd.Reply{OK: true, Message: "connected to vm"})
 
 	printed, warned := captureOutput(t, func() error {
 		return call(syncd.Command{Cmd: "connect", Host: "vm"})
