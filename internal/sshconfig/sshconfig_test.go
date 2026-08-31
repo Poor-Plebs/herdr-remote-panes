@@ -457,3 +457,43 @@ func TestAHostLineThatNamesNoMachineSaysSo(t *testing.T) {
 		t.Errorf("the reason is %q, which does not say what is wrong with the name", why)
 	}
 }
+
+func TestOneReadKeepsAHandfulOfReasonsRatherThanAllOfThem(t *testing.T) {
+	// Only the first reason is ever shown: the menu has one line for it. A
+	// config of nothing but unusable Host lines -- which a generator can
+	// produce -- built one string per line and read none of them, on every
+	// menu that opened.
+	home := t.TempDir()
+	ssh := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(ssh, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+
+	var b strings.Builder
+	for i := 0; i < 5000; i++ {
+		fmt.Fprintf(&b, "Host -opt%d\n", i)
+	}
+	b.WriteString("Host bot\n")
+	if err := os.WriteFile(filepath.Join(ssh, "config"), []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	read := newReading(Path())
+	hosts := hostsRead(Path(), 0, read)
+	if len(read.why) > maxReasonsKept {
+		t.Errorf("a config with five thousand unusable lines kept %d reasons", len(read.why))
+	}
+	// Kept enough to say something, and the first is still the first.
+	if len(read.why) == 0 {
+		t.Fatal("five thousand unusable lines produced no reason at all")
+	}
+	if !strings.Contains(read.why[0], "-opt0") {
+		t.Errorf("the first reason is %q, and the first bad line names -opt0", read.why[0])
+	}
+	// And the machine after them is still found: giving up on collecting
+	// reasons must not be giving up on reading.
+	if len(hosts) != 1 || hosts[0] != "bot" {
+		t.Errorf("the machines are %v, and the config has one usable line", hosts)
+	}
+}

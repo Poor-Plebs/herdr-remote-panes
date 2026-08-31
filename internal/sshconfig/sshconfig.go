@@ -169,12 +169,24 @@ func newReading(from string) *reading {
 // started from -- that one is named by the caller, which has the path to hand
 // and says "could not read ~/.ssh/config" around it.
 func (r *reading) note(path, why string) {
+	// A handful, because one is what gets shown. The menu has a line for the
+	// first of these and no room for a second, and a config of nothing but
+	// unusable Host lines -- which is a thing a generator can produce -- built
+	// one string per line and read none of them. A few are kept rather than
+	// one so that anything wanting more than the menu does has somewhere to
+	// look.
+	if len(r.why) >= maxReasonsKept {
+		return
+	}
 	if path == r.from {
 		r.why = append(r.why, why)
 		return
 	}
 	r.why = append(r.why, path+": "+why)
 }
+
+// maxReasonsKept bounds how many reasons one read collects.
+const maxReasonsKept = 8
 
 // hostsRead is hostsFrom with that record in hand.
 //
