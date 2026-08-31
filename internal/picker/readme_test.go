@@ -334,3 +334,62 @@ func TestTheREADMEShowsLinesTheMenuCanActuallyDraw(t *testing.T) {
 			"it has -- the picture or this pattern has changed", checked)
 	}
 }
+
+// TestTheMenuLinesTheDocsQuoteAreLinesTheMenuDraws holds the pictures of the
+// menu in the documentation to what the menu puts on the screen.
+//
+// The headings of those entries -- what the daemon says -- are already held to
+// the source by TestWhatTheDocsSayAMachineSaysIsSomethingItCanSay. The line
+// under each heading quotes the menu instead: "in the menu it reads `connected
+// · 3 mirrored · 2 unmirrored`". That is the half a reader compares against
+// their own screen, and nothing checked it against a screen.
+//
+// Drawn rather than searched for in the source. These lines are assembled from
+// four format strings in three functions, so a source that contains every
+// piece proves only that the pieces exist -- which is the same mistake as
+// grepping a template for a chart that never rendered.
+func TestTheMenuLinesTheDocsQuoteAreLinesTheMenuDraws(t *testing.T) {
+	drawn := map[string]Entry{
+		"connected · 1 mirrored · 3 elsewhere": {
+			Configured: true, Connected: true, Mirroring: true, Mirrors: 1, OutsideShared: 3,
+		},
+		"connected · 2 mirrored · shared name": {
+			Configured: true, Connected: true, Mirroring: true, Mirrors: 2, SharedName: true,
+		},
+		"connected · 2 open · herdr not found": {
+			Configured: true, Connected: true, Terminals: 2, NoHerdr: true,
+		},
+		"connected · 3 mirrored · 2 unmirrored": {
+			Configured: true, Connected: true, Mirroring: true, Mirrors: 3, Unmirrored: 2,
+		},
+		"connected · 8 mirrored · at limit": {
+			Configured: true, Connected: true, Mirroring: true, Mirrors: 8, AtCapacity: true,
+		},
+	}
+
+	quoted := map[string]bool{}
+	for _, m := range regexp.MustCompile("`(connected · [^`]+)`").FindAllStringSubmatch(docsText(t), -1) {
+		quoted[m[1]] = true
+	}
+	if len(quoted) == 0 {
+		t.Fatal("no menu lines found in the documentation, so this checks nothing")
+	}
+
+	for line := range quoted {
+		entry, ok := drawn[line]
+		if !ok {
+			t.Errorf("the docs show the menu reading %q, and nothing here draws it", line)
+			continue
+		}
+		if got := plainOf(statusSpans(entry)); got != line {
+			t.Errorf("the docs show %q and the menu draws %q", line, got)
+		}
+	}
+	// The other way round, so a documented line that is reworded takes its
+	// fixture with it rather than leaving one here agreeing with nothing.
+	for line := range drawn {
+		if !quoted[line] {
+			t.Errorf("%q is drawn here and quoted in no page: reword or remove it", line)
+		}
+	}
+}

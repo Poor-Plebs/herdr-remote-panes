@@ -1472,3 +1472,22 @@ func TestASelectionAcrossTwoLinesIsToldWhatIsWrong(t *testing.T) {
 		t.Errorf("an ordinary machine was refused: %v", err)
 	}
 }
+
+func TestATargetOfExactlyTheLimitIsStillAMachine(t *testing.T) {
+	// The limit is a bound on what goes into a log line, not a judgement about
+	// the name, so the last length it allows has to be allowed. Nothing pinned
+	// which side of maxTargetBytes the check falls on, and turning `>` into
+	// `>=` -- rejecting a name of exactly the limit -- changed no test.
+	atLimit := strings.Repeat("a", maxTargetBytes)
+	if err := ValidTarget(atLimit); err != nil {
+		t.Errorf("a target of exactly %d bytes was refused: %v", maxTargetBytes, err)
+	}
+	overLimit := strings.Repeat("a", maxTargetBytes+1)
+	if err := ValidTarget(overLimit); err == nil {
+		t.Errorf("a target of %d bytes was allowed", maxTargetBytes+1)
+	} else if strings.Contains(err.Error(), overLimit) {
+		// The reason this bound exists: the target goes into the message, and
+		// the message goes into a log.
+		t.Errorf("the refusal quotes the whole overlong target back: %v", err)
+	}
+}
