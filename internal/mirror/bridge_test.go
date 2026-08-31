@@ -488,3 +488,34 @@ func TestAMirrorThatCouldNotConnectRecordsWhy(t *testing.T) {
 		t.Errorf("the failure does not say what was run: %q", err)
 	}
 }
+
+func TestAnObservedTerminalThatCouldNotConnectRecordsWhy(t *testing.T) {
+	// The third mode. shell kept ssh's reason, attach was given it, and this
+	// one returned the bare exit status with neither the reason nor the
+	// command in it -- for the mode whose whole job is showing what a machine
+	// is doing.
+	failingSSH(t, "Permission denied (publickey).")
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	client := remote.NewWithBin("bot", "hub", "/usr/bin/herdr")
+	err := streamOnce(client, "term_1", 80, 24, make(chan os.Signal))
+	if err == nil {
+		t.Fatal("observing a machine that refused the connection reported no error")
+	}
+	if !strings.Contains(err.Error(), "Permission denied") {
+		t.Errorf("the failure reads %q, and ssh said why on standard error", err)
+	}
+	if !strings.Contains(err.Error(), "terminal session observe") {
+		t.Errorf("the failure does not say what was run: %q", err)
+	}
+
+	// And it is still an ssh failure as far as the retry decides: wrapping it
+	// must not turn a dropped connection into something that stops trying.
+	if got := exitStatus(err); got != 255 {
+		t.Errorf("the wrapped failure reports exit status %d, and ssh exited 255", got)
+	}
+	if next, _ := planObserveNext(err, 0); next != observeAgainSoon {
+		t.Errorf("a refused connection now plans %v rather than trying again", next)
+	}
+}

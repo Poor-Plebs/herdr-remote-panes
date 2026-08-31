@@ -559,9 +559,16 @@ func streamOnce(client *remote.Client, terminal string, cols, rows int, winch <-
 	if err != nil {
 		return err
 	}
-	cmd.Stderr = os.Stderr
+	// Still the pane, so nothing changes for somebody watching it; kept as
+	// well, so the record says why rather than only that. The third of the
+	// three modes to get this: shell had it, attach was given it, and this one
+	// returned ssh's bare exit status with neither the reason nor the command
+	// -- the barest of the three, for the mode whose whole job is to show what
+	// a machine is doing.
+	said := &tail{max: maxSaid}
+	cmd.Stderr = io.MultiWriter(os.Stderr, said)
 	if err := cmd.Start(); err != nil {
-		return err
+		return failed(err, argv, said)
 	}
 
 	// The same supervision the other two modes have. Without it a stop signal
@@ -637,7 +644,10 @@ func streamOnce(client *remote.Client, terminal string, cols, rows int, winch <-
 	// machine. A connection dropping halfway through therefore destroyed the
 	// work it had been showing.
 	if exitStatus(waitErr) == sshOwnFailure {
-		return waitErr
+		// Wrapped, so what ssh said travels with it. planObserveNext asks
+		// errors.Is and exitStatus asks errors.As, and both see through the
+		// wrapping, so how this retries is unchanged.
+		return failed(waitErr, argv, said)
 	}
 	// Anything else is the command on the machine ending, which means the
 	// terminal went away: let the pane close.
