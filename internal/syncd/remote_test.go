@@ -118,6 +118,34 @@ func addPaneOn(t *testing.T, statePath, workspace, title string) string {
 	return addAgentPaneOn(t, statePath, workspace, title, "", "")
 }
 
+// addWorkspaceOn puts a space on a machine, for the ones this plugin did not
+// make: another hub's, or one left from before a format changed.
+func addWorkspaceOn(t *testing.T, statePath, id, label string) {
+	t.Helper()
+	// The machine's file is written by the stand-in the first time it is
+	// asked anything, so before a connect there is nothing there yet -- and a
+	// space that was already on the machine is exactly what this puts there.
+	var held fakeHerdr
+	if raw, err := os.ReadFile(statePath); err == nil {
+		if err := json.Unmarshal(raw, &held); err != nil {
+			t.Fatal(err)
+		}
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if held.Workspaces == nil {
+		held.Workspaces = map[string]map[string]any{}
+	}
+	if held.Panes == nil {
+		held.Panes = map[string]map[string]any{}
+	}
+	held.Workspaces[id] = map[string]any{"workspace_id": id, "label": label}
+	out, _ := json.Marshal(held)
+	if err := os.WriteFile(statePath, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // addPaneInTabOn is addPaneOn with a say in which of the machine's tabs the
 // terminal belongs to, for the placement that follows them.
 func addPaneInTabOn(t *testing.T, statePath, workspace, tab, title string) string {
@@ -4497,4 +4525,77 @@ func TestATerminalThatWillNotMirrorIsGivenUpOnAndCounted(t *testing.T) {
 		return
 	}
 	t.Fatal("the listing has no entry for the machine at all")
+}
+
+func TestMirroringIntoASpaceThisDidNotNameSaysSo(t *testing.T) {
+	// The space on the machine is found by the name this gives it, or, failing
+	// that, by a looser match that takes markers off the front. The loose one
+	// keeps the terminals in a space made before remote_workspace_format
+	// changed -- and it is also the one way into another hub's space, since
+	// "☁  ☁laptop" comes down to "laptop" and answers to a hub of that name.
+	//
+	// The warning beside it needs two spaces sharing a name. This needs one,
+	// so nothing said anything at all.
+	here := withFakeHerdr(t)
+	there, thereState := withRemoteHerdr(t)
+	withConfigFile(t, `{"hosts":[{"target":"bot","mode":"attach"}]}`)
+
+	// A space on the machine carrying a decorated form of this hub's name,
+	// and none carrying the name this would give it.
+	addWorkspaceOn(t, thereState, "wOther", "☁  ☁"+config.HubName())
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+
+	logged := captureLog(t)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	said := logged.String()
+	if !strings.Contains(said, "which is not") {
+		t.Fatalf("a space this did not name was used and nothing said so:\n%s", said)
+	}
+	if !strings.Contains(said, "another hub's") {
+		t.Errorf("the line does not say what it would mean:\n%s", said)
+	}
+	// Once, not on every pass.
+	if n := strings.Count(said, "which is not"); n != 1 {
+		t.Errorf("said %d times, and a pass comes round every couple of seconds", n)
+	}
+}
+
+func TestMirroringIntoTheSpaceThisNamedSaysNothing(t *testing.T) {
+	// The other half. The line above is about a space this did not name, and
+	// the ordinary case is a space it did -- either one it made or one it
+	// found under exactly that name. Saying it there would put a line in every
+	// log on every machine, which is how a log stops being read.
+	here := withFakeHerdr(t)
+	there, thereState := withRemoteHerdr(t)
+	withConfigFile(t, `{"hosts":[{"target":"bot","mode":"attach"}]}`)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+
+	// A space already on the machine under exactly the name this gives it,
+	// which is what a second connect meets. Without one there is nothing to
+	// find, the space is created instead, and the line this is about is never
+	// reached -- so the test would pass while checking nothing.
+	addWorkspaceOn(t, thereState, "wMine", cfg.RemoteWorkspaceLabel())
+
+	logged := captureLog(t)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	if !strings.Contains(logged.String(), "bot") {
+		t.Fatalf("nothing happened for the machine at all:\n%s", logged.String())
+	}
+	if said := logged.String(); strings.Contains(said, "which is not") {
+		t.Errorf("the space this named was reported as one it did not:\n%s", said)
+	}
 }

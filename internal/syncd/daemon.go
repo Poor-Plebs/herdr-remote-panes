@@ -211,6 +211,10 @@ type hostSync struct {
 	// setting doing what it says -- but indistinguishable from one without
 	// being told.
 	outsideShared int
+	// borrowedRemoteSpace is a space on the machine that was matched loosely
+	// rather than by the name this would give it, said once per machine.
+	borrowedRemoteSpace bool
+
 	// duplicateSpaces is more than one space on the machine answering to the
 	// name this machine's terminals live under.
 	duplicateSpaces bool
@@ -1092,8 +1096,22 @@ func (d *Daemon) findRemoteWorkspace(state *hostSync) (bool, error) {
 	chosen, found := pickRemoteWorkspace(workspaces, label, config.HubName())
 	if !found {
 		state.duplicateSpaces = false
+		state.borrowedRemoteSpace = false
 		return false, nil
 	}
+	// Not the name this would have given it. That is the tolerant match doing
+	// its job -- a space made before remote_workspace_format was what it is
+	// keeps its terminals -- and it is also the one way into somebody else's
+	// space described above, which nothing else here would report: the warning
+	// below needs two spaces sharing a name, and this needs only one.
+	if chosen.Label != label && !state.borrowedRemoteSpace {
+		log.Printf("%s: mirroring into the space called %q there, which is not "+
+			"%q, the name this gives it. That is what keeps the terminals in a "+
+			"space made before remote_workspace_format changed -- and if that "+
+			"space is another hub's, this is where its terminals went",
+			state.host.Target, chosen.Label, label)
+	}
+	state.borrowedRemoteSpace = chosen.Label != label
 	if duplicates > 1 && !state.duplicateSpaces {
 		// Not "give this machine its own": remote_workspace_format is one
 		// setting for every machine, so advice to set it per machine sends
