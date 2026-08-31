@@ -371,3 +371,70 @@ func TestAnIncludeThatMatchesSomethingUnreadableDoesNotWait(t *testing.T) {
 			"menu would not open")
 	}
 }
+
+func TestAnIncludeThatIsSkippedSaysWhy(t *testing.T) {
+	// The reading gives up on an Include for four reasons, and every one of
+	// them takes a group of machines out of the menu. They were all silent:
+	// the file itself was fine, so the check that explains an empty menu found
+	// nothing to say and the machines were simply gone.
+	//
+	// That is the failure d3fa765 and f69a26b were both about, one level
+	// further in -- there it was the file that could not be read, here it is
+	// the pattern that names the files.
+	home := t.TempDir()
+	ssh := filepath.Join(home, ".ssh")
+	inc := filepath.Join(ssh, "conf.d")
+	if err := os.MkdirAll(inc, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	top := filepath.Join(ssh, "config")
+
+	t.Run("more files than an Include may pull in", func(t *testing.T) {
+		for i := 0; i <= maxIncludeMatches; i++ {
+			if err := os.WriteFile(filepath.Join(inc, fmt.Sprintf("h%04d", i)),
+				[]byte(fmt.Sprintf("Host machine%04d\n", i)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(top, []byte("Host toplevel\nInclude "+inc+"/*\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		hosts := Hosts()
+		if len(hosts) != 1 {
+			t.Fatalf("the fixture no longer drops the include: %d machines", len(hosts))
+		}
+		why := Unreadable()
+		if why == "" {
+			t.Fatalf("%d machines are missing and nothing says why", maxIncludeMatches+1)
+		}
+		for _, want := range []string{"conf.d", "matched 257", "256"} {
+			if !strings.Contains(why, want) {
+				t.Errorf("the reason is %q, which does not say %q", why, want)
+			}
+		}
+	})
+
+	t.Run("no time to expand", func(t *testing.T) {
+		// The budget, asked for exactly. The pattern is recorded so the next
+		// menu does not wait again -- and that skip has to say so too, or the
+		// second read of a config is quieter than the first about the same
+		// machines.
+		was := includeGlobBudget
+		includeGlobBudget = 0
+		pattern := filepath.Join(inc, "*")
+		t.Cleanup(func() {
+			includeGlobBudget = was
+			slowGlobs.Delete(pattern)
+		})
+
+		if why := Unreadable(); !strings.Contains(why, "expand") {
+			t.Errorf("an include given no time to expand is reported as %q", why)
+		}
+		// Again, now that it is remembered as slow.
+		if why := Unreadable(); !strings.Contains(why, "expand") {
+			t.Errorf("an include skipped for being slow before is reported as %q", why)
+		}
+	})
+}

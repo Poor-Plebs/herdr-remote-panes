@@ -251,7 +251,7 @@ func hostsRead(path string, depth int, read *reading) []string {
 			}
 		case "include":
 			for _, included := range fields[1:] {
-				for _, match := range expand(included) {
+				for _, match := range expand(included, read) {
 					for _, host := range hostsRead(match, depth+1, read) {
 						if !seen[host] {
 							seen[host] = true
@@ -393,7 +393,7 @@ var slowGlobs sync.Map
 
 // expand resolves an Include path, which may be relative to ~/.ssh and may
 // contain globs.
-func expand(pattern string) []string {
+func expand(pattern string, read *reading) []string {
 	if strings.HasPrefix(pattern, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
 			pattern = filepath.Join(home, pattern[2:])
@@ -403,6 +403,8 @@ func expand(pattern string) []string {
 		pattern = filepath.Join(filepath.Dir(Path()), pattern)
 	}
 	if _, slow := slowGlobs.Load(pattern); slow {
+		read.note(pattern, fmt.Sprintf("took longer than %s to expand earlier, so it is "+
+			"not expanded again", includeGlobBudget))
 		return nil
 	}
 	type globbed struct {
@@ -427,6 +429,7 @@ func expand(pattern string) []string {
 	// approached with a small number and hoped for.
 	if includeGlobBudget <= 0 {
 		slowGlobs.Store(pattern, struct{}{})
+		read.note(pattern, "was not given any time to expand")
 		return nil
 	}
 
@@ -434,6 +437,7 @@ func expand(pattern string) []string {
 	select {
 	case got := <-done:
 		if got.err != nil {
+			read.note(pattern, got.err.Error())
 			return nil
 		}
 		matches = got.matches
@@ -441,9 +445,12 @@ func expand(pattern string) []string {
 		// Left to finish on its own and its answer dropped. Recorded so the
 		// next menu does not wait for it again.
 		slowGlobs.Store(pattern, struct{}{})
+		read.note(pattern, fmt.Sprintf("took longer than %s to expand", includeGlobBudget))
 		return nil
 	}
 	if len(matches) > maxIncludeMatches {
+		read.note(pattern, fmt.Sprintf("matched %d files, more than the %d an Include may "+
+			"pull in", len(matches), maxIncludeMatches))
 		return nil
 	}
 	sort.Strings(matches)
