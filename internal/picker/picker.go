@@ -497,20 +497,18 @@ func collect() ([]Entry, string) {
 			// refuses m for the reason it refuses it anywhere.
 			entry.ReadOnly = cfg.EffectiveMode(config.Host{Target: info.Target}) == config.ModeObserve
 		}
-		{
-			entry.Connected = info.Connected
-			entry.Mirrors = info.Mirrors
-			entry.OutsideShared = info.OutsideShared
-			entry.Terminals = info.Terminals
-			entry.SSHOnly = info.SSHOnly
-			entry.NoHerdr = info.NoHerdr
-			entry.AtCapacity = info.AtCapacity
-			entry.SharedName = info.SharedName
-			entry.Unmirrored = info.Unmirrored
-			entry.Mirroring = info.Mirroring
-			entry.GaveUp = info.GaveUp
-			entry.Reason = shortReason(info.LastError)
-		}
+		entry.Connected = info.Connected
+		entry.Mirrors = info.Mirrors
+		entry.OutsideShared = info.OutsideShared
+		entry.Terminals = info.Terminals
+		entry.SSHOnly = info.SSHOnly
+		entry.NoHerdr = info.NoHerdr
+		entry.AtCapacity = info.AtCapacity
+		entry.SharedName = info.SharedName
+		entry.Unmirrored = info.Unmirrored
+		entry.Mirroring = info.Mirroring
+		entry.GaveUp = info.GaveUp
+		entry.Reason = shortReason(info.LastError)
 	}
 
 	entries := make([]Entry, 0, len(order))
