@@ -1303,3 +1303,49 @@ func TestAMachineTurnedOffStaysOutOfTheMenuEvenWhileConnected(t *testing.T) {
 		}
 	}
 }
+
+func TestAMachineTheDaemonKnowsTakesTheDefaultModesRules(t *testing.T) {
+	// m is refused on a machine set to observe, because observe is read-only
+	// and toggling would offer something the mode cannot do. A machine that
+	// reached the menu through the daemon rather than through a file has no
+	// settings of its own, so what m would do to it is the top-level default
+	// -- the same rule a machine known only to ~/.ssh/config is held to.
+	for _, tt := range []struct {
+		mode     string
+		readOnly bool
+	}{
+		{"observe", true},
+		{"ssh", false},
+		{"attach", false},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			configDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(configDir, "config.json"),
+				[]byte(`{"mode":"`+tt.mode+`","hosts":[]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HERDR_PLUGIN_CONFIG_DIR", configDir)
+			home := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HOME", home)
+
+			answerWith(t, syncd.Reply{OK: true, Hosts: []syncd.HostInfo{
+				{Target: "deploy@10.0.0.5", Connected: true, Mirrors: 1},
+			}})
+
+			entries, _ := collect()
+			if len(entries) != 1 {
+				t.Fatalf("want the one machine the daemon reported, got %+v", entries)
+			}
+			if got := entries[0].ReadOnly; got != tt.readOnly {
+				t.Errorf("with the default mode %q the machine is ReadOnly=%v, want %v",
+					tt.mode, got, tt.readOnly)
+			}
+		})
+	}
+}

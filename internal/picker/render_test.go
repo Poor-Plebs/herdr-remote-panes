@@ -1938,3 +1938,35 @@ func TestHalfAReasonRatherThanNoneOfOne(t *testing.T) {
 		}
 	}
 }
+
+func TestTheFloorForHalfAPieceIsWhereItSaysItIs(t *testing.T) {
+	// minPartialStatus is where cutting a dropped piece down stops being worth
+	// the ellipsis it costs. Either side of it is a decision: one column less
+	// and the room holds a separator and two characters, one column more and
+	// it holds something readable. Nothing pinned which side the boundary
+	// falls on, and both spellings drew the same at every width a menu was
+	// asked for.
+	spans := []span{
+		{"unreachable", red},
+		{" · host key changed", dim},
+		{" · enter to retry", dim},
+	}
+	whole := text.Width(plainOf(spans[:1]))
+
+	// Exactly the floor: enough, and the piece is put back cut down.
+	got := fitStatus(append([]span(nil), spans...), whole+minPartialStatus)
+	if len(got) != 2 {
+		t.Errorf("with exactly the floor spare, the state is %q and nothing was put back",
+			plainOf(got))
+	} else if !strings.HasSuffix(plainOf(got), "…") {
+		t.Errorf("the piece put back is not cut down: %q", plainOf(got))
+	}
+
+	// One column less: not enough, and nothing is put back rather than a
+	// separator introducing two characters.
+	got = fitStatus(append([]span(nil), spans...), whole+minPartialStatus-1)
+	if len(got) != 1 {
+		t.Errorf("one column under the floor, the state is %q; the floor is where "+
+			"a piece stops being worth the ellipsis", plainOf(got))
+	}
+}
