@@ -4553,3 +4553,50 @@ func TestAMachineIsFoundByItsTargetBeforeAnothersLabel(t *testing.T) {
 		t.Errorf("with the machines the other way round, prod gave %q (%v)", got.Target, err)
 	}
 }
+
+func TestASpaceBelongsToTheMachineWhoseNameItCarries(t *testing.T) {
+	// Opening a terminal from inside a machine's space asks which machine the
+	// space belongs to. The answer was the first host in the file matching
+	// either the name the space would be given or a tolerant form of it -- and
+	// the tolerant form takes markers off the front, so "☁  ☁bot" comes down
+	// to "bot". A machine called bot was then said to own the space of one
+	// labelled ☁bot, and the terminal opened on the wrong machine.
+	//
+	// pickWorkspace had this fixed for adopting a space. This is the same
+	// tolerance, in the place that decides whose space it is.
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{
+		{Target: "bot"},
+		{Target: "other", Label: "☁bot"},
+	}
+	label := cfg.WorkspaceFor(cfg.Hosts[1])
+	if label != "☁  ☁bot" {
+		t.Fatalf("the space of the labelled machine is called %q, so this test is "+
+			"no longer about the name it was written for", label)
+	}
+
+	for _, order := range [][]config.Host{
+		{cfg.Hosts[0], cfg.Hosts[1]},
+		{cfg.Hosts[1], cfg.Hosts[0]},
+	} {
+		cfg.Hosts = order
+		d := New(cfg)
+		got, ok := d.hostForWorkspaceLabel(label)
+		if !ok {
+			t.Fatalf("with %q first, no machine owns its own space", order[0].Target)
+		}
+		if got.Target != "other" {
+			t.Errorf("with %q first, the space called %q is said to belong to %q; "+
+				"it carries the name of %q exactly",
+				order[0].Target, label, got.Target, "other")
+		}
+	}
+
+	// The tolerance still does its job: a space called just "bot", left from
+	// before workspace_format was what it is, still belongs to bot.
+	cfg.Hosts = []config.Host{{Target: "bot"}, {Target: "other", Label: "☁bot"}}
+	d := New(cfg)
+	if got, ok := d.hostForWorkspaceLabel("bot"); !ok || got.Target != "bot" {
+		t.Errorf(`a space called "bot" is said to belong to %q (%v)`, got.Target, ok)
+	}
+}

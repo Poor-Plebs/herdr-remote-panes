@@ -1182,21 +1182,34 @@ func (d *Daemon) resolveOpenTarget(cmd Command) (config.Host, bool, error) {
 // ordinary local shell, inside that machine's space, with nothing to say why.
 func (d *Daemon) hostForWorkspaceLabel(label string) (config.Host, bool) {
 	cfg := d.config()
-	matches := func(h config.Host) bool {
-		return cfg.WorkspaceFor(h) == label || sameWorkspace(label, h.DisplayLabel())
-	}
 
-	for _, h := range cfg.Hosts {
-		if matches(h) {
+	// Machines connected ad hoc as well, which are not in the config file.
+	d.mu.Lock()
+	adHoc := make([]config.Host, 0, len(d.hosts))
+	for _, state := range d.hosts {
+		adHoc = append(adHoc, state.host)
+	}
+	d.mu.Unlock()
+
+	// The name it carries, before the name it might be carrying. These were
+	// one test, so the first machine in the file that answered either won --
+	// and the tolerant one takes a marker off, and enough of them brings
+	// "☁  ☁bot" down to "bot". A machine called bot was then said to own the
+	// space of one somebody had labelled ☁bot, which is not a strange label
+	// when the marker is the glyph this decorates spaces with. What is opened
+	// on that answer is a terminal, on the wrong machine.
+	//
+	// pickWorkspace was given the same treatment for the same reason: an exact
+	// match is what this made, anything else is a guess, and a guess should not
+	// win over a certainty.
+	for _, h := range append(append([]config.Host(nil), cfg.Hosts...), adHoc...) {
+		if cfg.WorkspaceFor(h) == label {
 			return h, true
 		}
 	}
-	// Also machines connected ad hoc, which are not in the config file.
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for _, state := range d.hosts {
-		if matches(state.host) {
-			return state.host, true
+	for _, h := range append(append([]config.Host(nil), cfg.Hosts...), adHoc...) {
+		if sameWorkspace(label, h.DisplayLabel()) {
+			return h, true
 		}
 	}
 	return config.Host{}, false
