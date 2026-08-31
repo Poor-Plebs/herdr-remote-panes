@@ -1266,3 +1266,40 @@ func TestAMachineConnectedWithoutBeingWrittenDownIsStillInTheMenu(t *testing.T) 
 		t.Errorf("the configured machine is no longer first: %+v", entries)
 	}
 }
+
+func TestAMachineTurnedOffStaysOutOfTheMenuEvenWhileConnected(t *testing.T) {
+	// "disabled" takes a machine out of the list, and the sweep of
+	// ~/.ssh/config is already careful not to put it back. Nothing disconnects
+	// one when it is disabled, though -- the daemon simply stops connecting to
+	// it -- so a machine turned off while connected goes on being reported,
+	// and adding the daemon's machines to the menu put it back by the other
+	// door.
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"),
+		[]byte(`{"hosts":[{"target":"bot"},{"target":"old","disabled":true}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", configDir)
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// In ~/.ssh/config as well, which is where a disabled machine usually is.
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"),
+		[]byte("Host old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+
+	answerWith(t, syncd.Reply{OK: true, Hosts: []syncd.HostInfo{
+		{Target: "bot", Connected: true, Mirrors: 1},
+		{Target: "old", Connected: true, Mirrors: 2},
+	}})
+
+	entries, _ := collect()
+	for _, entry := range entries {
+		if entry.Target == "old" {
+			t.Errorf("a machine turned off in the config is in the menu: %+v", entry)
+		}
+	}
+}

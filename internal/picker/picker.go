@@ -482,6 +482,14 @@ func collect() ([]Entry, string) {
 			if !worthDisconnecting(Entry{Connected: info.Connected, GaveUp: info.GaveUp}) {
 				continue
 			}
+			// And not one turned off in the config. Nothing disconnects a
+			// machine when it is disabled -- the daemon just stops connecting
+			// to it -- so it goes on being reported for as long as the session
+			// lasts, and putting it back here is the door the sweep of
+			// ~/.ssh/config above is already careful not to leave open.
+			if disabled[info.Target] {
+				continue
+			}
 			entry = add(info.Target)
 			entry.Label = info.Label
 			// Held to the same rule as a machine only ~/.ssh/config knows:
