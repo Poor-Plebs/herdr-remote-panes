@@ -1,12 +1,15 @@
 package picker
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
 )
 
 // The menu's loop had no test at all: it reads a key, moves or acts, and
@@ -39,6 +42,20 @@ func runMenu(t *testing.T, machines, keys string) menuRun {
 // mirrored decides which way its toggle goes.
 func runMenuConfigured(t *testing.T, machines, pluginConfig, keys string) menuRun {
 	t.Helper()
+	return runMenuRefusing(t, machines, pluginConfig, keys, nil, nil)
+}
+
+// runMenuRefusing is runMenuConfigured with the daemon saying no.
+//
+// The screens shown when an action fails were reached by nothing: every menu a
+// test drove had a daemon that agreed to everything. What they say is the last
+// thing somebody sees before the menu comes back, and one of them was drawn
+// from a name that arrives out of a file.
+// A daemon can be given as well, since half of what the menu does is only
+// offered for a machine that is connected: d on one that is not is a no-op, so
+// the screen shown when disconnecting fails cannot be reached without one.
+func runMenuRefusing(t *testing.T, machines, pluginConfig, keys string, refuse error, answering *syncd.Reply) menuRun {
+	t.Helper()
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -59,6 +76,10 @@ func runMenuConfigured(t *testing.T, machines, pluginConfig, keys string) menuRu
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", configDir)
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	t.Setenv("HERDR_SESSION", "no-daemon-here")
+
+	if answering != nil {
+		answerWith(t, *answering)
+	}
 
 	keysIn, keysOut, err := os.Pipe()
 	if err != nil {
@@ -83,14 +104,23 @@ func runMenuConfigured(t *testing.T, machines, pluginConfig, keys string) menuRu
 		got.err = Run(Actions{
 			Connect: func(target string) (string, error) {
 				got.connected = append(got.connected, target)
+				if refuse != nil {
+					return "", refuse
+				}
 				return "connected to " + target, nil
 			},
 			SetMode: func(target, mode string) (string, error) {
 				got.modes = append(got.modes, [2]string{target, mode})
+				if refuse != nil {
+					return "", refuse
+				}
 				return "changed", nil
 			},
 			Disconnect: func(target string) (string, error) {
 				got.closed = append(got.closed, target)
+				if refuse != nil {
+					return "", refuse
+				}
 				return "closed", nil
 			},
 		})
@@ -560,5 +590,43 @@ func TestWhatElseATerminalSendsTheMenu(t *testing.T) {
 			t.Errorf("%s: the read after it gave %v, want %v — something was left "+
 				"behind, and the menu acts on it", tt.what, got, tt.left)
 		}
+	}
+}
+
+func TestWhatTheMenuSaysWhenAnActionIsRefused(t *testing.T) {
+	// Every menu a test drove had a daemon that agreed to everything, so the
+	// screens shown when one refuses were reached by nothing at all. They are
+	// the last thing somebody sees before the menu comes back, and they carry
+	// a machine's name -- which arrives out of a file and goes straight to a
+	// terminal.
+	const machines = "Host bot\nHost \x1b[31mred\n"
+	refusal := errors.New("the daemon said no")
+
+	// Connected, because d on a machine that is not is a no-op and the screen
+	// this is about is never reached.
+	connected := &syncd.Reply{OK: true, Hosts: []syncd.HostInfo{
+		{Target: "bot", Label: "bot", Connected: true, Mirrors: 1},
+	}}
+
+	for _, tt := range []struct {
+		what string
+		keys string
+		want string
+	}{
+		// d on the first machine, then a key to dismiss the screen, then q.
+		{what: "disconnecting", keys: "d q", want: "Could not disconnect bot"},
+		// m on the first machine: the confirmation, then the refusal.
+		{what: "changing the mode", keys: "m y q", want: "Could not change bot"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			got := runMenuRefusing(t, machines, "", tt.keys, refusal, connected)
+			if !strings.Contains(visible(got.drawn), tt.want) {
+				t.Errorf("the screen never said %q:\n%s", tt.want, visible(got.drawn))
+			}
+			// And what the daemon said, or the screen is a dead end.
+			if !strings.Contains(visible(got.drawn), "the daemon said no") {
+				t.Errorf("the screen does not say why:\n%s", visible(got.drawn))
+			}
+		})
 	}
 }
