@@ -4426,3 +4426,75 @@ func TestAHalfWrittenConfigKeepsTheOneInUseAndSaysSoOnce(t *testing.T) {
 		t.Errorf("the finished file says split and the daemon is using %q", got)
 	}
 }
+
+func TestATerminalThatWillNotMirrorIsGivenUpOnAndCounted(t *testing.T) {
+	// The whole chain from a pane that will not open to the number the menu
+	// shows. Each link had a test and the joins had none: backOff is called
+	// directly in one, the abandoned set is written by hand in another, and
+	// the line that reaches backOff when opening a mirror fails -- which is
+	// the only way a real terminal gets there -- was never once run.
+	//
+	// What it costs when it breaks is quiet: the machine goes on holding a
+	// terminal that nothing here shows, and the listing says a smaller number
+	// than the machine has with nothing to say why.
+	withFakeHerdr(t)
+	withRemoteHerdr(t)
+	withConfigFile(t, `{"hosts":[{"target":"bot","mode":"attach"}]}`)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+
+	// Herdr will not open a pane here, which is what a mirror needs.
+	refuseOnMachine(t, os.Getenv(fakeHerdrState), "plugin pane open")
+
+	logged := captureLog(t)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	// More passes than the limit, with the wait between attempts already
+	// served. backOff schedules the next try for later, so a loop that does
+	// not let time pass makes exactly one attempt and then skips the terminal
+	// as backed off -- which is right, and is not what this is about.
+	for i := 0; i < maxMirrorAttempts+3; i++ {
+		d.reconcileAll()
+		d.mu.Lock()
+		if state := d.hosts["bot"]; state != nil {
+			for terminalID := range state.retryAt {
+				state.retryAt[terminalID] = time.Now().Add(-time.Minute)
+			}
+		}
+		d.mu.Unlock()
+	}
+
+	said := logged.String()
+	if !strings.Contains(said, "giving up on terminal") {
+		t.Fatalf("a terminal that never mirrored was not given up on:\n%s", said)
+	}
+	// And it says what to do, since the terminal is still there on the machine.
+	if !strings.Contains(said, "connect again to try mirroring it") {
+		t.Errorf("giving up says nothing about what would try again:\n%s", said)
+	}
+
+	// The count the menu draws from. Without it the machine simply shows fewer
+	// terminals than it has.
+	d.mu.Lock()
+	state := d.hosts["bot"]
+	abandoned := len(state.abandoned)
+	d.mu.Unlock()
+	if abandoned == 0 {
+		t.Fatal("nothing was recorded as given up on, so the listing counts none")
+	}
+
+	for _, info := range d.status() {
+		if info.Target != "bot" {
+			continue
+		}
+		if info.Unmirrored != abandoned {
+			t.Errorf("%d terminals were given up on and the listing reports %d",
+				abandoned, info.Unmirrored)
+		}
+		return
+	}
+	t.Fatal("the listing has no entry for the machine at all")
+}
