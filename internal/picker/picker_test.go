@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -1107,5 +1108,90 @@ func TestTwoWarningsGetTheRoomForTwoOfThem(t *testing.T) {
 	one := warningLines(80, config+" "+config+" "+config)
 	if len(one) > maxWarningLines {
 		t.Errorf("one warning took %d lines, and the bound is %d", len(one), maxWarningLines)
+	}
+}
+
+func TestEverythingTheDaemonSaysAboutAMachineReachesTheMenu(t *testing.T) {
+	// collect copies the daemon's answer onto the entry the menu draws, field
+	// by field, by hand. A field added to HostInfo and not to that loop is a
+	// field the daemon knows and the menu shows the zero value for -- which
+	// for a count is "0 mirrored" and for a flag is "everything is fine".
+	//
+	// Held by reflection rather than a list here. Four of these were added in
+	// one week, and the list that would have needed updating four times is
+	// exactly the list that would have been updated three.
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"),
+		[]byte(`{"hosts":[{"target":"bot"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", configDir)
+
+	// Every field the daemon can report, set to something that is not the
+	// zero value, so a field that never arrives is a field still holding one.
+	said := syncd.HostInfo{Target: "bot"}
+	shape := reflect.ValueOf(&said).Elem()
+	for i := 0; i < shape.NumField(); i++ {
+		switch field := shape.Field(i); field.Kind() {
+		case reflect.Bool:
+			field.SetBool(true)
+		case reflect.Int:
+			field.SetInt(7)
+		}
+	}
+	// Left as the machine's own name: it is what the entry is found by, and a
+	// label is what the menu shows instead of the target when they differ.
+	said.Target = "bot"
+	said.LastError = "host key changed"
+
+	answerWith(t, syncd.Reply{OK: true, Hosts: []syncd.HostInfo{said}})
+
+	entries, _ := collect()
+	var entry *Entry
+	for i := range entries {
+		if entries[i].Target == "bot" {
+			entry = &entries[i]
+		}
+	}
+	if entry == nil {
+		t.Fatalf("the machine the daemon reported is not in the menu at all: %+v", entries)
+	}
+
+	// Every name the two have in common has to have made the journey.
+	from := reflect.ValueOf(said)
+	to := reflect.ValueOf(*entry)
+	checked := 0
+	for i := 0; i < from.NumField(); i++ {
+		name := from.Type().Field(i).Name
+		if name == "Target" || name == "Label" {
+			// What the menu knows for itself. The name comes from the config
+			// or from ~/.ssh/config, which is where the entry was made from,
+			// and taking the daemon's would rename a machine to whatever it
+			// happened to be connected as.
+			continue
+		}
+		got := to.FieldByName(name)
+		if !got.IsValid() || got.Kind() != from.Field(i).Kind() {
+			// Not a field the menu has, or not the same kind of thing:
+			// LastError becomes Reason, shortened for a line with no room for
+			// a sentence, and is checked below on its own.
+			continue
+		}
+		checked++
+		if got.Interface() != from.Field(i).Interface() {
+			t.Errorf("the daemon said %s is %v and the menu has %v; collect "+
+				"copies these one by one and this one is not in the loop",
+				name, from.Field(i).Interface(), got.Interface())
+		}
+	}
+	if checked < 8 {
+		t.Fatalf("only %d fields were compared, which is fewer than the two "+
+			"have in common; this has stopped checking what it was for", checked)
+	}
+
+	// The one that is renamed on the way, because the menu has room for a
+	// cause and not for a sentence.
+	if entry.Reason == "" {
+		t.Error("the daemon said why the machine failed and the menu shows nothing")
 	}
 }
