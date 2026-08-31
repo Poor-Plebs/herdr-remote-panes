@@ -544,7 +544,7 @@ func (c Config) Describe() []string {
 	// Sorted with the rest, "host" would land between herdr_bin and hosts and
 	// read as another setting.
 	for _, h := range c.Hosts {
-		if set := h.overrides(); len(set) > 0 {
+		if set := h.overrides(c); len(set) > 0 {
 			out = append(out, fmt.Sprintf("config: host %s: %s",
 				strconv.Quote(h.Target), strings.Join(set, ", ")))
 		}
@@ -571,7 +571,13 @@ func same(written, fallback reflect.Value) bool {
 // overrides is what a machine says for itself, rather than taking the setting
 // above it. Only what is set: a machine with nothing of its own has nothing
 // worth a line, and most of them have nothing of their own.
-func (h Host) overrides() []string {
+//
+// Whether it is saying anything different is the other half. An override that
+// repeats the setting above is exactly as much of a nothing as a top-level
+// setting that repeats the default -- which the lines above already say -- and
+// it is the same thing that keeps a default from arriving when it improves.
+// One real config has a machine set to the mode it would have had anyway.
+func (h Host) overrides(parent Config) []string {
 	shape := reflect.TypeOf(h)
 	value := reflect.ValueOf(h)
 	var out []string
@@ -590,7 +596,12 @@ func (h Host) overrides() []string {
 		if field.Kind() == reflect.String {
 			shown = strconv.Quote(field.String())
 		}
-		out = append(out, fmt.Sprintf("%s = %s", name, shown))
+		line := fmt.Sprintf("%s = %s", name, shown)
+		if above := reflect.ValueOf(parent).FieldByName(shape.Field(i).Name); above.IsValid() &&
+			same(field, above) {
+			line += " (same as the setting above)"
+		}
+		out = append(out, line)
 	}
 	return out
 }

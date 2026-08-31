@@ -813,3 +813,41 @@ func TestASettingThatSaysWhatWouldHaveHappenedAnywaySaysSo(t *testing.T) {
 		t.Errorf("a setting nobody wrote down is marked as though they had:\n%s", said)
 	}
 }
+
+func TestAMachineOverrideThatChangesNothingSaysSo(t *testing.T) {
+	// The lines above say which top-level settings merely repeat the default,
+	// because a setting written down and a setting doing something are not the
+	// same thing and the file cannot tell them apart. A per-machine override
+	// that repeats the setting above is the same nothing, one level down --
+	// and the same thing that keeps an improved default from arriving.
+	cfg := Defaults()
+	cfg.Mode = ModeSSH
+	cfg.Hosts = []Host{
+		{Target: "bot", Mode: ModeAttach},
+		{Target: "prod", Mode: ModeSSH},
+		{Target: "plain"},
+	}
+
+	said := map[string]string{}
+	for _, line := range cfg.Describe() {
+		rest, found := strings.CutPrefix(line, "config: host ")
+		if !found {
+			continue
+		}
+		target, settings, _ := strings.Cut(rest, ": ")
+		said[target] = settings
+	}
+	if len(said) == 0 {
+		t.Fatal("no machine lines at all, so this checks nothing")
+	}
+
+	if got := said[`"prod"`]; !strings.Contains(got, "same as the setting above") {
+		t.Errorf(`prod is set to the mode it would have had anyway, and its line reads %q`, got)
+	}
+	if got := said[`"bot"`]; strings.Contains(got, "same as the setting above") {
+		t.Errorf(`bot is set to a different mode from the one above, and its line reads %q`, got)
+	}
+	if _, listed := said[`"plain"`]; listed {
+		t.Error("a machine with nothing of its own was given a line")
+	}
+}
