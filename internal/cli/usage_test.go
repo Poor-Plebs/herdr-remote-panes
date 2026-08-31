@@ -865,3 +865,50 @@ func TestACommandThatIgnoresAnArgumentSaysSo(t *testing.T) {
 		t.Errorf("a command given nothing was warned about arguments: %q", said.String())
 	}
 }
+
+func TestTheWordsBecomeTheCommandsTheDaemonIsSent(t *testing.T) {
+	// The half of this package nothing could see. The daemon's side is tested
+	// with commands built by hand, and the words are tested against the usage
+	// text; what turns one into the other was between the two.
+	//
+	// "new tab" is the one that has been wrong before: open and open-tab share
+	// a case and differ only in the placement they ask for, and that argument
+	// once went nowhere -- so the new-tab action opened whatever a new
+	// terminal would have.
+	for _, tt := range []struct {
+		command   string
+		args      []string
+		wantCmd   string
+		wantHost  string
+		wantPlace string
+	}{
+		{command: "open-tab", wantCmd: "open", wantPlace: "tab"},
+		{command: "open", wantCmd: "open", wantPlace: ""},
+		{command: "open-tab", args: []string{"bot"}, wantCmd: "open", wantHost: "bot", wantPlace: "tab"},
+		{command: "connect", args: []string{"bot"}, wantCmd: "connect", wantHost: "bot"},
+		{command: "disconnect", args: []string{"bot"}, wantCmd: "disconnect", wantHost: "bot"},
+		{command: "refresh", wantCmd: "refresh"},
+	} {
+		t.Run(tt.command+" "+strings.Join(tt.args, " "), func(t *testing.T) {
+			asked := answerWith(t, syncd.Reply{OK: true, Message: "done"})
+			if err := run(tt.command, tt.args); err != nil {
+				t.Fatalf("%s: %v", tt.command, err)
+			}
+			sent := asked()
+			if len(sent) != 1 {
+				t.Fatalf("%q sent %d commands, want one: %+v", tt.command, len(sent), sent)
+			}
+			if sent[0].Cmd != tt.wantCmd {
+				t.Errorf("%q sent %q, want %q", tt.command, sent[0].Cmd, tt.wantCmd)
+			}
+			if sent[0].Host != tt.wantHost {
+				t.Errorf("%q sent host %q, want %q", tt.command, sent[0].Host, tt.wantHost)
+			}
+			if sent[0].Placement != tt.wantPlace {
+				t.Errorf("%q sent placement %q, want %q -- which is the whole "+
+					"difference between a new terminal and a new tab",
+					tt.command, sent[0].Placement, tt.wantPlace)
+			}
+		})
+	}
+}
