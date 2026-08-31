@@ -1195,3 +1195,65 @@ func TestEverythingTheDaemonSaysAboutAMachineReachesTheMenu(t *testing.T) {
 		t.Error("the daemon said why the machine failed and the menu shows nothing")
 	}
 }
+
+func TestAMachineConnectedWithoutBeingWrittenDownIsStillInTheMenu(t *testing.T) {
+	// connect falls back to whatever text is selected, so a machine can be
+	// reached without appearing in either file. It was then connected, mirrors
+	// and all, and missing from the one screen that disconnects a machine or
+	// toggles its mirroring -- while `status` listed it, so the two disagreed
+	// about which machines exist.
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"),
+		[]byte(`{"hosts":[{"target":"bot"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", configDir)
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+
+	answerWith(t, syncd.Reply{OK: true, Hosts: []syncd.HostInfo{
+		{Target: "bot", Connected: true, Mirrors: 1, Mirroring: true},
+		{Target: "deploy@10.0.0.5", Connected: true, Mirrors: 4, Mirroring: true},
+		{Target: "gone@10.0.0.6", GaveUp: true, LastError: "connection refused"},
+		// Neither connected nor given up on: nothing to say about it that
+		// would be true, since "from ~/.ssh/config" is where it is not.
+		{Target: "quiet@10.0.0.7"},
+	}})
+
+	entries, _ := collect()
+	found := map[string]Entry{}
+	for _, entry := range entries {
+		found[entry.Target] = entry
+	}
+
+	if got, ok := found["deploy@10.0.0.5"]; !ok {
+		t.Errorf("a connected machine is missing from the menu: %v", found)
+	} else if got.Mirrors != 4 {
+		t.Errorf("it is listed with %d mirrors and the daemon said 4", got.Mirrors)
+	} else if plain := plainOf(statusSpans(got)); !strings.Contains(plain, "connected") {
+		t.Errorf("it reads %q, which is not what a connected machine says", plain)
+	}
+
+	if got, ok := found["gone@10.0.0.6"]; !ok {
+		t.Errorf("a machine that was given up on is missing from the menu: %v", found)
+	} else if plain := plainOf(statusSpans(got)); !strings.Contains(plain, "unreachable") {
+		t.Errorf("it reads %q, which does not say it could not be reached", plain)
+	}
+
+	if _, ok := found["quiet@10.0.0.7"]; ok {
+		t.Error("a machine that is neither connected nor given up on was listed, " +
+			"and the only thing the menu could say about it is that ~/.ssh/config " +
+			"has it, which is where it is not")
+	}
+
+	// The machines that were written down are still there, and first.
+	if entries[0].Target != "bot" {
+		t.Errorf("the configured machine is no longer first: %+v", entries)
+	}
+}

@@ -464,7 +464,30 @@ func collect() ([]Entry, string) {
 	// effect looks exactly like a fix that did not work.
 	warning = bothWarnings(warning, stale)
 	for _, info := range hosts {
-		if entry, ok := byTarget[info.Target]; ok {
+		entry, ok := byTarget[info.Target]
+		if !ok {
+			// A machine the daemon has and neither file names. connect falls
+			// back to whatever text is selected, so a target can be reached
+			// without ever being written down -- and it was then connected,
+			// possibly mirroring, and absent from the one screen that
+			// disconnects a machine or toggles its mirroring. The listing
+			// showed it; the menu did not.
+			//
+			// Only once it is connected or has been given up on. Those say so
+			// in their own words, where a machine that is neither falls
+			// through to "from ~/.ssh/config", which for this one would not be
+			// true.
+			if !info.Connected && !info.GaveUp {
+				continue
+			}
+			entry = add(info.Target)
+			entry.Label = info.Label
+			// Held to the same rule as a machine only ~/.ssh/config knows:
+			// what m would do to it is the top-level default, and observe
+			// refuses m for the reason it refuses it anywhere.
+			entry.ReadOnly = cfg.EffectiveMode(config.Host{Target: info.Target}) == config.ModeObserve
+		}
+		{
 			entry.Connected = info.Connected
 			entry.Mirrors = info.Mirrors
 			entry.OutsideShared = info.OutsideShared
