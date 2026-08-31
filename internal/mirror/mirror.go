@@ -280,9 +280,16 @@ const (
 
 // failed describes a command that would not run, with whatever it said about
 // itself when there is anything worth repeating.
-func failed(err error, argv []string, said *tail) error {
-	if line := said.lastLine(); line != "" {
-		return fmt.Errorf("%w running: %s: %s", err, describeCommand(argv), line)
+// The tails are asked in order and the first that has anything wins, so a
+// caller can offer the place a reason usually is and then the place it
+// sometimes is. What ssh says on standard error is the better answer where
+// there is one: it is a reason by construction, where the other is whatever
+// the far side last put on the screen.
+func failed(err error, argv []string, said ...*tail) error {
+	for _, t := range said {
+		if line := t.lastLine(); line != "" {
+			return fmt.Errorf("%w running: %s: %s", err, describeCommand(argv), line)
+		}
 	}
 	return fmt.Errorf("%w running: %s", err, describeCommand(argv))
 }
@@ -362,7 +369,18 @@ func attach(client *remote.Client, terminal string) error {
 	// far side asks for afterwards is its own business and passes through.
 	gate := newMouseGate(os.Stdout)
 	defer gate.flush()
-	cmd.Stdout = gate
+	// And a tail of what the far side sent, for when it is the far side that
+	// failed rather than ssh. `herdr terminal attach` writes its own refusals
+	// through the pty, which arrives here rather than on standard error -- so
+	// somebody watching saw why and the log recorded "exit status 1". One real
+	// mirror.log has sixty-six of those.
+	//
+	// Second to standard error, not instead of it: this is whatever was last
+	// on the screen, which is a reason when the attach refused and the tail of
+	// a working terminal when the connection dropped under it. Sanitised and
+	// cut to one line either way.
+	screen := &tail{max: maxSaid}
+	cmd.Stdout = io.MultiWriter(gate, screen)
 	// Still the pane, so nothing changes for somebody watching it; kept as
 	// well, so the record says why rather than only that. The same thing shell
 	// does, for the same reason -- ssh writes why it could not connect to
@@ -377,13 +395,13 @@ func attach(client *remote.Client, terminal string) error {
 	said := &tail{max: maxSaid}
 	cmd.Stderr = io.MultiWriter(os.Stderr, said)
 	if err := cmd.Start(); err != nil {
-		return failed(err, argv, said)
+		return failed(err, argv, said, screen)
 	}
 	stop := watchForStop(cmd.Process)
 	defer stop()
 
 	if err := cmd.Wait(); err != nil {
-		return failed(err, argv, said)
+		return failed(err, argv, said, screen)
 	}
 	return nil
 }

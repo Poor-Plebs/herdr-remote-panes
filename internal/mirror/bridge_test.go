@@ -519,3 +519,100 @@ func TestAnObservedTerminalThatCouldNotConnectRecordsWhy(t *testing.T) {
 		t.Errorf("a refused connection now plans %v rather than trying again", next)
 	}
 }
+
+// refusingHerdr puts an ssh on PATH that connects fine and lets the far side
+// refuse: the message comes back the way a pty carries it, on standard output.
+func refusingHerdr(t *testing.T, reason string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"last=\"\"; for a in \"$@\"; do last=\"$a\"; done\n" +
+		"case \"$last\" in\n" +
+		"  *command\\ -v\\ herdr*) echo /usr/bin/herdr; exit 0;;\n" +
+		"esac\n" +
+		"echo \"" + reason + "\"\n" +
+		"exit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestAMirrorTheFarSideRefusedRecordsWhatItSaid(t *testing.T) {
+	// ssh connected; the Herdr on the machine refused. That message comes back
+	// through the pty, which is standard output here, so standard error is
+	// empty and the record said "exit status 1" -- sixty-six times in one real
+	// mirror.log, for a machine that was answering perfectly well.
+	refusingHerdr(t, "no terminal with id term_1")
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	client := remote.NewWithBin("bot", "hub", "/usr/bin/herdr")
+	err := attach(client, "term_1")
+	if err == nil {
+		t.Fatal("the far side refused and the pane reported no error")
+	}
+	if !strings.Contains(err.Error(), "no terminal with id term_1") {
+		t.Errorf("the failure reads %q, and the machine said why", err)
+	}
+}
+
+// noisySSH puts an ssh on PATH that writes to both places and fails the way
+// ssh does: something on the screen, and its own reason on standard error.
+func noisySSH(t *testing.T, onScreen, onStderr string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"last=\"\"; for a in \"$@\"; do last=\"$a\"; done\n" +
+		"case \"$last\" in\n" +
+		"  *command\\ -v\\ herdr*) echo /usr/bin/herdr; exit 0;;\n" +
+		"esac\n" +
+		"echo \"" + onScreen + "\"\n" +
+		"echo \"" + onStderr + "\" >&2\n" +
+		"exit 255\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestAMirrorWithBothPlacesFilledSaysTheReason(t *testing.T) {
+	// The same as the unit below, through the pane rather than through the
+	// helper: a connection that drops under a working terminal leaves the
+	// screen's last line in one tail and ssh's complaint in the other, and
+	// which one the record gets is decided at the call rather than in failed.
+	noisySSH(t, "user@bot:~$ ls -la", "Host key verification failed.")
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	client := remote.NewWithBin("bot", "hub", "/usr/bin/herdr")
+	err := attach(client, "term_1")
+	if err == nil {
+		t.Fatal("the connection failed and the pane reported no error")
+	}
+	if !strings.Contains(err.Error(), "Host key verification failed") {
+		t.Errorf("the failure reads %q, and ssh said why on standard error", err)
+	}
+	if strings.Contains(err.Error(), "ls -la") {
+		t.Errorf("the failure carries the screen rather than the reason: %q", err)
+	}
+}
+
+func TestSshsOwnReasonIsPreferredToWhatWasOnTheScreen(t *testing.T) {
+	// Both places can have something in them: a connection that drops under a
+	// working terminal leaves the screen's last line in one and ssh's
+	// complaint in the other. The complaint is a reason by construction; the
+	// screen is whatever the terminal happened to be showing.
+	said := &tail{max: maxSaid}
+	said.Write([]byte("Host key verification failed.\n"))
+	screen := &tail{max: maxSaid}
+	screen.Write([]byte("$ ls -la\n"))
+
+	err := failed(errors.New("exit status 255"), []string{"ssh", "bot"}, said, screen)
+	if !strings.Contains(err.Error(), "Host key verification failed") {
+		t.Errorf("the failure reads %q, and ssh said why", err)
+	}
+	if strings.Contains(err.Error(), "ls -la") {
+		t.Errorf("the failure carries the screen rather than the reason: %q", err)
+	}
+}
