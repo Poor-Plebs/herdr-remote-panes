@@ -2692,7 +2692,14 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 			state.dismissed[terminalID] = true
 			closedHere = append(closedHere, terminalID)
 		case mirrorReplace:
-			log.Printf("%s: replacing pane %s, its mirror is not running", state.host.Target, paneID)
+			// Named, not just numbered. This is the one branch that closes a
+			// pane on the strength of a remembered id alone: the identity
+			// check above compares the terminal a running mirror reports, and
+			// there is nothing running here to ask. The id comes out of the
+			// snapshot, Herdr reuses ids, and if one ever comes back holding
+			// something else this line is what says which pane went.
+			log.Printf("%s: replacing pane %s %q, the mirror of terminal %s is not running in it",
+				state.host.Target, paneID, index.labelOf[paneID], terminalID)
 			if err := herdrcli.ClosePaneByID(paneID); err != nil {
 				log.Printf("close stale mirror %s: %v", paneID, err)
 			}

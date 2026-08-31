@@ -4266,3 +4266,51 @@ func TestAStrayIsCheckedAgainBeforeItIsClosed(t *testing.T) {
 		t.Error("the pane that was still the stray was left open, so nothing was moved")
 	}
 }
+
+func TestReplacingAPaneSaysWhichPaneItWas(t *testing.T) {
+	// The one branch that closes a pane on the strength of a remembered id
+	// alone. The identity check beside it compares the terminal a running
+	// mirror reports, and this branch runs precisely when nothing is running
+	// there to ask -- so if a reused id ever brings back somebody else's pane,
+	// the log is the only record of what was closed. An id on its own is not
+	// one: nothing afterwards can say what "w1:p5" was.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+	withConfigFile(t, `{"hosts":[{"target":"bot","mode":"attach"}]}`)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+	d.persist()
+
+	// A second daemon over the same Herdr: the mirrors are remembered, and
+	// nothing is running in those panes -- which is what Herdr restoring a
+	// plugin pane as a plain shell leaves behind.
+	logged := captureLog(t)
+	second := New(cfg)
+	if reply := second.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("reconnect: %s", reply.Message)
+	}
+	settle(t, second, here, 2, there)
+
+	line := ""
+	for _, l := range strings.Split(logged.String(), "\n") {
+		if strings.Contains(l, "replacing pane") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatalf("no pane was replaced, so this test is about nothing:\n%s", logged.String())
+	}
+	if !strings.Contains(line, "@bot") {
+		t.Errorf("the line names no pane, only an id: %q", line)
+	}
+	if !strings.Contains(line, "terminal ") {
+		t.Errorf("the line does not say which terminal's mirror was missing: %q", line)
+	}
+}
