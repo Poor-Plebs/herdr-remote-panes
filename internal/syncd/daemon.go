@@ -1183,10 +1183,14 @@ func (d *Daemon) resolveOpenTarget(cmd Command) (config.Host, bool, error) {
 func (d *Daemon) hostForWorkspaceLabel(label string) (config.Host, bool) {
 	cfg := d.config()
 
-	// Machines connected ad hoc as well, which are not in the config file.
+	// Machines connected ad hoc as well, which are not in the config file. In
+	// the order the daemon reports them everywhere else rather than the map's:
+	// ranging a map is a different order every time, so two machines that both
+	// answer to a name would take turns owning the space, and which terminal
+	// went where would depend on nothing anybody could see.
 	d.mu.Lock()
 	adHoc := make([]config.Host, 0, len(d.hosts))
-	for _, state := range d.hosts {
+	for _, state := range d.orderedHosts() {
 		adHoc = append(adHoc, state.host)
 	}
 	d.mu.Unlock()

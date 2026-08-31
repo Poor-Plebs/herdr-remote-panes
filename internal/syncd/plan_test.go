@@ -4600,3 +4600,34 @@ func TestASpaceBelongsToTheMachineWhoseNameItCarries(t *testing.T) {
 		t.Errorf(`a space called "bot" is said to belong to %q (%v)`, got.Target, ok)
 	}
 }
+
+func TestWhichMachineOwnsASpaceDoesNotChangeBetweenAsks(t *testing.T) {
+	// Machines connected without being in the config live in a map, and
+	// ranging a map is a different order every time. Two of them answering to
+	// one name would take turns owning the space, so where a terminal opened
+	// would depend on nothing anybody could see or repeat -- and the report of
+	// it would be right half the time.
+	cfg := config.Defaults()
+	d := New(cfg)
+	// Two ad-hoc machines whose spaces would carry the same name.
+	d.hosts = map[string]*hostSync{
+		"one": {host: config.Host{Target: "one", Label: "shared"}},
+		"two": {host: config.Host{Target: "two", Label: "shared"}},
+	}
+
+	first, ok := d.hostForWorkspaceLabel(cfg.WorkspaceFor(config.Host{Target: "x", Label: "shared"}))
+	if !ok {
+		t.Fatal("neither machine owns the space, so this is about nothing")
+	}
+	for i := 0; i < 50; i++ {
+		got, ok := d.hostForWorkspaceLabel(cfg.WorkspaceFor(config.Host{Target: "x", Label: "shared"}))
+		if !ok || got.Target != first.Target {
+			t.Fatalf("ask %d gave %q where the first gave %q", i, got.Target, first.Target)
+		}
+	}
+	// And it is the one the daemon lists first, not whichever the map offered.
+	if first.Target != "one" {
+		t.Errorf("the space went to %q; with neither in the config they are "+
+			"reported in sorted order, so it is one", first.Target)
+	}
+}
