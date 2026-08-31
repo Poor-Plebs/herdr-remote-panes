@@ -4317,3 +4317,47 @@ func TestTheSpaceOnAMachineIsChosenByItsExactNameFirst(t *testing.T) {
 		t.Errorf("claimed %+v, which is not this machine's space", got)
 	}
 }
+
+func TestConnectingAgainForgetsWhatWasClosed(t *testing.T) {
+	// Closing a mirror by hand records the terminal so it is not opened again
+	// on the next pass, two seconds later. That record is kept in the snapshot,
+	// so it survives a restart -- which is what the README means by "one you
+	// closed does not come back".
+	//
+	// The way out is connecting to the machine again, which forgets the lot.
+	// Both pages say so and nothing held it: taking the line out leaves a
+	// terminal dismissed for as long as the snapshot lasts, with the
+	// documentation offering a way back that does nothing.
+	here := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	d.dispatch(Command{Cmd: "connect", Host: "bot"})
+	settle(t, d, here, 2)
+
+	d.mu.Lock()
+	state, ok := d.hosts["bot"]
+	if !ok {
+		d.mu.Unlock()
+		t.Fatal("the machine did not connect, so there is nothing to dismiss")
+	}
+	state.dismissed["term_closed_by_hand"] = true
+	state.abandoned["term_given_up_on"] = true
+	d.mu.Unlock()
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connecting again was refused: %q", reply.Message)
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.hosts["bot"].dismissed) != 0 {
+		t.Errorf("a terminal closed by hand is still dismissed after connecting again, "+
+			"so the way back the documentation offers does nothing: %v",
+			d.hosts["bot"].dismissed)
+	}
+	// The same for one given up on after failing: connecting is how somebody
+	// says "try now", and it would be a strange thing to say and be ignored.
+	if len(d.hosts["bot"].abandoned) != 0 {
+		t.Errorf("a terminal given up on is still abandoned after connecting again: %v",
+			d.hosts["bot"].abandoned)
+	}
+}

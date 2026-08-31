@@ -286,6 +286,10 @@ still closed after a restart — including one you ended by typing `exit` after
 something went wrong, which leaves the session with that command's status
 rather than zero.
 
+Until you pick the machine from the menu again, which forgets what was closed
+and brings those terminals back. It is the same key that retries a machine that
+was given up on, and it means the same thing: start afresh with this one.
+
 A link that keeps dropping is a different thing. If a replacement terminal does
 not last either, the machine is left alone rather than having a pane opened and
 shut every couple of seconds for the rest of the session. It shows as
