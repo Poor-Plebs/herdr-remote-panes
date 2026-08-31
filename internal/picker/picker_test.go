@@ -1106,8 +1106,12 @@ func TestTwoWarningsGetTheRoomForTwoOfThem(t *testing.T) {
 	// One warning keeps the room for one: the extra lines are for the second
 	// message, not a licence for the first to take more of the popup.
 	one := warningLines(80, config+" "+config+" "+config)
-	if len(one) > maxWarningLines {
-		t.Errorf("one warning took %d lines, and the bound is %d", len(one), maxWarningLines)
+	// Two, written out. Comparing against maxWarningLines means raising the
+	// bound raises what this expects, so a warning could be allowed to take
+	// the whole popup and this would still pass. Two is the decision; changing
+	// it deliberately should mean changing this line too.
+	if len(one) > 2 {
+		t.Errorf("one warning took %d lines, and the menu gives it two", len(one))
 	}
 }
 

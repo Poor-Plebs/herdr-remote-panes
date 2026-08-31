@@ -481,8 +481,13 @@ func TestOneReadKeepsAHandfulOfReasonsRatherThanAllOfThem(t *testing.T) {
 
 	read := newReading(Path())
 	hosts := hostsRead(Path(), 0, read)
-	if len(read.why) > maxReasonsKept {
-		t.Errorf("a config with five thousand unusable lines kept %d reasons", len(read.why))
+	// A number, not the constant. Comparing against maxReasonsKept means
+	// raising it raises what this expects, so the bound could grow to anything
+	// and this would go on passing -- which it did: an audit that multiplied
+	// every max in the tree by a thousand found this one held by nothing.
+	if len(read.why) > 16 {
+		t.Errorf("a config with five thousand unusable lines kept %d reasons, "+
+			"and the point of the bound is that it is a handful", len(read.why))
 	}
 	// Kept enough to say something, and the first is still the first.
 	if len(read.why) == 0 {
