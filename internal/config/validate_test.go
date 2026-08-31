@@ -1491,3 +1491,43 @@ func TestATargetOfExactlyTheLimitIsStillAMachine(t *testing.T) {
 		t.Errorf("the refusal quotes the whole overlong target back: %v", err)
 	}
 }
+
+func TestALabelThatIsAnotherMachinesTargetIsReported(t *testing.T) {
+	// Not the collision beside it: these two are shown under different names,
+	// so nothing about the sidebar is ambiguous. What is ambiguous is the
+	// name itself -- typed or selected, "prod" reaches the machine targeted
+	// that way, while the menu shows the other machine under it.
+	cfg := Defaults()
+	cfg.Hosts = []Host{
+		{Target: "web", Label: "prod"},
+		{Target: "prod", Label: "primary"},
+	}
+	problems := cfg.Problems()
+	if len(problems) != 1 {
+		t.Fatalf("want the one problem, got %v", problems)
+	}
+	for _, want := range []string{`"web"`, `"prod"`, "reaches that one"} {
+		if !strings.Contains(problems[0], want) {
+			t.Errorf("the problem reads %q, without %q", problems[0], want)
+		}
+	}
+
+	// A label nothing else is targeted by is nobody's business.
+	cfg.Hosts = []Host{{Target: "web", Label: "prod"}, {Target: "db"}}
+	if problems := cfg.Problems(); len(problems) != 0 {
+		t.Errorf("a label that is no other machine's target was reported: %v", problems)
+	}
+
+	// A machine labelled with its own target says nothing: it is the name it
+	// already answers to.
+	cfg.Hosts = []Host{{Target: "web", Label: "web"}}
+	if problems := cfg.Problems(); len(problems) != 0 {
+		t.Errorf("a machine labelled with its own target was reported: %v", problems)
+	}
+
+	// And a machine switched off collides with nothing, as above.
+	cfg.Hosts = []Host{{Target: "web", Label: "prod"}, {Target: "prod", Disabled: true}}
+	if problems := cfg.Problems(); len(problems) != 0 {
+		t.Errorf("a machine that is switched off was treated as a collision: %v", problems)
+	}
+}

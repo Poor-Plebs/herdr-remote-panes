@@ -1299,8 +1299,21 @@ func (d *Daemon) configWarning() string {
 // name that is not fine would still be refused after adding one. It sent people
 // to edit a file that had nothing to do with it.
 func (d *Daemon) hostConfig(name string) (config.Host, error) {
-	for _, h := range d.config().Hosts {
-		if h.Target == name || h.Label == name {
+	// A target before a label, in two passes rather than one. A machine's
+	// target is the address it is reached at; a label is what it is called
+	// here, and one machine may be labelled with another's target -- `web`
+	// labelled "prod", beside a machine whose target is prod. In one pass the
+	// earlier entry won, so asking for prod could open terminals on web. The
+	// validator does not catch it either: it compares the names machines are
+	// displayed under, and those two differ.
+	hosts := d.config().Hosts
+	for _, h := range hosts {
+		if h.Target == name {
+			return h, nil
+		}
+	}
+	for _, h := range hosts {
+		if h.Label == name {
 			return h, nil
 		}
 	}

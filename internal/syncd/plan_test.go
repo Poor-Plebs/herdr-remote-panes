@@ -4505,3 +4505,51 @@ func TestAPlacementHerdrWillNotTakeOpensATabAsPromised(t *testing.T) {
 		}
 	}
 }
+
+func TestAMachineIsFoundByItsTargetBeforeAnothersLabel(t *testing.T) {
+	// A target is the address a machine is reached at. A label is what it is
+	// called here, and nothing stops one machine being labelled with another
+	// machine's target -- `web` shown as "prod", beside a machine whose target
+	// is prod. Asking for prod then had two answers and took whichever came
+	// first in the file, so it could open terminals on web.
+	//
+	// The collision check beside it does not catch this: that one compares the
+	// names machines are displayed under, and "prod" and "primary" are not the
+	// same name. It is reported as its own thing, and the report is about
+	// which machine the name reaches -- so the two have to agree.
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{
+		{Target: "web", Label: "prod"},
+		{Target: "prod", Label: "primary"},
+	}
+	problems := cfg.Problems()
+	if len(problems) != 1 || !strings.Contains(problems[0], "reaches that one") {
+		t.Fatalf("want the config to report which machine the name reaches, got %v", problems)
+	}
+	d := New(cfg)
+
+	got, err := d.hostConfig("prod")
+	if err != nil {
+		t.Fatalf("hostConfig(prod): %v", err)
+	}
+	if got.Target != "prod" {
+		t.Errorf("asking for prod gave the machine at %q, which is labelled %q; "+
+			"prod is a machine's actual target", got.Target, got.Label)
+	}
+
+	// A label still finds its machine when nothing is targeted by that name.
+	got, err = d.hostConfig("primary")
+	if err != nil {
+		t.Fatalf("hostConfig(primary): %v", err)
+	}
+	if got.Target != "prod" {
+		t.Errorf("asking for primary gave %q, and it is the label of prod", got.Target)
+	}
+
+	// And the order in the file does not decide it.
+	cfg.Hosts[0], cfg.Hosts[1] = cfg.Hosts[1], cfg.Hosts[0]
+	swapped := New(cfg)
+	if got, err := swapped.hostConfig("prod"); err != nil || got.Target != "prod" {
+		t.Errorf("with the machines the other way round, prod gave %q (%v)", got.Target, err)
+	}
+}

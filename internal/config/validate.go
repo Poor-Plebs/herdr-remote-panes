@@ -158,6 +158,25 @@ func (c Config) Problems() []string {
 			}
 		}
 
+		// A label that is some other machine's target. The two are not the
+		// same kind of name -- a target is the address a machine is reached
+		// at, a label is what it is called here -- so this is not the
+		// collision above, and the machines are shown under different names.
+		// What it costs is that the name means one machine when typed and
+		// another when read: asking for it reaches the machine targeted that
+		// way, while the menu shows this one under it.
+		if host.Label != "" {
+			for _, other := range c.Hosts {
+				if other.Disabled || other.Target != host.Label || other.Target == host.Target {
+					continue
+				}
+				problems = append(problems, fmt.Sprintf(
+					"host %q is labelled %q, which is the target of another machine; "+
+						"asking for %q reaches that one, and the menu shows this one under it",
+					host.Target, host.Label, host.Label))
+			}
+		}
+
 		if host.Mode != "" && !knownMode(host.Mode) {
 			problems = append(problems, fmt.Sprintf(
 				"host %q has mode %q, which is not one of ssh, attach or observe", host.Target, host.Mode))
