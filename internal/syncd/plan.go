@@ -28,7 +28,12 @@ const (
 	placementZoomed  = "zoomed"
 	placementTab     = "tab"
 	placementOverlay = "overlay"
-	placementPopup   = "popup"
+	// placementPopup is what the manifest declares for the picker, which is
+	// how Herdr places a pane opened with no --placement at all. It is not a
+	// value `plugin pane open --placement` accepts: Herdr 0.8.2 takes overlay,
+	// split, tab and zoomed there and refuses the rest. Passing it opened
+	// nothing, while the config warning about it promised a tab.
+	placementPopup = "popup"
 )
 
 // paneTarget is where a new plugin pane should be attached.
@@ -101,7 +106,7 @@ func planPaneTarget(placement, workspaceID, paneInWorkspace string) paneTarget {
 			return paneTarget{Placement: placementTab, Workspace: workspaceID}
 		}
 		return paneTarget{Placement: placement, TargetPane: paneInWorkspace}
-	case placementOverlay, placementPopup:
+	case placementOverlay:
 		return paneTarget{Placement: placement}
 	default:
 		return paneTarget{Placement: placementTab, Workspace: workspaceID}

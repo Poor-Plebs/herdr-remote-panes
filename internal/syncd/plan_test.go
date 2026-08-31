@@ -65,9 +65,14 @@ func TestPlanPaneTarget(t *testing.T) {
 			want: paneTarget{Placement: placementOverlay},
 		},
 		{
-			name:      "popup targets nothing",
+			// Not passed on, though it targets nothing either. Herdr takes
+			// overlay, split, tab and zoomed on --placement and refuses the
+			// rest: popup is a placement a manifest declares -- this plugin
+			// declares its own picker that way -- and not one that flag
+			// accepts. Sent, it opened nothing. See the constant.
+			name:      "popup is not a placement this may ask for",
 			placement: placementPopup, workspace: "w1", paneInWorkspace: "w1:p1",
-			want: paneTarget{Placement: placementPopup},
+			want: paneTarget{Placement: placementTab, Workspace: "w1"},
 		},
 	}
 
@@ -4444,5 +4449,45 @@ func TestTheControlSocketIsPrivateWhateverTheUmaskIs(t *testing.T) {
 					"everything away, and it is what opens SSH connections", mode)
 			}
 		})
+	}
+}
+
+func TestAPlacementHerdrWillNotTakeOpensATabAsPromised(t *testing.T) {
+	// An unknown placement is a warning, not a refusal, and the warning says
+	// what will happen instead: "terminals will open as tabs". Every unknown
+	// value reached the default and did that -- except "popup", which had a
+	// case of its own and was passed to Herdr as --placement popup.
+	//
+	// Herdr takes overlay, split, tab and zoomed there and refuses the rest.
+	// popup is a placement a manifest may declare -- this plugin's own picker
+	// is declared that way -- so it is an easy thing to write in a config, and
+	// what it did was open nothing at all while the warning promised a tab.
+	for _, placement := range []string{"popup", "sideways", "", "POPUP"} {
+		got := planPaneTarget(placement, "w1", "w1:p1")
+		if got.Placement != placementTab {
+			t.Errorf("placement %q was planned as %q, and the config warning "+
+				"about it says terminals will open as tabs", placement, got.Placement)
+		}
+		if got.Workspace != "w1" {
+			t.Errorf("placement %q was planned into workspace %q, want w1",
+				placement, got.Workspace)
+		}
+	}
+
+	// The one Herdr does take on that flag, and the config knows about, is
+	// still passed through rather than swept into the fallback.
+	if got := planPaneTarget("overlay", "w1", "w1:p1"); got.Placement != placementOverlay {
+		t.Errorf("overlay was planned as %q, and Herdr accepts it", got.Placement)
+	}
+
+	// And the settings the config calls valid are exactly the ones that reach
+	// Herdr as themselves or as a tab -- never as a value it refuses.
+	for _, placement := range []string{"follow", "split", "tab", "zoomed", "overlay"} {
+		switch got := planPaneTarget(placement, "w1", "w1:p1"); got.Placement {
+		case placementSplit, placementTab, placementZoomed, placementOverlay:
+		default:
+			t.Errorf("the config allows placement %q, and it is planned as %q, "+
+				"which is not one Herdr accepts", placement, got.Placement)
+		}
 	}
 }

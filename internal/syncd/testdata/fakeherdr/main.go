@@ -339,6 +339,16 @@ func main() {
 		// one that was. A stand-in simpler than the real thing does not leave
 		// a gap; it manufactures agreement.
 		placement := flag("--placement")
+		// Asked for by name, rather than arrived at from the manifest. Herdr
+		// takes overlay, split, tab and zoomed on --placement and refuses the
+		// rest; popup is a placement a manifest may declare and not one this
+		// flag accepts. Accepting it here let the plugin send a value the real
+		// thing rejects, with nothing opening and no test to say so -- which
+		// is the agreement a stand-in manufactures when it is simpler than
+		// what it stands in for.
+		if placement == "popup" {
+			fail("invalid_params", "unknown placement popup")
+		}
 		if placement == "" {
 			switch flag("--entrypoint") {
 			case "picker":
