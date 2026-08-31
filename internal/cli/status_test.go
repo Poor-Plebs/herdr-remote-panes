@@ -790,3 +790,43 @@ func TestTheListingSaysWhatBringsBackAMachineItGaveUpOn(t *testing.T) {
 		t.Errorf("the advice does not name both machines: %q", many)
 	}
 }
+
+func TestStatusPrintsTheAdviceUnderTheTable(t *testing.T) {
+	// The pieces were tested and the join was not: statusLines and howToRetry
+	// each had their own test, and whether status ever printed the second one
+	// was nobody's business. A sweep found it -- the condition could be
+	// inverted, so the advice appeared only when there was none of it, and
+	// every test still passed.
+	answerWith(t, syncd.Reply{OK: true, Hosts: []syncd.HostInfo{
+		{Target: "bot", Label: "bot", Connected: true, Mirrors: 1},
+		{Target: "prod", Label: "prod", GaveUp: true, LastError: "host key changed"},
+	}})
+
+	out := whatStatusPrinted(t)
+	if !strings.Contains(out, "bot") || !strings.Contains(out, "prod") {
+		t.Fatalf("the table is missing machines:\n%s", out)
+	}
+	if !strings.Contains(out, "not tried again") {
+		t.Errorf("a machine was given up on and the listing does not say what "+
+			"brings it back:\n%s", out)
+	}
+	if !strings.Contains(out, syncd.PluginID+".connect") {
+		t.Errorf("the advice does not name the action that retries everything:\n%s", out)
+	}
+}
+
+func TestStatusSaysNothingExtraWhenEveryMachineIsFine(t *testing.T) {
+	// The other half, and the reason the condition is there: a line under
+	// every listing anybody ever runs is a line people stop reading.
+	answerWith(t, syncd.Reply{OK: true, Hosts: []syncd.HostInfo{
+		{Target: "bot", Label: "bot", Connected: true, Mirrors: 1},
+	}})
+
+	out := whatStatusPrinted(t)
+	if !strings.Contains(out, "bot") {
+		t.Fatalf("the table is missing the machine:\n%s", out)
+	}
+	if strings.Contains(out, "not tried again") {
+		t.Errorf("every machine is fine and the listing still advised:\n%s", out)
+	}
+}

@@ -14,14 +14,17 @@
 ./internal/capped	2026-08-28	5	4	1	0
 ./internal/cli	2026-08-28	56	52	4	0
 ./internal/cli (since v0.4.4)	2026-08-30	9	9	0	0
+./internal/cli (since v0.4.8)	2026-08-31	4	4	0	0
 ./internal/config	2026-08-29	137	135	2	0
 ./internal/config (since v0.4.4)	2026-08-30	20	20	0	0
 ./internal/config (since v0.4.5)	2026-08-30	3	3	0	0
 ./internal/config (since v0.4.6)	2026-08-31	1	1	0	0
+./internal/config (since v0.4.8)	2026-08-31	5	5	0	0
 ./internal/herdrcli	2026-08-29	60	60	0	0
 ./internal/logfile	2026-08-28	9	9	0	0
 ./internal/logfile (since v0.4.4)	2026-08-30	2	2	0	0
 ./internal/mirror	2026-08-28	134	123	11	0
+./internal/mirror (since v0.4.8)	2026-08-31	1	1	0	0
 ./internal/picker	2026-08-30	124	107	17	0
 ./internal/picker (since d3fa765)	2026-08-30	2	2	0	0
 ./internal/picker (since v0.4.4)	2026-08-30	2	2	0	0
@@ -37,6 +40,7 @@
 ./internal/syncd (since eae7cfd)	2026-08-28	4	4	0	0
 ./internal/syncd (since v0.4.1)	2026-08-28	1	1	0	0
 ./internal/syncd (since v0.4.5)	2026-08-30	3	3	0	0
+./internal/syncd (since v0.4.8)	2026-08-31	7	6	1	0
 ./internal/text	2026-08-28	60	55	5	0
 ./internal/text (since v0.4.6)	2026-08-31	3	3	0	0
 ./internal/version	2026-08-28	9	7	2	0

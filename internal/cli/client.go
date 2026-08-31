@@ -80,8 +80,18 @@ func status() error {
 		// Wrapped like the table above it. The advice names machines and a
 		// command, so it is longer than a terminal on any day the machines are
 		// not called a and b.
-		for _, wrapped := range text.Wrap(line, outputWidth(), maxRetryLines) {
-			fmt.Println(wrapped)
+		//
+		// Width nought is "no terminal to ask", which is the ordinary case
+		// here: this runs as a Herdr action with its output collected rather
+		// than drawn. Wrap gives nothing back for a width of nought, so
+		// wrapping unconditionally meant the advice printed on a terminal and
+		// nowhere else -- which is the one place it was written for.
+		if width := outputWidth(); width > 0 {
+			for _, wrapped := range text.Wrap(line, width, maxRetryLines) {
+				fmt.Println(wrapped)
+			}
+		} else {
+			fmt.Println(line)
 		}
 	}
 	notifyIfAction(statusSummary(reply.Hosts))
