@@ -298,8 +298,17 @@ before pushing either:
 ```bash
 git tag -a v0.2.0 -F notes.md
 git push && git push origin v0.2.0
+gh run watch "$(gh run list --limit 1 --json databaseId --jq '.[0].databaseId')"
 gh release create v0.2.0 --title "v0.2.0 — ..." --notes-file notes.md
 ```
+
+The wait between the push and the release is the whole of what CI is for
+here. `make check` runs on one machine, and CI runs the same thing on macOS
+and on the oldest supported Go — so the failures it is there to find are
+exactly the ones that cannot fail locally. v0.4.8 went out with its macOS job
+red: a test built a Unix socket path by hand, which fits on Linux and runs past
+what a sockaddr holds on macOS, where temp directories start `/var/folders`.
+The release was made minutes before the job finished.
 
 The notes are sections — Fixed, New, Changed, whatever the release has — and a
 bullet each: one line saying what somebody upgrading would notice, and a link to
