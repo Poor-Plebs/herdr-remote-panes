@@ -1078,3 +1078,34 @@ func TestWhatIsWrongWithAMachineIsOnTheScreenExactlyOnce(t *testing.T) {
 		}
 	}
 }
+
+func TestTwoWarningsGetTheRoomForTwoOfThem(t *testing.T) {
+	// The pair that arrives together: a config bad enough to stop the daemon
+	// starting is a config that cannot be read. In the room for one warning the
+	// second came out as "The daemon is…", a subject with no predicate, where
+	// "is not running" and "is running an older build" want opposite things
+	// done about them.
+	config := "Could not read the plugin config: HERDR_PLUGIN_CONFIG_DIR is not set; " +
+		"run this through Herdr. Only ~/.ssh/config machines are listed."
+	daemon := "The daemon is not running, so nothing here can be connected to. " +
+		"Check `herdr plugin log list --plugin poorplebs.remote-panes`."
+
+	lines := warningLines(80, bothWarnings(config, daemon))
+	shown := strings.Join(lines, " ")
+	if !strings.Contains(shown, "nothing here can be connected to") {
+		t.Errorf("the second warning is cut short:\n%s", shown)
+	}
+	if !strings.Contains(shown, "Only ~/.ssh/config machines are listed") {
+		t.Errorf("the first warning is cut short:\n%s", shown)
+	}
+	if len(lines) > 0 && strings.HasSuffix(lines[len(lines)-1], "…") {
+		t.Errorf("both warnings fit, and the last line still ends cut off:\n%s", shown)
+	}
+
+	// One warning keeps the room for one: the extra lines are for the second
+	// message, not a licence for the first to take more of the popup.
+	one := warningLines(80, config+" "+config+" "+config)
+	if len(one) > maxWarningLines {
+		t.Errorf("one warning took %d lines, and the bound is %d", len(one), maxWarningLines)
+	}
+}

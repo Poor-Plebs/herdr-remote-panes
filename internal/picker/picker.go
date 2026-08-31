@@ -203,8 +203,12 @@ func bothWarnings(first, second string) string {
 	case second == "":
 		return first
 	}
-	return first + " · " + second
+	return first + warningSeparator + second
 }
+
+// warningSeparator joins two warnings, and is how the wrap tells that there are
+// two of them.
+const warningSeparator = " · "
 
 // worthDisconnecting reports whether d has anything to do to a machine.
 //
@@ -586,7 +590,26 @@ func pageStepIn(count, selected, cols, rows int, warning string) int {
 // warningLines wraps a warning to the popup, or returns nothing when there is
 // none to draw.
 func warningLines(cols int, warning string) []string {
-	return text.Wrap(text.Sanitize(warning), cols-4, maxWarningLines)
+	return text.Wrap(text.Sanitize(warning), cols-4, warningBudget(warning))
+}
+
+// warningBudget is how many lines the warning may take, which is twice as many
+// when there are two warnings.
+//
+// Two do not fit in the room for one. The config here could not be read and the
+// daemon is not running is a pair that happens together -- a config bad enough
+// to stop the daemon starting is a config that cannot be read -- and in two
+// lines the second arrived as "The daemon is...", a subject with its predicate
+// cut off, where "is not running" and "is running an older build" ask for
+// opposite things. bothWarnings already refuses to leave a dangling separator
+// for the same reason. Which of the two to keep whole is not this function's to
+// decide, so it keeps both, and planLayout still trims a line at a time when
+// the popup is too short to hold them.
+func warningBudget(warning string) int {
+	if strings.Contains(warning, warningSeparator) {
+		return 2 * maxWarningLines
+	}
+	return maxWarningLines
 }
 
 // hintLines are the key reminders at the foot of the menu.
