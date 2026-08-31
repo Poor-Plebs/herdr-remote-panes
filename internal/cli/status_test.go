@@ -740,3 +740,53 @@ func TestAMachineThatIsDownIsStillReportedAsWhatItIsSetTo(t *testing.T) {
 		t.Errorf("a machine set to mirror stopped saying so while it is down: %q", lines[1])
 	}
 }
+
+func TestTheListingSaysWhatBringsBackAMachineItGaveUpOn(t *testing.T) {
+	// The table says "not retrying" and the failure says what to fix. Neither
+	// says that fixing it is not enough: a machine given up on stays that way
+	// until something asks again, so somebody who corrects a host key and
+	// watches the machine stay down has every reason to think the correction
+	// did not work.
+	gaveUp := []syncd.HostInfo{
+		{Target: "bot", Label: "bot", Connected: true, Mirrors: 1},
+		{Target: "prod", Label: "prod", GaveUp: true, LastError: "host key changed"},
+	}
+
+	line := howToRetry(gaveUp)
+	if line == "" {
+		t.Fatal("a machine was given up on and nothing says what brings it back")
+	}
+	for _, want := range []string{"prod", "enter", syncd.PluginID + ".connect"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the advice reads %q, without %q", line, want)
+		}
+	}
+	// Not the machine that is fine.
+	if strings.Contains(line, "bot") {
+		t.Errorf("a machine that is connected is named in the advice: %q", line)
+	}
+
+	// Nothing at all when every machine is being tried, rather than a line
+	// under every listing anybody ever runs.
+	if line := howToRetry(gaveUp[:1]); line != "" {
+		t.Errorf("nothing was given up on and the listing still advised: %q", line)
+	}
+	if line := howToRetry(nil); line != "" {
+		t.Errorf("no machines at all and the listing still advised: %q", line)
+	}
+
+	// It reads as English for one machine and for several.
+	one := howToRetry([]syncd.HostInfo{{Label: "prod", GaveUp: true}})
+	if !strings.Contains(one, "It is") || !strings.Contains(one, "its own") {
+		t.Errorf("with one machine the advice reads %q", one)
+	}
+	many := howToRetry([]syncd.HostInfo{
+		{Label: "prod", GaveUp: true}, {Label: "staging", GaveUp: true},
+	})
+	if !strings.Contains(many, "They are") || !strings.Contains(many, "their own") {
+		t.Errorf("with two machines the advice reads %q", many)
+	}
+	if !strings.Contains(many, "prod or staging") {
+		t.Errorf("the advice does not name both machines: %q", many)
+	}
+}

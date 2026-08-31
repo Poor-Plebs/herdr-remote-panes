@@ -75,8 +75,51 @@ func status() error {
 	for _, line := range statusLines(reply.Hosts, outputWidth()) {
 		fmt.Println(line)
 	}
+	if line := howToRetry(reply.Hosts); line != "" {
+		fmt.Println()
+		// Wrapped like the table above it. The advice names machines and a
+		// command, so it is longer than a terminal on any day the machines are
+		// not called a and b.
+		for _, wrapped := range text.Wrap(line, outputWidth(), maxRetryLines) {
+			fmt.Println(wrapped)
+		}
+	}
 	notifyIfAction(statusSummary(reply.Hosts))
 	return nil
+}
+
+// maxRetryLines bounds the advice under the table. Enough for the sentence
+// with several machines named in it, and not so much that a machine list runs
+// the table off the screen.
+const maxRetryLines = 4
+
+// howToRetry says what brings back the machines that are no longer being
+// tried, or nothing when none of them is in that state.
+//
+// The table says "not retrying" and the failure says what to fix. Neither says
+// that fixing it is not enough -- a machine given up on stays given up on
+// until something asks again, so somebody who corrects a host key and watches
+// the machine stay down has every reason to think the correction did not work.
+//
+// Once, under the table, rather than on each machine's line: the advice is the
+// same for all of them, and the state column is already carrying a sentence.
+func howToRetry(hosts []syncd.HostInfo) string {
+	var given []string
+	for _, h := range hosts {
+		if h.GaveUp {
+			given = append(given, h.Label)
+		}
+	}
+	if len(given) == 0 {
+		return ""
+	}
+	subject, whose := "It is", "its"
+	if len(given) > 1 {
+		subject, whose = "They are", "their"
+	}
+	return fmt.Sprintf("%s not tried again on %s own: pick %s from the menu and press "+
+		"enter, or run `herdr plugin action invoke %s.connect` for every machine.",
+		subject, whose, strings.Join(given, " or "), syncd.PluginID)
 }
 
 // statusLines is one line per connected machine, as columns.
