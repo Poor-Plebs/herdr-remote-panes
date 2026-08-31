@@ -414,3 +414,46 @@ func TestTheBoundsTheDocsGiveAreTheBoundsThatApply(t *testing.T) {
 			includeGlobBudget)
 	}
 }
+
+func TestAHostLineThatNamesNoMachineSaysSo(t *testing.T) {
+	// A Host line that ssh cannot be pointed at is left out of the menu, which
+	// is right, and was done in silence, which is how a machine somebody wrote
+	// down looks like one they deleted. `Host -oProxyCommand=...` is the one
+	// that looks most like a machine and is read by ssh as an option.
+	home := t.TempDir()
+	ssh := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(ssh, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(ssh, "config"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The ordinary shapes stay quiet: every config has a wildcard block, and
+	// naming nothing is a legal line.
+	write("Host *\n  ServerAliveInterval 15\n\nHost \"\"\n\nHost bot\n")
+	if why := Unreadable(); why != "" {
+		t.Errorf("an ordinary config is reported as %q", why)
+	}
+	if hosts := Hosts(); len(hosts) != 1 || hosts[0] != "bot" {
+		t.Errorf("the machines are %v, and there is one", hosts)
+	}
+
+	// A name ssh would read as an option is not offered, and now says so.
+	write("Host bot\n\nHost -oProxyCommand=curl\n")
+	hosts := Hosts()
+	if len(hosts) != 1 || hosts[0] != "bot" {
+		t.Fatalf("the machines are %v; the fixture wants one usable and one not", hosts)
+	}
+	why := Unreadable()
+	if why == "" {
+		t.Fatal("a Host line was left out of the menu and nothing says why")
+	}
+	if !strings.Contains(why, "dash") {
+		t.Errorf("the reason is %q, which does not say what is wrong with the name", why)
+	}
+}

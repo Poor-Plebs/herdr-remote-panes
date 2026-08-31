@@ -243,7 +243,26 @@ func hostsRead(path string, depth int, read *reading) []string {
 		switch keyword {
 		case "host":
 			for _, alias := range fields[1:] {
-				if !connectable(alias) || seen[alias] {
+				// Which of these are machines somebody could connect to,
+				// as opposed to rules about machines or lines ssh would
+				// refuse. Filtered here rather than left to callers: this
+				// returns machines, and a caller that forgot to check would
+				// offer `Host -oProxyCommand=...` as one.
+				//
+				// Ordinary, all three of these. Every config has a `Host *`
+				// block; `Host ""` is a legal line naming nothing, which the
+				// rule allowing a name to hold a space turns into an empty
+				// field; and a repeat is a repeat.
+				if alias == "" || isPattern(alias) || seen[alias] {
+					continue
+				}
+				if err := config.ValidTarget(alias); err != nil {
+					// A Host line somebody wrote that names something ssh
+					// cannot be pointed at -- `Host -oProxyCommand=...` is the
+					// one that looks most like a machine. It is left out of
+					// the menu, and being left out in silence is how a machine
+					// somebody wrote down looks like one they deleted.
+					read.note(path, err.Error())
 					continue
 				}
 				seen[alias] = true
@@ -342,21 +361,6 @@ func stripComment(line string) string {
 // machine that can be connected to.
 func isPattern(alias string) bool {
 	return strings.ContainsAny(alias, "*?!")
-}
-
-// connectable reports whether an alias names a machine somebody could connect
-// to, as opposed to a rule about machines or a line ssh would refuse.
-//
-// Filtered here rather than left to callers. This returns machines, and the one
-// caller there is happened to check -- so the next one would have inherited a
-// menu entry for `Host -oProxyCommand=...`, which ssh reads as an option and
-// not a destination.
-//
-// `Host ""` is a legal line that names nothing. Quotes are honoured so a name
-// may hold a space, and the rule that allows that turns an empty pair of them
-// into an empty field.
-func connectable(alias string) bool {
-	return alias != "" && !isPattern(alias) && config.ValidTarget(alias) == nil
 }
 
 // maxIncludeMatches is how many files one Include may pull in.
