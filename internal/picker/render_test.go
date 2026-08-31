@@ -1880,3 +1880,61 @@ func TestTheMenuStaysDrawableWithAVeryLongSSHConfig(t *testing.T) {
 			grew, small, large)
 	}
 }
+
+func TestHalfAReasonRatherThanNoneOfOne(t *testing.T) {
+	// A machine that cannot be reached says what happened, why, and that enter
+	// retries. They drop off the end in that order, and dropping is by whole
+	// pieces -- so one that overruns by a single column took all of itself
+	// with it, leaving "unreachable" with room to spare beside it. At
+	// forty-three columns, which is a popup of the usual sixty per cent on a
+	// seventy-two column terminal, nineteen columns sat empty next to a
+	// machine whose only explanation had been thrown away.
+	entry := Entry{Target: "prod", Configured: true, GaveUp: true,
+		Reason: "host key changed"}
+
+	lineFor := func(cols int) string {
+		t.Helper()
+		for _, line := range strings.Split(visible(render([]Entry{entry}, 0, cols, 24, "")), "\r\n") {
+			if strings.Contains(line, "prod") {
+				return strings.TrimRight(line, " ")
+			}
+		}
+		t.Fatalf("nothing drew the machine at %d columns", cols)
+		return ""
+	}
+
+	if line := lineFor(43); !strings.Contains(line, "host key") {
+		t.Errorf("at 43 columns the cause is gone and the room is there: %q", line)
+	}
+	// Whole where it fits whole, rather than cut for the sake of it.
+	if line := lineFor(50); !strings.Contains(line, "host key changed") || strings.HasSuffix(line, "…") {
+		t.Errorf("at 50 columns the whole cause fits and it reads %q", line)
+	}
+	// And the last piece alone is still dropped rather than cut down: when
+	// only the reminder will not fit, the line is whole as far as it goes, and
+	// "· enter to ret…" says nothing "enter" does not.
+	if line := lineFor(60); strings.HasSuffix(line, "…") {
+		t.Errorf("at 60 columns only the reminder did not fit, and the line was "+
+			"cut short to show part of it: %q", line)
+	}
+
+	// Below the floor there is no room for a piece worth reading, and what
+	// there is room for is a separator introducing nothing: "· h…", then
+	// "·…". A dangling separator reads as a message that was cut off, which
+	// is worse than the message that is missing -- the same reason
+	// bothWarnings refuses to leave one.
+	for _, cols := range []int{32, 30, 28, 26} {
+		if line := lineFor(cols); strings.Contains(line, "·") {
+			t.Errorf("at %d columns there is no room for a readable cause, and "+
+				"the line still carries a separator: %q", cols, line)
+		}
+	}
+
+	// The order still holds: what happened, then why. Never why alone.
+	for cols := chromeWidth + 8; cols <= 120; cols++ {
+		line := lineFor(cols)
+		if strings.Contains(line, "host") && !strings.Contains(line, "unreachable") {
+			t.Fatalf("at %d columns the cause is shown without what happened: %q", cols, line)
+		}
+	}
+}

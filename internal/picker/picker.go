@@ -818,14 +818,56 @@ func fitStatus(spans []span, room int) []span {
 	if room < 1 {
 		room = 1
 	}
-	for len(spans) > 1 && text.Width(plainOf(spans)) > room {
-		spans = spans[:len(spans)-1]
+	kept := spans
+	for len(kept) > 1 && text.Width(plainOf(kept)) > room {
+		kept = kept[:len(kept)-1]
 	}
-	if len(spans) == 1 && text.Width(spans[0].text) > room {
-		spans[0].text = text.Truncate(spans[0].text, room)
+	if len(kept) == 1 && text.Width(kept[0].text) > room {
+		kept[0].text = text.Truncate(kept[0].text, room)
+		return kept
 	}
-	return spans
+
+	// Whatever room is left over goes to the best of what was dropped, cut to
+	// fit rather than left out.
+	//
+	// Dropping is by whole pieces, so one that overruns by a column takes all
+	// of itself with it: at forty-three columns -- a popup of the usual sixty
+	// per cent on a seventy-two column terminal, which is a window somebody
+	// really has -- "unreachable · host key changed" is one column too wide,
+	// and what was drawn was "unreachable" with nineteen columns spare. The
+	// reason is the half that stops "unreachable" being a dead end, and half a
+	// reason is a great deal more than none of one.
+	//
+	// Only when more than the last piece went. The pieces are in order of what
+	// they are worth, so the last of them is the least: if it alone did not
+	// fit, the line is whole as far as it goes, and cutting that piece down
+	// adds an ellipsis to say nothing the reader could not have guessed. Two
+	// pieces gone is information actually lost, and then half of the better
+	// one is worth the ellipsis it costs.
+	//
+	// Measured over every width from the narrowest served to a hundred and
+	// twenty: an unreachable machine gains a cause it did not show at eleven
+	// of them, and a connected or a plain one is not changed at all. Putting
+	// back the last piece too gained nothing more and cut fourteen further
+	// lines short, most of them "· enter to ret…".
+	if len(kept) < len(spans)-1 {
+		if left := room - text.Width(plainOf(kept)); left >= minPartialStatus {
+			next := spans[len(kept)]
+			// Copied rather than appended in place: spans is the caller's, and
+			// its next element is the one being rewritten.
+			with := make([]span, len(kept), len(kept)+1)
+			copy(with, kept)
+			kept = append(with, span{text.Truncate(next.text, left), next.colour})
+		}
+	}
+	return kept
 }
+
+// minPartialStatus is the least room worth putting a cut-down piece of the
+// state into. Each begins with " · " and Truncate keeps a column for its
+// ellipsis, so below this there is room for three characters of the thing
+// itself -- which is a line noisier than the one it replaces and no more use.
+const minPartialStatus = 8
 
 // chromeWidth is everything on a machine's line that is not its name or its
 // state: the selection marker, the number, and the spaces between the columns.

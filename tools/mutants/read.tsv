@@ -24,7 +24,7 @@ internal/picker/picker.go	<= -> <	if visible < 1 || visible <= best {
 internal/picker/picker.go	> -> >=	if first+visible > count {
 
 # Truncate returns the string unchanged when it fits, so this only adds a no-op call
-internal/picker/picker.go	> -> >=	if len(spans) == 1 && text.Width(spans[0].text) > room {
+internal/picker/picker.go	> -> >=	if len(kept) == 1 && text.Width(kept[0].text) > room {
 
 # at the boundary both spellings return the same width
 internal/picker/picker.go	< -> <=	if widest+gutter < limit {
