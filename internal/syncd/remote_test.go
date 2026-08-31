@@ -4380,3 +4380,49 @@ func TestAConfigThatHasNotMovedIsNotRereadEveryPass(t *testing.T) {
 		t.Errorf("a file nobody touched was reread:\n%s", logged.String())
 	}
 }
+
+func TestAHalfWrittenConfigKeepsTheOneInUseAndSaysSoOnce(t *testing.T) {
+	// Saving is not atomic in every editor, and a pass comes round every
+	// couple of seconds: the file can be read between the truncate and the
+	// write. Falling back to the defaults because somebody was mid-keystroke
+	// would change every setting for as long as the save took -- and the
+	// complaint is asked on every pass, so saying it every time fills the log
+	// that would explain it.
+	path := withConfigFile(t, `{"placement":"tab","hosts":[{"target":"bot"}]}`)
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := New(loaded)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.configStamp = info.ModTime()
+
+	logged := captureLog(t)
+	if err := os.WriteFile(path, []byte(`{"placement": "spl`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		d.rereadConfig()
+	}
+
+	if got := d.config().Placement; got != "tab" {
+		t.Errorf("a half-written file changed the placement in use to %q", got)
+	}
+	if n := strings.Count(logged.String(), "keeping the one in use"); n != 1 {
+		t.Errorf("the complaint was made %d times, and a pass asks every couple "+
+			"of seconds:\n%s", n, logged.String())
+	}
+
+	// And the finished save is picked up, rather than the daemon being stuck
+	// on a complaint it already made.
+	if err := os.WriteFile(path, []byte(`{"placement":"split","hosts":[{"target":"bot"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d.rereadConfig()
+	if got := d.config().Placement; got != "split" {
+		t.Errorf("the finished file says split and the daemon is using %q", got)
+	}
+}
