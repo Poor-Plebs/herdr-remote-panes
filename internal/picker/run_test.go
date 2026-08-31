@@ -630,3 +630,40 @@ func TestWhatTheMenuSaysWhenAnActionIsRefused(t *testing.T) {
 		})
 	}
 }
+
+func TestWhatTheDaemonSaysOnARefusalScreenCarriesNoEscape(t *testing.T) {
+	// The heading of that screen is a machine's name, which cannot hold an
+	// escape: a name with a control character in it is refused before it can
+	// become an entry. The body is the daemon's error, and that is a different
+	// thing entirely -- it relays what the machine said, and ssh passes a
+	// remote banner through untouched, so the far side chooses those bytes.
+	//
+	// renderNotice makes every part safe, and removing that from the body was
+	// caught by nothing: an audit that took each Sanitize out in turn found
+	// this one had no test behind it at all.
+	banner := "\x1b[31mred\x1b[2J\x07 and \x1b]0;retitled\x07"
+	connected := &syncd.Reply{OK: true, Hosts: []syncd.HostInfo{
+		{Target: "bot", Label: "bot", Connected: true, Mirrors: 1},
+	}}
+
+	got := runMenuRefusing(t, "Host bot\n", "", "d q", errors.New(banner), connected)
+
+	// The screen was reached, or this checks nothing at all.
+	if !strings.Contains(visible(got.drawn), "Could not disconnect bot") {
+		t.Fatalf("the refusal screen was never drawn:\n%s", visible(got.drawn))
+	}
+	// Only sequences the menu never writes for itself. It clears the screen
+	// with ESC[2J and colours with ESC[31m, so those say nothing about where
+	// the bytes came from -- the first draft of this failed on the menu's own
+	// clear-screen and read as the machine's.
+	for _, forbidden := range []string{"\x1b]0;", "\x07"} {
+		if strings.Contains(got.drawn, forbidden) {
+			t.Errorf("what the machine said reached the terminal as %q:\n%q",
+				forbidden, got.drawn)
+		}
+	}
+	// And it still says what happened, rather than being emptied out.
+	if !strings.Contains(visible(got.drawn), "red") {
+		t.Errorf("the reason was thrown away rather than made safe:\n%s", visible(got.drawn))
+	}
+}
