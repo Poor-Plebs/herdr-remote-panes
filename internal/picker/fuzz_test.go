@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
 )
 
 // The menu reads raw bytes from a terminal, and not all of them were typed by
@@ -119,4 +121,77 @@ func FuzzParseKeyDrainsWhatItReads(f *testing.F) {
 			}
 		}
 	})
+}
+
+// ownEscapes is every escape sequence the menu emits for itself. Anything left
+// after these are taken out came from a machine's name.
+func ownEscapes(s string) string {
+	for _, own := range []string{esc + "[2J", esc + "[H", reset, dim, bold, green, yellow, red, reverse} {
+		s = strings.ReplaceAll(s, own, "")
+	}
+	return s
+}
+
+// FuzzTheMenuFitsThePopupAndCarriesNothingFromAName draws the menu from names
+// nobody would write and sizes nobody would use.
+//
+// Two properties, both about the terminal rather than the menu. A line wider
+// than the popup wraps, which makes the menu a row taller than the layout
+// planned for and scrolls the bottom of it away -- that is how the "showing
+// 1-3 of 6" counter running off the side was found, by sweeping sizes with
+// fixed names. This varies the names instead: they come out of ~/.ssh/config,
+// which is a file, and a name of the wrong width is how the arithmetic that
+// pads a column gets it wrong.
+//
+// And nothing from a name may reach the terminal as an escape. Sanitize is
+// what stops it; this is the check that the menu actually calls it, on every
+// piece of a machine it draws, and not merely on the one that had a test.
+func FuzzTheMenuFitsThePopupAndCarriesNothingFromAName(f *testing.F) {
+	f.Add("bot", "the label", "connection refused", 80, 24, 0)
+	f.Add("\x1b[31mprod", "a\nb", "\x1b]0;title\x07", 40, 6, 1)
+	f.Add("日本語のマシン", "🚀", "ﬀ", 16, 1, 2)
+	f.Add("", "", "", 200, 60, 0)
+
+	f.Fuzz(func(t *testing.T, target, label, reason string, cols, rows, selected int) {
+		// The range the layout says it serves: below this the machine line is
+		// documented to wrap rather than shrink further. See nameWidth.
+		cols = chromeWidth + 8 + mod(cols, 200)
+		rows = 1 + mod(rows, 60)
+
+		entries := []Entry{
+			{Target: target, Label: label, Configured: true, Connected: true, Mirroring: true, Mirrors: 2},
+			{Target: target + label, Configured: true, GaveUp: true, Reason: reason},
+			{Target: "plain", Configured: true},
+		}
+		drawn := render(entries, mod(selected, len(entries)), cols, rows, "")
+
+		for _, line := range strings.Split(drawn, "\r\n") {
+			if got := text.Width(visible(line)); got > cols {
+				t.Fatalf("at %d columns a line is %d wide: %q", cols, got, visible(line))
+			}
+		}
+
+		left := ownEscapes(drawn)
+		if i := strings.IndexByte(left, 0x1b); i >= 0 {
+			t.Fatalf("an escape from a machine reached the screen at %d: %q", i, left)
+		}
+		for _, line := range strings.Split(left, "\r\n") {
+			for _, r := range line {
+				if r < 0x20 || r == 0x7f {
+					t.Fatalf("a control character %q from a machine reached the screen: %q", r, line)
+				}
+			}
+		}
+	})
+}
+
+// mod keeps a fuzzed int inside a range, negatives included.
+func mod(n, size int) int {
+	if n < 0 {
+		n = -n
+	}
+	if n < 0 || size <= 0 { // math.MinInt negated is itself
+		return 0
+	}
+	return n % size
 }

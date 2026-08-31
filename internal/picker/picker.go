@@ -742,7 +742,14 @@ func statusSpans(entry Entry) []span {
 			// everything the reminder is what goes: enter is guessable and the
 			// reason is not, and "unreachable" on its own leaves somebody with
 			// nothing they can do next.
-			out = append(out, span{" · " + entry.Reason, dim})
+			// Sanitised here, where it is drawn, and not only where the
+			// entry is filled in. The reason is the one thing on this line
+			// that a remote machine wrote -- it is ssh's complaint, or the
+			// machine's -- and the name beside it is made safe by displayName
+			// on the way to the screen rather than on the way into the entry.
+			// A reason that is not is a field whose safety depends on which
+			// function built the entry.
+			out = append(out, span{" · " + text.Sanitize(entry.Reason), dim})
 		}
 		if isMirroring(entry) {
 			out = append(out, span{" · " + mode, dim})
