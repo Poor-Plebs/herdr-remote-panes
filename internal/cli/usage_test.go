@@ -912,3 +912,53 @@ func TestTheWordsBecomeTheCommandsTheDaemonIsSent(t *testing.T) {
 		})
 	}
 }
+
+func TestConnectFallsBackToTheSelectionAndOpenDoesNot(t *testing.T) {
+	// Connecting with no machine named takes whatever was selected when the
+	// action was invoked. That is where a machine in neither config file comes
+	// from, which is a whole kind of entry in the menu.
+	//
+	// Opening deliberately does not, and the reason is written beside it: this
+	// makes something new, and making it on whatever the cursor happens to be
+	// over is a surprise where reconnecting to it is what was meant. The two
+	// sit in the same function and nothing held either.
+	const selection = `{"selected_text":"  deploy@10.0.0.5  "}`
+
+	t.Run("connect takes it", func(t *testing.T) {
+		t.Setenv("HERDR_PLUGIN_CONTEXT_JSON", selection)
+		asked := answerWith(t, syncd.Reply{OK: true})
+		if err := run("connect", nil); err != nil {
+			t.Fatalf("connect: %v", err)
+		}
+		sent := asked()
+		if len(sent) != 1 || sent[0].Host != "deploy@10.0.0.5" {
+			t.Errorf("connect with nothing named sent %+v, want the selection, trimmed", sent)
+		}
+	})
+
+	t.Run("open leaves it alone", func(t *testing.T) {
+		t.Setenv("HERDR_PLUGIN_CONTEXT_JSON", selection)
+		asked := answerWith(t, syncd.Reply{OK: true})
+		if err := run("open", nil); err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		sent := asked()
+		if len(sent) != 1 || sent[0].Host != "" {
+			t.Errorf("open sent %+v; with no machine named the space decides, "+
+				"not whatever the cursor was over", sent)
+		}
+	})
+
+	t.Run("connect with no selection means every machine", func(t *testing.T) {
+		t.Setenv("HERDR_PLUGIN_CONTEXT_JSON", "")
+		asked := answerWith(t, syncd.Reply{OK: true})
+		if err := run("connect", nil); err != nil {
+			t.Fatalf("connect: %v", err)
+		}
+		sent := asked()
+		if len(sent) != 1 || sent[0].Host != "" {
+			t.Errorf("connect with nothing named and nothing selected sent %+v, "+
+				"and an empty host is what reconnects every configured machine", sent)
+		}
+	})
+}
