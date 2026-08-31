@@ -213,8 +213,25 @@ it.
 ```bash
 make check                                    # green, from a clean tree
 make vuln                                     # known vulnerabilities
+make herdr                                    # the Herdr here still takes what this sends
 go test -run XXX -fuzz FuzzDecodeFrame -fuzztime 40s ./internal/mirror/
 ```
+
+`make herdr` asks the installed Herdr, one `--help` at a time, whether every
+command, flag and restricted value this plugin sends is still one it takes.
+Nothing that builds checks any of that: a renamed flag, or a value Herdr
+stopped accepting, compiles perfectly and fails at the far end, one action at a
+time. The stand-in the tests run against cannot catch it either, being written
+from the same belief as the code — it accepted `--placement popup` for as long
+as the code sent it, while the real Herdr refused it and nothing opened.
+
+It is not part of `make check`, for the reason `make vuln` is not: it needs
+Herdr on the machine and CI has none, and a check that cannot run everywhere is
+one people learn to ignore where it can. What it reads is
+`internal/herdrcli.Dependencies`, and a test in that package holds the list to
+the code, so what is asked about cannot fall behind what is sent. It only ever
+asks for `--help`, because a checker that opened a pane to find out would be
+worse than the drift it looks for.
 
 `make vuln` is not part of `make check`, and deliberately: it needs the network
 and asks a database that changes without the code changing, so it can start

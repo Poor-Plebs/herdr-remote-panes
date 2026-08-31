@@ -13,7 +13,7 @@ STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
 # known when it was pinned.
 GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@latest
 
-.PHONY: check fmt vet lint test build mutants vuln clean
+.PHONY: check fmt vet lint test build mutants vuln herdr clean
 
 ## check: everything CI does, in the order it does it
 check: fmt vet lint test build
@@ -62,6 +62,24 @@ mutants:
 ## really asks about is the standard library this was built with.
 vuln:
 	go run $(GOVULNCHECK) ./...
+
+## herdr: whether the installed Herdr still takes what this sends it
+##
+## Not part of check, for the same reason as vuln: it needs Herdr on the
+## machine, and CI has no reason to have one. A check that cannot run
+## everywhere is one people learn to ignore where it can.
+##
+## Nothing that builds checks any of this. A renamed flag or a value Herdr
+## stopped accepting compiles perfectly and fails at the far end, one action at
+## a time -- and the stand-in the tests run against is written from the same
+## belief as the code, so it agrees with whatever the code believes. It
+## accepted `--placement popup` for as long as the code sent it, while the real
+## thing refused it and nothing opened.
+##
+## Reads internal/herdrcli.Dependencies, which a test holds to the package, and
+## asks only for --help: it must not change anything.
+herdr:
+	go run ./tools/herdrcheck
 
 ## build: the binary Herdr runs
 build:
