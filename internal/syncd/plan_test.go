@@ -4480,14 +4480,28 @@ func TestAPlacementHerdrWillNotTakeOpensATabAsPromised(t *testing.T) {
 		t.Errorf("overlay was planned as %q, and Herdr accepts it", got.Placement)
 	}
 
-	// And the settings the config calls valid are exactly the ones that reach
-	// Herdr as themselves or as a tab -- never as a value it refuses.
-	for _, placement := range []string{"follow", "split", "tab", "zoomed", "overlay"} {
-		switch got := planPaneTarget(placement, "w1", "w1:p1"); got.Placement {
-		case placementSplit, placementTab, placementZoomed, placementOverlay:
-		default:
-			t.Errorf("the config allows placement %q, and it is planned as %q, "+
-				"which is not one Herdr accepts", placement, got.Placement)
+	// And whatever the config allows reaches Herdr as a value Herdr takes.
+	//
+	// Held to the list `make herdr` asks Herdr about, rather than to a second
+	// copy written here. Two lists of the same thing is how popup came to be
+	// sent: the config knew five placements, this planner knew six, and the
+	// flag takes four. This is the one that can be checked without Herdr
+	// installed, so it is the one that fails first.
+	accepted := map[string]bool{}
+	for _, dep := range herdrcli.Dependencies {
+		if len(dep.Command) == 3 && dep.Command[2] == "open" {
+			for _, value := range dep.Values["--placement"] {
+				accepted[value] = true
+			}
+		}
+	}
+	if len(accepted) == 0 {
+		t.Fatal("no placements are listed for `plugin pane open`, so this checks nothing")
+	}
+	for _, placement := range []string{"follow", "split", "tab", "zoomed", "overlay", "popup", "nonsense", ""} {
+		if got := planPaneTarget(placement, "w1", "w1:p1"); !accepted[got.Placement] {
+			t.Errorf("placement %q is planned as %q, which is not one Herdr's "+
+				"--placement takes: %v", placement, got.Placement, accepted)
 		}
 	}
 }

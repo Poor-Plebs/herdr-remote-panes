@@ -99,3 +99,57 @@ func TestEveryCommandInTheListIsOneThisSends(t *testing.T) {
 		t.Fatal("nothing is listed, so make herdr checks nothing")
 	}
 }
+
+// statesChecked is the values `make herdr` asks Herdr to still accept for
+// pane report-agent --state.
+func statesChecked(t *testing.T) map[string]bool {
+	t.Helper()
+	for _, dep := range Dependencies {
+		if len(dep.Command) == 2 && dep.Command[1] == "report-agent" {
+			listed := map[string]bool{}
+			for _, value := range dep.Values["--state"] {
+				listed[value] = true
+			}
+			return listed
+		}
+	}
+	t.Fatal("pane report-agent is not listed, so nothing checks the states it sends")
+	return nil
+}
+
+func TestEveryStateThisReportsIsOneMakeHerdrChecks(t *testing.T) {
+	// AgentState decides what goes on the wire, and the list decides what is
+	// asked about. A state this can produce and the list does not name is one
+	// Herdr is never asked about -- and Herdr restricts this flag, so a state
+	// it does not take is a report that fails rather than one it ignores.
+	listed := statesChecked(t)
+
+	// What Herdr can report, from the AgentStatus enum in its own API schema,
+	// and then some things it cannot: the mapping has a default and the far
+	// side is a machine that may be running a different version.
+	for _, status := range []string{
+		"idle", "working", "blocked", "done", "unknown",
+		"", "DONE", "thinking", "idle ", "unknown\n", "🙂",
+	} {
+		if got := AgentState(status); !listed[got] {
+			t.Errorf("a pane reporting %q is reported on as %q, which no entry "+
+				"in Dependencies names: %v", status, got, listed)
+		}
+	}
+}
+
+func FuzzEveryStateThisReportsIsOneMakeHerdrChecks(f *testing.F) {
+	for _, seed := range []string{"idle", "done", "", "working", "\x00", "unknown"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, status string) {
+		// The status comes off another machine, so the table above is a
+		// sample and this is the property: whatever arrives, what leaves is
+		// something Herdr was asked about.
+		listed := statesChecked(t)
+		if got := AgentState(status); !listed[got] {
+			t.Fatalf("a pane reporting %q is reported on as %q, which no entry "+
+				"in Dependencies names", status, got)
+		}
+	})
+}
