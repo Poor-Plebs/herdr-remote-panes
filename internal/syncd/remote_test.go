@@ -4196,3 +4196,73 @@ func TestAPassCostsEveryMachineAddedTogether(t *testing.T) {
 			three.Round(10*time.Millisecond), one.Round(10*time.Millisecond))
 	}
 }
+
+// relabelPane renames a pane inside the local Herdr, standing in for the pane
+// going and its id being handed to something else.
+func relabelPane(t *testing.T, paneID, label string) {
+	t.Helper()
+	statePath := os.Getenv(fakeHerdrState)
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held fakeHerdr
+	if err := json.Unmarshal(raw, &held); err != nil {
+		t.Fatal(err)
+	}
+	pane, ok := held.Panes[paneID]
+	if !ok {
+		t.Fatalf("no pane %s to rename, so this test is about nothing", paneID)
+	}
+	pane["label"] = label
+	out, _ := json.Marshal(held)
+	if err := os.WriteFile(statePath, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAStrayIsCheckedAgainBeforeItIsClosed(t *testing.T) {
+	// Moving a stray onto the machine opens a terminal there first -- an ssh
+	// round trip -- and closes the local pane by id afterwards. Herdr reuses
+	// pane ids. In that gap the pane can be closed by hand and its id handed
+	// to something somebody has since opened, and closing by id closed that.
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+	withConfigFile(t, `{"hosts":[{"target":"bot","mode":"attach"}]}`)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	workspace := ""
+	for id := range here().Workspaces {
+		workspace = id
+		break
+	}
+	if workspace == "" {
+		t.Fatal("no space to put a pane in")
+	}
+
+	// The one that changed hands: planned as "notes", something else by the
+	// time the close comes round.
+	changed := addLeftoverPane(t, workspace, "notes")
+	relabelPane(t, changed, "somebody-elses-work")
+	// And one that did not, so this cannot pass by closing nothing at all.
+	kept := addLeftoverPane(t, workspace, "notes")
+
+	d.captureStrayPanes(cfg.Hosts[0], []strayPane{
+		{PaneID: changed, Placement: "split", Label: "notes"},
+		{PaneID: kept, Placement: "split", Label: "notes"},
+	})
+
+	if _, open := here().Panes[changed]; !open {
+		t.Error("the pane holding the id now was closed, and nobody asked for that")
+	}
+	if _, open := here().Panes[kept]; open {
+		t.Error("the pane that was still the stray was left open, so nothing was moved")
+	}
+}

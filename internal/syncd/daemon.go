@@ -2856,6 +2856,10 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 type strayPane struct {
 	PaneID    string
 	Placement string
+	// Label is what the pane was called when it was decided it was a stray,
+	// which is how it is told from whatever holds the id by the time it is
+	// closed. See planStrayClose.
+	Label string
 }
 
 // closeOrphans clears panes in a machine's space that carry a remote terminal's
@@ -2994,6 +2998,7 @@ func (d *Daemon) planStrayCapture(state *hostSync, index *paneIndex) []strayPane
 			strays = append(strays, strayPane{
 				PaneID:    paneID,
 				Placement: planStrayPlacement(index.panesPerTab[index.tabOf[paneID]]),
+				Label:     index.labelOf[paneID],
 			})
 		}
 		d.seenStray[paneID] = true
@@ -3020,6 +3025,35 @@ func (d *Daemon) captureStrayPanes(host config.Host, strays []strayPane) {
 			host.Target, stray.PaneID, stray.Placement)
 		if err := d.openRemotePane(host, stray.Placement, true); err != nil {
 			log.Printf("open terminal on %s: %v", host.Target, err)
+			continue
+		}
+
+		// Asked again, because opening a terminal on the machine is an ssh
+		// round trip and the id is closed after it. Herdr reuses pane ids, so
+		// what answers to this one now need not be what was judged a stray a
+		// few seconds ago -- and it is somebody's pane either way.
+		// retryUnclosed guards its own close the same way.
+		now, err := herdrcli.PaneList()
+		if err != nil {
+			log.Printf("%s: opened a terminal on the machine, and could not "+
+				"check what pane %s is before closing it, so it was left "+
+				"alone: %v", host.Target, stray.PaneID, err)
+			continue
+		}
+		label, alive := "", false
+		for _, pane := range now {
+			if pane.PaneID == stray.PaneID {
+				label, alive = pane.Label, true
+				break
+			}
+		}
+		if !planStrayClose(stray, label, alive) {
+			// Said, because the machine now has a terminal that this one does
+			// not: leaving the pane is the safe half of a move that only half
+			// happened, and an unexplained duplicate is how that looks.
+			log.Printf("%s: pane %s is %s now, not %q, so it was left alone; "+
+				"the terminal opened on the machine is a spare",
+				host.Target, stray.PaneID, describePane(label, alive), stray.Label)
 			continue
 		}
 		if err := herdrcli.ClosePaneByID(stray.PaneID); err != nil {

@@ -739,6 +739,39 @@ func planMirrors(remote []herdrcli.Pane, state mirrorState) mirrorPlan {
 	return plan
 }
 
+// planStrayClose reports whether the pane a capture planned to move is still
+// the pane it planned to move.
+//
+// A stray is decided during a pass and closed after one: moving it opens a
+// terminal on the machine first, which is an ssh round trip. Herdr reuses pane
+// ids, so in that gap the pane can be closed by hand and its id handed to
+// something somebody has since opened -- and closing by id then closes that
+// instead, which is somebody's work rather than a pane the plugin put there.
+//
+// The name is what tells them apart, as it does for a pane refused a close.
+// A pane that has been renamed in the gap is left alone: the cost of that is a
+// spare terminal on the machine, said in the log, and the cost of the other
+// answer is a terminal closed that nobody asked to close.
+func planStrayClose(planned strayPane, label string, alive bool) bool {
+	if !alive {
+		return false
+	}
+	return label == planned.Label
+}
+
+// describePane says what is at a pane id now, for a log line about not closing
+// it. Its own function because "" is two different things -- a pane with no
+// name and no pane at all -- and the message has to tell them apart.
+func describePane(label string, alive bool) string {
+	switch {
+	case !alive:
+		return "gone"
+	case label == "":
+		return "unnamed"
+	}
+	return fmt.Sprintf("%q", label)
+}
+
 // planOrphanedPane decides whether a pane in a machine's space is a mirror that
 // lost its process and should be closed.
 //

@@ -4361,3 +4361,38 @@ func TestConnectingAgainForgetsWhatWasClosed(t *testing.T) {
 			d.hosts["bot"].abandoned)
 	}
 }
+
+func TestAStrayIsOnlyClosedIfItIsStillTheSamePane(t *testing.T) {
+	// Moving a stray opens a terminal on the machine first, which is an ssh
+	// round trip, and only then closes the local pane by id. Herdr reuses pane
+	// ids: in that gap the pane can be closed by hand and its id handed to
+	// something somebody has since opened. Closing by id alone closed that.
+	planned := strayPane{PaneID: "w1:p7", Placement: "split", Label: "notes"}
+
+	for _, tt := range []struct {
+		what  string
+		label string
+		alive bool
+		close bool
+	}{
+		{"the pane it planned to move", "notes", true, true},
+		{"a pane that has gone", "", false, false},
+		{"the id, holding somebody else's pane now", "build", true, false},
+		{"the id, holding an unnamed pane now", "", true, false},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			if got := planStrayClose(planned, tt.label, tt.alive); got != tt.close {
+				t.Errorf("closing %s: %v, want %v", tt.what, got, tt.close)
+			}
+		})
+	}
+
+	// The log line has to tell "no pane" from "a pane with no name": both are
+	// the empty string, and only one of them means somebody may be in it.
+	if got := describePane("", false); got != "gone" {
+		t.Errorf("a pane that is gone is described as %q", got)
+	}
+	if got := describePane("", true); got != "unnamed" {
+		t.Errorf("a pane with no name is described as %q", got)
+	}
+}
