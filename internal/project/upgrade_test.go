@@ -293,6 +293,18 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 		return false
 	}
 
+	// What is in the temp directory before any daemon of this test's runs, so
+	// what it leaves behind can be told from what was already there.
+	sockets := func() map[string]bool {
+		found, _ := filepath.Glob(filepath.Join(os.TempDir(), "hrp-*.sock"))
+		held := make(map[string]bool, len(found))
+		for _, path := range found {
+			held[path] = true
+		}
+		return held
+	}
+	before := sockets()
+
 	old, oldSaid := start(older)
 	defer func() { _ = old.Process.Kill() }()
 	if !answering(older, 15*time.Second) {
@@ -300,7 +312,43 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 	}
 
 	replacing, replacingSaid := start(current)
-	defer func() { _ = replacing.Process.Kill() }()
+	// Asked to stop rather than killed, so it unlinks the socket it bound.
+	// Killed, it leaves the file behind -- and this daemon's state directory
+	// is a t.TempDir(), which is long enough that the socket falls back to a
+	// short path in the temp directory hashed from it, so the name is a new
+	// one every run. Running make check for a few days left three hundred and
+	// fifty of them in /tmp.
+	//
+	// It is also the shutdown Herdr performs, which nothing else here covers:
+	// the daemon that has just taken the socket over is the one that has to
+	// give it back.
+	defer func() {
+		if err := replacing.Process.Signal(syscall.SIGTERM); err != nil {
+			_ = replacing.Process.Kill()
+		}
+		done := make(chan struct{})
+		go func() { _ = replacing.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			// Said, not swallowed: a daemon that will not stop on a signal
+			// leaves the socket behind, which is what this is about.
+			t.Errorf("the new daemon did not stop when asked, so its socket is "+
+				"left behind:\n%s", replacingSaid)
+			_ = replacing.Process.Kill()
+			<-done
+		}
+
+		// And it took its socket with it. The daemon unlinks the path it bound
+		// on the way out; a test that kills it instead leaves one file per run
+		// in the temp directory, under a name hashed from a t.TempDir() and so
+		// never the same twice.
+		for path := range sockets() {
+			if !before[path] {
+				t.Errorf("the daemons left %s behind in the temp directory", path)
+			}
+		}
+	}()
 	time.Sleep(time.Second)
 	if replacing.ProcessState != nil && replacing.ProcessState.Exited() {
 		t.Fatalf("the new daemon exited rather than waiting for the %s one to go; "+
