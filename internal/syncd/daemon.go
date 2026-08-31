@@ -407,7 +407,13 @@ func (d *Daemon) rereadConfig() {
 	}
 
 	d.mu.Lock()
-	changed := info.ModTime().After(d.configStamp)
+	// Different, not newer. A restored file is older than the one it replaces
+	// -- `cp -p` of an earlier copy, or a checkout out of git -- and asking
+	// only whether it had moved forward meant the file on disk said one thing
+	// while the daemon went on using another, with nothing to say why until
+	// Herdr was restarted. A clock that steps back does the same, which a
+	// machine waking from sleep can do.
+	changed := !info.ModTime().Equal(d.configStamp)
 	d.mu.Unlock()
 	if !changed {
 		return

@@ -4314,3 +4314,69 @@ func TestReplacingAPaneSaysWhichPaneItWas(t *testing.T) {
 		t.Errorf("the line does not say which terminal's mirror was missing: %q", line)
 	}
 }
+
+func TestAConfigRestoredFromABackupIsRead(t *testing.T) {
+	// The file is watched by its modification time, and a restored one is
+	// older than what replaced it. `cp -p` an earlier copy back, or check one
+	// out of git, and the file on disk says one thing while the daemon goes on
+	// using another -- with nothing to say why, until Herdr is restarted.
+	//
+	// The same shape as a clock that steps back, which a machine waking from
+	// sleep can do.
+	path := withConfigFile(t, `{"placement":"tab","hosts":[{"target":"bot"}]}`)
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := New(loaded)
+	if got := d.config().Placement; got != "tab" {
+		t.Fatalf("the daemon started with placement %q", got)
+	}
+	// As the daemon would have stamped it on the pass that read it.
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.configStamp = info.ModTime()
+
+	// The backup goes back, keeping its own older timestamp.
+	if err := os.WriteFile(path, []byte(`{"placement":"split","hosts":[{"target":"bot"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	older := info.ModTime().Add(-time.Hour)
+	if err := os.Chtimes(path, older, older); err != nil {
+		t.Fatal(err)
+	}
+
+	d.rereadConfig()
+
+	if got := d.config().Placement; got != "split" {
+		t.Errorf("the file on disk says placement %q and the daemon is using %q",
+			"split", got)
+	}
+}
+
+func TestAConfigThatHasNotMovedIsNotRereadEveryPass(t *testing.T) {
+	// The other half of the same check: a pass comes round every couple of
+	// seconds, and rereading a file nobody touched would log that it changed
+	// on every one of them.
+	path := withConfigFile(t, `{"placement":"tab","hosts":[{"target":"bot"}]}`)
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := New(loaded)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.configStamp = info.ModTime()
+
+	logged := captureLog(t)
+	for i := 0; i < 3; i++ {
+		d.rereadConfig()
+	}
+	if strings.Contains(logged.String(), "changed on disk") {
+		t.Errorf("a file nobody touched was reread:\n%s", logged.String())
+	}
+}
