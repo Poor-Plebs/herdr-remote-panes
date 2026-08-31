@@ -81,9 +81,23 @@ type SetMode func(target, mode string) (string, error)
 // running, so this undoes the view rather than the session.
 type Disconnect func(target string) (string, error)
 
+// Actions are the three things the menu can ask the daemon to do.
+//
+// Named rather than passed in order. All three have the same shape -- a target
+// in, a message and an error out -- so handing them over in the wrong order
+// compiles, and the menu then disconnects a machine where enter meant to
+// connect it. Nothing about that is visible in a diff of the call, and the
+// only test that would have caught it is one nobody had written: a mutation
+// that swapped two of them broke nothing.
+type Actions struct {
+	Connect    Connect
+	SetMode    SetMode
+	Disconnect Disconnect
+}
+
 // Run draws the menu and connects to whatever the user picks. It returns when
 // the user chooses or cancels; the pane closes as soon as it returns.
-func Run(connect Connect, setMode SetMode, disconnect Disconnect) error {
+func Run(do Actions) error {
 	entries, warning := collect()
 	if len(entries) == 0 {
 		heading, body := noMachinesNotice(warning)
@@ -117,7 +131,7 @@ func Run(connect Connect, setMode SetMode, disconnect Disconnect) error {
 			clear()
 			return nil
 		case keyEnter:
-			return choose(entries[selected], connect)
+			return choose(entries[selected], do.Connect)
 		case keyDisconnect:
 			// Closing the panes here, not the work there, so this is
 			// recoverable: enter brings the machine back with its terminals.
@@ -125,7 +139,7 @@ func Run(connect Connect, setMode SetMode, disconnect Disconnect) error {
 			if !worthDisconnecting(entry) {
 				break
 			}
-			if _, err := disconnect(entry.Target); err != nil {
+			if _, err := do.Disconnect(entry.Target); err != nil {
 				notice("Could not disconnect "+text.Sanitize(entry.Target),
 					err.Error(), "Press any key.")
 				readKey()
@@ -156,7 +170,7 @@ func Run(connect Connect, setMode SetMode, disconnect Disconnect) error {
 			if !confirmToggle(entry, mode) {
 				break
 			}
-			if _, err := setMode(entry.Target, mode); err != nil {
+			if _, err := do.SetMode(entry.Target, mode); err != nil {
 				notice("Could not change "+entry.Target,
 					err.Error(), "Press any key.")
 				readKey()
@@ -166,7 +180,7 @@ func Run(connect Connect, setMode SetMode, disconnect Disconnect) error {
 		default:
 			// Digits jump straight to an entry.
 			if index, ok := planDigitChoice(key, len(entries)); ok {
-				return choose(entries[index], connect)
+				return choose(entries[index], do.Connect)
 			}
 		}
 	}

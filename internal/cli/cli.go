@@ -137,17 +137,7 @@ func run(command string, args []string) error {
 		return err
 
 	case "picker":
-		return picker.Run(
-			func(target string) (string, error) {
-				return ask(syncd.Command{Cmd: "connect", Host: target})
-			},
-			func(target, mode string) (string, error) {
-				return ask(syncd.Command{Cmd: "set-mode", Host: target, Mode: mode})
-			},
-			func(target string) (string, error) {
-				return ask(syncd.Command{Cmd: "disconnect", Host: target})
-			},
-		)
+		return picker.Run(menuActions())
 
 	case "connect":
 		// A host is optional: with none, every configured host reconnects.
@@ -388,6 +378,25 @@ func daemonLog() func() {
 	return func() {
 		log.SetOutput(logfile.Sanitized(os.Stderr))
 		_ = f.Close()
+	}
+}
+
+// menuActions is what the menu can ask the daemon to do.
+//
+// Its own function so that the three can be checked against the words they
+// send. Inside the case that opens the menu they were three literals nothing
+// could reach: a mutation that made the disconnect key connect broke no test.
+func menuActions() picker.Actions {
+	return picker.Actions{
+		Connect: func(target string) (string, error) {
+			return ask(syncd.Command{Cmd: "connect", Host: target})
+		},
+		SetMode: func(target, mode string) (string, error) {
+			return ask(syncd.Command{Cmd: "set-mode", Host: target, Mode: mode})
+		},
+		Disconnect: func(target string) (string, error) {
+			return ask(syncd.Command{Cmd: "disconnect", Host: target})
+		},
 	}
 }
 

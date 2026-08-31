@@ -962,3 +962,51 @@ func TestConnectFallsBackToTheSelectionAndOpenDoesNot(t *testing.T) {
 		}
 	})
 }
+
+func TestEachMenuKeyAsksForWhatItSays(t *testing.T) {
+	// The three things the menu can do, and the commands they send. Inside the
+	// case that opens the menu these were three literals nothing could reach:
+	// a mutation that made the disconnect key send "connect" broke no test,
+	// which is how that was noticed.
+	//
+	// All three have the same shape, so passing them in the wrong order used
+	// to compile. They are named fields now, which is why this only has to
+	// check what each one asks for.
+	do := menuActions()
+
+	for _, tt := range []struct {
+		what string
+		call func() error
+		want syncd.Command
+	}{
+		{
+			what: "enter connects",
+			call: func() error { _, err := do.Connect("bot"); return err },
+			want: syncd.Command{Cmd: "connect", Host: "bot"},
+		},
+		{
+			what: "d disconnects",
+			call: func() error { _, err := do.Disconnect("bot"); return err },
+			want: syncd.Command{Cmd: "disconnect", Host: "bot"},
+		},
+		{
+			what: "m sets the mode",
+			call: func() error { _, err := do.SetMode("bot", "attach"); return err },
+			want: syncd.Command{Cmd: "set-mode", Host: "bot", Mode: "attach"},
+		},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			asked := answerWith(t, syncd.Reply{OK: true, Message: "done"})
+			if err := tt.call(); err != nil {
+				t.Fatalf("%s: %v", tt.what, err)
+			}
+			sent := asked()
+			if len(sent) != 1 {
+				t.Fatalf("%s sent %d commands, want one: %+v", tt.what, len(sent), sent)
+			}
+			if sent[0] != tt.want {
+				t.Errorf("%s sent %+v, want %+v", tt.what, sent[0], tt.want)
+			}
+		})
+	}
+}

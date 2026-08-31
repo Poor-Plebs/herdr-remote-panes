@@ -80,20 +80,20 @@ func runMenuConfigured(t *testing.T, machines, pluginConfig, keys string) menuRu
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		got.err = Run(
-			func(target string) (string, error) {
+		got.err = Run(Actions{
+			Connect: func(target string) (string, error) {
 				got.connected = append(got.connected, target)
 				return "connected to " + target, nil
 			},
-			func(target, mode string) (string, error) {
+			SetMode: func(target, mode string) (string, error) {
 				got.modes = append(got.modes, [2]string{target, mode})
 				return "changed", nil
 			},
-			func(target string) (string, error) {
+			Disconnect: func(target string) (string, error) {
 				got.closed = append(got.closed, target)
 				return "closed", nil
 			},
-		)
+		})
 	}()
 
 	select {
