@@ -421,9 +421,16 @@ func collect() ([]Entry, string) {
 		entry.ReadOnly = cfg.EffectiveMode(host) == config.ModeObserve
 	}
 	for _, host := range sshconfig.Hosts() {
-		// An alias ssh would read as an option is not a machine anyone can
-		// connect to, so offering it would only produce a refusal later.
-		if config.ValidTarget(host) != nil || disabled[host] {
+		// An alias ssh would read as an option never arrives here: the
+		// reading leaves it out, and since 95081bc says on the warning line
+		// that it did. Checking again would take nothing out that is still
+		// here -- and if the reading ever handed them over instead, this would
+		// drop them again in silence, which is the thing that was fixed.
+		//
+		// Machines switched off in the config are a different matter: somebody
+		// asked for those to be absent, and the daemon's startup report says
+		// which they are.
+		if disabled[host] {
 			continue
 		}
 		entry := add(host)
