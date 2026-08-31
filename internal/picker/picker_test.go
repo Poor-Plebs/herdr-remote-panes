@@ -1252,6 +1252,15 @@ func TestAMachineConnectedWithoutBeingWrittenDownIsStillInTheMenu(t *testing.T) 
 			"has it, which is where it is not")
 	}
 
+	// And every machine added this way is one d can act on: it is listed
+	// because the menu has something to do with it, and being listed with
+	// nothing to do would be the menu naming a machine it cannot help with.
+	for _, target := range []string{"deploy@10.0.0.5", "gone@10.0.0.6"} {
+		if entry, ok := found[target]; ok && !worthDisconnecting(entry) {
+			t.Errorf("%s is in the menu and d does nothing to it", target)
+		}
+	}
+
 	// The machines that were written down are still there, and first.
 	if entries[0].Target != "bot" {
 		t.Errorf("the configured machine is no longer first: %+v", entries)

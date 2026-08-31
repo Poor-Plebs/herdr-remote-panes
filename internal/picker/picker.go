@@ -473,11 +473,13 @@ func collect() ([]Entry, string) {
 			// disconnects a machine or toggles its mirroring. The listing
 			// showed it; the menu did not.
 			//
-			// Only once it is connected or has been given up on. Those say so
-			// in their own words, where a machine that is neither falls
-			// through to "from ~/.ssh/config", which for this one would not be
-			// true.
-			if !info.Connected && !info.GaveUp {
+			// Only once there is something to be done about it here, which
+			// is the same question d asks -- so it is listed exactly when the
+			// menu has a use for it, by the same rule rather than a second
+			// copy of it. Those states also say so in their own words, where
+			// a machine that is neither falls through to "from ~/.ssh/config",
+			// which for this one is the one thing that is not true.
+			if !worthDisconnecting(Entry{Connected: info.Connected, GaveUp: info.GaveUp}) {
 				continue
 			}
 			entry = add(info.Target)
