@@ -3203,6 +3203,63 @@ func TestAnEndlessRequestIsCutOff(t *testing.T) {
 	}
 }
 
+func TestARequestIsReadToSixtyFourKilobytesAndNotOneByteFurther(t *testing.T) {
+	// The size written out rather than taken from maxRequestBytes. The test
+	// above proves a request that never ends is cut off, and would prove it
+	// for any bound at all: it writes until the daemon stops reading, so where
+	// the daemon stops is exactly what it does not check. That number is the
+	// decision -- too low and a real command is refused, too high and a client
+	// that never finishes its JSON grows the daemon a buffer at a time, which
+	// is the thing the bound is for.
+	const theRequestLimit = 1 << 16
+
+	// Padded inside a string field so the object is complete only at its last
+	// byte: one byte over the limit loses the closing brace and cannot decode.
+	request := func(size int) []byte {
+		t.Helper()
+		const prefix, suffix = `{"cmd":"status","workspace":"`, `"}`
+		b := []byte(prefix + strings.Repeat("w", size-len(prefix)-len(suffix)) + suffix)
+		if len(b) != size {
+			t.Fatalf("built a request of %d bytes, want %d", len(b), size)
+		}
+		return b
+	}
+
+	for _, tt := range []struct {
+		what string
+		size int
+		read bool
+	}{
+		{"exactly the limit", theRequestLimit, true},
+		{"one byte more", theRequestLimit + 1, false},
+	} {
+		body := request(tt.size)
+		server, client := net.Pipe()
+
+		go serveExchange(server, func(Command) Reply {
+			return Reply{OK: true, Message: "read it"}
+		})
+
+		// Written from a goroutine: the oversized request is never read past
+		// the bound, so its last byte waits for a reader that has stopped.
+		go func() { _, _ = client.Write(body) }()
+
+		var reply Reply
+		_ = client.SetReadDeadline(time.Now().Add(10 * time.Second))
+		if err := json.NewDecoder(client).Decode(&reply); err != nil {
+			t.Fatalf("%s: no answer to a request of %d bytes: %v", tt.what, tt.size, err)
+		}
+		if reply.OK != tt.read {
+			t.Errorf("%s: a request of %d bytes was read = %v, want %v (%s)",
+				tt.what, tt.size, reply.OK, tt.read, reply.Message)
+		}
+		if !tt.read && !strings.Contains(reply.Message, "could not read the request") {
+			t.Errorf("%s: reply = %q, want it to say what went wrong", tt.what, reply.Message)
+		}
+		client.Close()
+	}
+}
+
 func TestConnectAllReachesTheMachinesTogether(t *testing.T) {
 	// One at a time, an unreachable machine costs its whole connect timeout
 	// and the next one has not started yet, so the total is the sum. Three of
