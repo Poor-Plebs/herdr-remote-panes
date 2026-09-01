@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -165,5 +167,104 @@ func TestTheRaiseIsSomethingGoWillStillCompile(t *testing.T) {
 		if got := raisedSource(tt.src, m, value); got != tt.want {
 			t.Errorf("%s:\n got %q\nwant %q", tt.what, got, tt.want)
 		}
+	}
+}
+
+// inFlightFile puts a mutated file on disk and records it the way check does.
+func inFlightFile(t *testing.T, original, mutated string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "capped.go")
+	if err := os.WriteFile(path, []byte(mutated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inFlight.Lock()
+	inFlight.path, inFlight.original = path, original
+	inFlight.Unlock()
+	t.Cleanup(func() {
+		inFlight.Lock()
+		inFlight.path, inFlight.original = "", ""
+		inFlight.Unlock()
+	})
+	return path
+}
+
+// TestAMutationIsPutBackAndThenLetGoOf holds what stands between a run that is
+// interrupted and a raised constant left in somebody's tree.
+//
+// The mutation builds and most tests still pass, so nothing points at it, and
+// `git status` shows one modified file sitting beside the work in progress.
+// That is three commands from being committed, and it has happened here.
+func TestAMutationIsPutBackAndThenLetGoOf(t *testing.T) {
+	const was = "const Max = 8 * 1024 * 1024\n"
+	path := inFlightFile(t, was, "const Max = (8 * 1024 * 1024) * 1000\n")
+
+	put, err := putBack()
+	if err != nil {
+		t.Fatalf("putting %s back: %v", put, err)
+	}
+	if put != path {
+		t.Errorf("said it put back %q, want %q", put, path)
+	}
+	if raw, _ := os.ReadFile(path); string(raw) != was {
+		t.Errorf("the file holds %q, want %q", raw, was)
+	}
+
+	// Let go of, so that the second caller does nothing. The signal handler
+	// and check's own defer both come through here, and the handler can arrive
+	// after the defer has already finished -- at which point the file may
+	// belong to the next bound, or to somebody editing it.
+	if err := os.WriteFile(path, []byte("someone else's work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if put, err := putBack(); put != "" || err != nil {
+		t.Errorf("a second put back reported %q, %v; want nothing to do", put, err)
+	}
+	if raw, _ := os.ReadFile(path); string(raw) != "someone else's work\n" {
+		t.Errorf("a second put back overwrote the file with %q", raw)
+	}
+}
+
+// TestNothingInFlightIsNothingToPutBack covers the gap between two bounds.
+func TestNothingInFlightIsNothingToPutBack(t *testing.T) {
+	inFlight.Lock()
+	inFlight.path, inFlight.original = "", ""
+	inFlight.Unlock()
+
+	if put, err := putBack(); put != "" || err != nil {
+		t.Errorf("with nothing in flight: %q, %v; want nothing to do", put, err)
+	}
+}
+
+// TestAFileThatCannotBePutBackIsNotForgotten keeps the record honest.
+//
+// Forgetting a file the write failed on says the tree is clean when a raised
+// constant is still sitting in it, and the caller that wanted to complain
+// loudly no longer has the name to complain about.
+func TestAFileThatCannotBePutBackIsNotForgotten(t *testing.T) {
+	// A directory cannot be written as a file, which is a real failure rather
+	// than a contrived one: the path came from a tree walk.
+	dir := t.TempDir()
+	inFlight.Lock()
+	inFlight.path, inFlight.original = dir, "const Max = 8 * 1024 * 1024\n"
+	inFlight.Unlock()
+	t.Cleanup(func() {
+		inFlight.Lock()
+		inFlight.path, inFlight.original = "", ""
+		inFlight.Unlock()
+	})
+
+	put, err := putBack()
+	if err == nil {
+		t.Fatal("writing a file over a directory was reported as success")
+	}
+	if put != dir {
+		t.Errorf("the failure names %q, want the file it could not write, %q", put, dir)
+	}
+
+	inFlight.Lock()
+	still := inFlight.path
+	inFlight.Unlock()
+	if still != dir {
+		t.Errorf("a file that was not put back was forgotten anyway (now %q)", still)
 	}
 }

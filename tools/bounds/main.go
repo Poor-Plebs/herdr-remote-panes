@@ -74,20 +74,45 @@ func restoreOnSignal() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		s := <-stop
-		inFlight.Lock()
-		if inFlight.path != "" {
-			if err := os.WriteFile(inFlight.path, []byte(inFlight.original), 0o644); err != nil {
-				fmt.Fprintf(os.Stderr, "could not put %s back: %v\n", inFlight.path, err)
+		if path, err := putBack(); path != "" {
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "could not put %s back: %v\n", path, err)
 			} else {
-				fmt.Fprintf(os.Stderr, "\nput %s back before stopping\n", inFlight.path)
+				fmt.Fprintf(os.Stderr, "\nput %s back before stopping\n", path)
 			}
 		}
-		inFlight.Unlock()
 		if sig, ok := s.(syscall.Signal); ok {
 			os.Exit(128 + int(sig))
 		}
 		os.Exit(1)
 	}()
+}
+
+// putBack restores the file a mutation is applied to, and says which it was.
+//
+// Nothing in flight is not an error: it is what a run between one bound and the
+// next looks like, and a signal arriving then has nothing to undo.
+//
+// Both callers come through here. The handler and check's own defer can be
+// putting the same file back at the same moment, so the write and the
+// forgetting happen together under the one lock -- and once it is forgotten a
+// second call does nothing, which is what makes the two safe to both run.
+//
+// A file that could not be written is not forgotten. Whoever asked is told
+// which one, and the record still says a mutation is out there, because it is.
+func putBack() (string, error) {
+	inFlight.Lock()
+	defer inFlight.Unlock()
+
+	path := inFlight.path
+	if path == "" {
+		return "", nil
+	}
+	if err := os.WriteFile(path, []byte(inFlight.original), 0o644); err != nil {
+		return path, err
+	}
+	inFlight.path, inFlight.original = "", ""
+	return path, nil
 }
 
 func main() {
@@ -221,13 +246,10 @@ func check(path, original string, m []int, value, pkg string) (verdict string) {
 		return "could not write"
 	}
 	defer func() {
-		if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "could not put %s back: %v\n", path, err)
+		if put, err := putBack(); err != nil {
+			fmt.Fprintf(os.Stderr, "could not put %s back: %v\n", put, err)
 			os.Exit(2)
 		}
-		inFlight.Lock()
-		inFlight.path, inFlight.original = "", ""
-		inFlight.Unlock()
 	}()
 
 	out, err := testCmd(pkg).CombinedOutput()
