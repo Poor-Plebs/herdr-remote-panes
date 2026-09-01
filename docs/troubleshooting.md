@@ -430,6 +430,20 @@ machine on purpose. It cannot be prevented from one side, so it is reported
 rather than fixed: rename the spare space on the machine, or give this machine a
 name of its own to look for.
 
+**A machine says `mirroring into the space called`.** The space on a machine is
+looked for by the name `remote_workspace_format` gives it and, failing that, by
+a looser match that ignores the marker in front of it. The loose one is what
+keeps your terminals where they are when you change that setting — the space
+made under the old name is still recognised as yours.
+
+It is also the one way into somebody else's space without two spaces sharing a
+name: the marker comes off greedily, so a space called `☁  ☁laptop` comes down
+to `laptop` and answers to a hub of that name. Which of the two happened cannot
+be told from this end — that would mean knowing every other hub pointed at that
+machine — so the line says what is true, and you decide: if you changed the
+format, this is it working; if you did not, those are somebody else's terminals
+and the fix is a `remote_workspace_format` that does not collide.
+
 Like the cap above, this names the space on every machine you mirror rather than
 on one of them, so pick something that reads as coming from *here*:
 
