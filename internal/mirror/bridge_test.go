@@ -664,9 +664,16 @@ func TestThePaneSaysWhenTheDaemonWillNotLearnItFailed(t *testing.T) {
 func streamingSSH(t *testing.T, frames int) {
 	t.Helper()
 	dir := t.TempDir()
-	// One frame per line, base64 as the far side sends it, then a wait so the
-	// stream does not simply end -- what is being tested is giving up on a
-	// stream that is still coming.
+	// One frame per line, base64 as the far side sends it, and then something
+	// left running that outlives the shell and holds the pipes open.
+	//
+	// The background child is the point. Killing what was started is not the
+	// same as being done waiting for it: Wait returns once nothing holds the
+	// other end of the pipes, so a child that outlived its parent can keep a
+	// stream that has been given up on waiting as long as it lives. Written as
+	// a foreground command this passed on Linux, where the shell replaces
+	// itself with its last command and dies with it, and hung on macOS, where
+	// it does not. Backgrounded, both behave the way the far side might.
 	script := "#!/bin/sh\n" +
 		"last=\"\"; for a in \"$@\"; do last=\"$a\"; done\n" +
 		"case \"$last\" in\n" +
@@ -677,7 +684,8 @@ func streamingSSH(t *testing.T, frames int) {
 		"  printf '{\"bytes\":\"aGVsbG8=\"}\\n'\n" +
 		"  i=$((i+1))\n" +
 		"done\n" +
-		"sleep 30\n"
+		"sleep 30 &\n" +
+		"exit 0\n"
 	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

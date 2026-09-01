@@ -594,6 +594,18 @@ func streamOnce(client *remote.Client, terminal string, cols, rows int, winch <-
 	// a machine is doing.
 	said := &tail{max: maxSaid}
 	cmd.Stderr = io.MultiWriter(os.Stderr, said)
+	// Killing this is not the same as being done waiting for it, and this is
+	// the one place that kills on purpose. Wait blocks until nothing holds the
+	// other end of the pipes it reads -- and standard error is a pipe here,
+	// since it is copied two ways, so anything the far side left behind keeps
+	// it open. Giving up on a stream is then exactly as slow as not giving up,
+	// which is what it was meant to avoid.
+	//
+	// runCommand and the Herdr client have had this for the same reason. This
+	// one was found by a test that gave the pane nowhere to write: it passed on
+	// Linux, where the shell replaces itself with its last command, and hung
+	// for the full twenty seconds on macOS, where it does not.
+	cmd.WaitDelay = waitDelay
 	if err := cmd.Start(); err != nil {
 		return failed(err, argv, said)
 	}
@@ -680,6 +692,14 @@ func streamOnce(client *remote.Client, terminal string, cols, rows int, winch <-
 	// terminal went away: let the pane close.
 	return nil
 }
+
+// waitDelay bounds how long Wait may go on after the process itself has gone.
+//
+// Wait returns once the process exits and everything copying its output has
+// finished, and a child that outlived it inherits those pipes -- so a stream
+// given up on could still be waited for as long as whatever the far side left
+// running. The same value and the same reason as the one in the remote client.
+const waitDelay = 2 * time.Second
 
 // maxFrameBytes bounds one frame from the stream. Terminal output arrives in
 // small pieces; anything approaching this is a stream that has gone wrong.
