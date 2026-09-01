@@ -386,10 +386,14 @@ func TestSafeAgent(t *testing.T) {
 		t.Errorf("SafeAgent() = %q, lost the readable part", got)
 	}
 
-	// An unbounded name would crowd out everything beside it.
+	// An unbounded name would crowd out everything beside it. Sixty-four
+	// written out rather than maxAgentName: measuring against the bound means
+	// raising the bound raises what this expects, so five hundred characters
+	// would arrive whole and this would still pass -- which it did.
 	long := Pane{Agent: strings.Repeat("x", 500)}
-	if n := len([]rune(long.SafeAgent())); n > maxAgentName {
-		t.Errorf("SafeAgent() is %d runes, want at most %d", n, maxAgentName)
+	if n := len([]rune(long.SafeAgent())); n > 64 {
+		t.Errorf("SafeAgent() is %d runes of a five hundred character name, and "+
+			"it shares a sidebar with everything else", n)
 	}
 
 	// Nothing in, nothing out: an empty agent means no agent, and must not

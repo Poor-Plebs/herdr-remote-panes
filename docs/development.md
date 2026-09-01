@@ -217,6 +217,25 @@ make herdr                                    # the Herdr here still takes what 
 go test -run XXX -fuzz FuzzDecodeFrame -fuzztime 40s ./internal/mirror/
 ```
 
+`make bounds` raises every `max*` constant in the tree a thousandfold in turn
+and runs that package's own tests. A bound whose loss nothing notices is a
+bound with no test behind it — and the reason to look for those mechanically is
+that they do not look like gaps. Four were found the first time it ran, and
+every one of them had a test that read as though it held the bound:
+
+```go
+if n := len([]rune(long.SafeAgent())); n > maxAgentName {
+```
+
+Raise the constant and the threshold rises with it, so the test passes for any
+value the bound could take — including one that lets a machine put five hundred
+characters into a sidebar. Measuring against the bound under test is the shape;
+a number written out is the fix. Two of the four were bounds on what a remote
+machine can make this write: a failure reason on disk, and an agent's name.
+
+An unheld bound is something to read rather than a failure, since some are not
+observable at all — the size of a ring buffer changes nothing a test can see.
+
 `make herdr` asks the installed Herdr, one `--help` at a time, whether every
 command, flag and restricted value this plugin sends is still one it takes.
 Nothing that builds checks any of that: a renamed flag, or a value Herdr

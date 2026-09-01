@@ -13,7 +13,7 @@ STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
 # known when it was pinned.
 GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@latest
 
-.PHONY: check fmt vet lint test build mutants vuln herdr clean
+.PHONY: check fmt vet lint test build mutants vuln herdr bounds clean
 
 ## check: everything CI does, in the order it does it
 check: fmt vet lint test build
@@ -62,6 +62,23 @@ mutants:
 ## really asks about is the standard library this was built with.
 vuln:
 	go run $(GOVULNCHECK) ./...
+
+## bounds: whether each max* in the tree is held by anything
+##
+## Raises every bound a thousandfold in turn and runs that package's own tests.
+## A bound whose loss nothing notices is a bound with no test behind it, and
+## the reason to look mechanically is that those do not look like gaps: four
+## were found this way, each with a test that measured against the bound it was
+## meant to pin, so raising the bound raised what the test expected.
+##
+## Not part of check: it builds and tests each package once per bound, which is
+## minutes. An unheld bound is something to read rather than a failure -- some
+## are not observable at all.
+##
+##   make bounds              # everything under internal/
+##   make bounds DIR=./internal/picker
+bounds:
+	go run ./tools/bounds $(DIR)
 
 ## herdr: whether the installed Herdr still takes what this sends it
 ##
