@@ -2348,6 +2348,42 @@ func TestGivingUpDoesNotStrandTheCountThatGaveUp(t *testing.T) {
 	}
 }
 
+func TestItGivesUpOnTheFifthFailureAndNotTheFourth(t *testing.T) {
+	// The number written out, rather than counted up to. Every test that
+	// reached this bound reached it by naming it -- `i < maxMirrorAttempts`,
+	// `maxMirrorAttempts+3`, `len(opened) > maxMirrorAttempts` -- so the
+	// threshold moved with the constant and passed for any value it could
+	// take, including one that retries a dead terminal forever or gives up on
+	// a live one the first time the link blinks. How many failures a terminal
+	// is allowed is the thing being decided here, so it is the thing to say.
+	state := &hostSync{
+		host:      config.Host{Target: "bot"},
+		dismissed: map[string]bool{},
+		abandoned: map[string]bool{},
+		failures:  map[string]int{},
+		retryAt:   map[string]time.Time{},
+	}
+	d := withConfig(&Daemon{}, config.Defaults())
+
+	for i := 0; i < 4; i++ {
+		d.backOff(state, "term_1", errors.New("no"))
+	}
+	if state.abandoned["term_1"] {
+		t.Fatal("gave up on the fourth failure, which is one too early")
+	}
+	if _, ok := state.retryAt["term_1"]; !ok {
+		t.Fatal("four failures left nothing scheduled to try again")
+	}
+
+	d.backOff(state, "term_1", errors.New("no"))
+	if !state.abandoned["term_1"] {
+		t.Fatal("the fifth failure did not give up")
+	}
+	if _, ok := state.retryAt["term_1"]; ok {
+		t.Fatal("a retry is still scheduled for something given up on")
+	}
+}
+
 func TestAConnectedMachineHasEveryMapItWillWriteTo(t *testing.T) {
 	// The same as the daemon's own, for the state made per machine. Connect
 	// builds it with eleven maps written out by hand, and writing to a nil map
