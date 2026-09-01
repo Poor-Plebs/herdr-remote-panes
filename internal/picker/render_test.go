@@ -2008,3 +2008,26 @@ func TestALongReasonDoesNotCrowdOutWhatToDoAboutIt(t *testing.T) {
 		t.Errorf("the reason kept is %d cells, and the bound is %d", got, maxReasonWidth)
 	}
 }
+
+func TestOneMachineCannotFillANoticeScreen(t *testing.T) {
+	// A notice's body is the daemon's error, which relays what the machine
+	// said, and a banner is a couple of thousand characters. Wrapped without a
+	// bound it becomes thirty-odd lines on a screen that is one screen, so
+	// what a machine chose to print decides how much of it anybody sees --
+	// including whether the line telling them to press a key is on it.
+	//
+	// Sixteen written out rather than maxNoticeLines, since measuring against
+	// the bound means raising the bound raises what this expects.
+	long := strings.Repeat("the machine said something about why it would not let us in. ", 40)
+
+	drawn := renderNotice(80, "Could not connect to prod", long, "Press any key.")
+	lines := strings.Split(strings.TrimRight(visible(drawn), "\r\n"), "\r\n")
+	if len(lines) > 16 {
+		t.Errorf("a notice carrying one machine's banner is %d lines", len(lines))
+	}
+	// And what to do is still on the screen, which is the reason for bounding
+	// the part above it.
+	if !strings.Contains(visible(drawn), "Press any key") {
+		t.Errorf("the banner pushed the way out off the screen:\n%s", visible(drawn))
+	}
+}

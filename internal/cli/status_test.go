@@ -869,3 +869,34 @@ func TestTheAdviceKeepsTheCommandHoweverManyMachinesAreDown(t *testing.T) {
 		t.Errorf("four machines were summarised rather than named: %q", got)
 	}
 }
+
+func TestOneMachineCannotFillTheListingWithWhatItSays(t *testing.T) {
+	// The state column carries what ssh printed, and a machine chooses those
+	// bytes. Wrapped without a bound, a banner of a couple of thousand
+	// characters becomes thirty-odd lines and pushes every other machine off
+	// the screen -- so a listing of five machines shows one, and the one it
+	// shows is the one misbehaving.
+	//
+	// Twelve written out rather than maxStateLines: measuring against the
+	// bound means raising the bound raises what this expects, and the bound
+	// could then grow to anything with this still passing.
+	long := strings.Repeat("the machine said something about why it would not let us in. ", 40)
+	hosts := []syncd.HostInfo{
+		{Target: "bot", Label: "bot", Connected: true, Mirrors: 1},
+		{Target: "prod", Label: "prod", GaveUp: true, LastError: long},
+		{Target: "ci", Label: "ci", Connected: true, Mirrors: 2},
+	}
+
+	lines := statusLines(hosts, 80)
+	if len(lines) > 12 {
+		t.Errorf("one machine's failure took the listing to %d lines", len(lines))
+	}
+	// And the machines after it are still there, which is the point of
+	// bounding it rather than the line count for its own sake.
+	shown := strings.Join(lines, "\n")
+	for _, name := range []string{"bot", "prod", "ci"} {
+		if !strings.Contains(shown, name) {
+			t.Errorf("%s is missing from the listing:\n%s", name, shown)
+		}
+	}
+}
