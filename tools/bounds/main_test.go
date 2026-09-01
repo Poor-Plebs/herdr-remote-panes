@@ -322,3 +322,92 @@ func TestATestRunIsFreshAndBoundedWhereItCanBe(t *testing.T) {
 		}
 	}
 }
+
+// probeModule writes a module of its own holding one bound and a test of it,
+// and returns the source file. A module rather than this one, so the run is
+// seconds and the bound is small enough to reason about.
+func probeModule(t *testing.T, source, test string) (dir, path string) {
+	t.Helper()
+	dir = t.TempDir()
+	for name, body := range map[string]string{
+		"go.mod":        "module probe\n\ngo 1.25\n",
+		"probe.go":      source,
+		"probe_test.go": test,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir, filepath.Join(dir, "probe.go")
+}
+
+// TestCheckTellsHeldFromNotHeld holds the judgement every sweep rests on.
+//
+// check raises one bound, runs the tests, and answers. Every "0 not held"
+// this tool has ever printed is that answer repeated once per bound, and it
+// had no test of its own: a version that called everything held would have
+// swept clean all day and said nothing was wrong anywhere.
+//
+// End to end on purpose. The verdict is only worth what the whole round is
+// worth -- writing the raise, running the tests against it, reading what they
+// said, and putting the file back -- and the pieces are tested apart already.
+func TestCheckTellsHeldFromNotHeld(t *testing.T) {
+	for _, tt := range []struct {
+		what   string
+		source string
+		test   string
+		want   string
+	}{
+		{
+			// The number written out, so raising the bound moves what the code
+			// allows without moving what the test asks for.
+			what:   "a test that says the number",
+			source: "package probe\n\nconst maxThing = 4\n\nfunc Fits(n int) bool { return n <= maxThing }\n",
+			test: "package probe\n\nimport \"testing\"\n\n" +
+				"func TestFits(t *testing.T) {\n\tif !Fits(4) || Fits(5) {\n\t\tt.Fatal(\"wrong\")\n\t}\n}\n",
+			want: "held",
+		},
+		{
+			// The shape this whole tool exists to find: the test measures
+			// against the bound, so the threshold rises with it and the case
+			// passes for any value the bound could take.
+			what:   "a test that measures against the bound",
+			source: "package probe\n\nconst maxThing = 4\n\nfunc Fits(n int) bool { return n <= maxThing }\n",
+			test: "package probe\n\nimport \"testing\"\n\n" +
+				"func TestFits(t *testing.T) {\n\tif !Fits(maxThing) || Fits(maxThing+1) {\n\t\tt.Fatal(\"wrong\")\n\t}\n}\n",
+			want: "NOT HELD",
+		},
+		{
+			// Not every max* is a number. Multiplying a string does not
+			// compile, and a build failure read as held would report a bound
+			// as held by tests that never ran.
+			what:   "a bound that cannot be multiplied",
+			source: "package probe\n\nconst maxLabel = \"x\"\n\nfunc Label() string { return maxLabel }\n",
+			test: "package probe\n\nimport \"testing\"\n\n" +
+				"func TestLabel(t *testing.T) {\n\tif Label() != \"x\" {\n\t\tt.Fatal(\"wrong\")\n\t}\n}\n",
+			want: "would not build",
+		},
+	} {
+		dir, path := probeModule(t, tt.source, tt.test)
+		m := bound.FindStringSubmatchIndex(tt.source)
+		if m == nil {
+			t.Fatalf("%s: the probe source holds no bound this scanner can see", tt.what)
+		}
+		value := strings.TrimSpace(tt.source[m[4]:m[5]])
+
+		t.Chdir(dir)
+		got := check(path, tt.source, m, value, ".")
+		if got != tt.want {
+			t.Errorf("%s: verdict %q, want %q", tt.what, got, tt.want)
+		}
+
+		// Whatever the answer was, the file is the file again.
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.what, err)
+		}
+		if string(raw) != tt.source {
+			t.Errorf("%s: the bound was left raised:\n%s", tt.what, raw)
+		}
+	}
+}
