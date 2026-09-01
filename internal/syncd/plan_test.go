@@ -4638,3 +4638,40 @@ func TestWhichMachineOwnsASpaceDoesNotChangeBetweenAsks(t *testing.T) {
 			"reported in sorted order, so it is one", first.Target)
 	}
 }
+
+func TestAPaneWithNoIdIsNotInTheListing(t *testing.T) {
+	// A pane with no id cannot be addressed, so nothing kept about it could be
+	// used -- and keeping it does harm in three separate ways, each of which
+	// decides where somebody's terminal goes.
+	real := herdrcli.Pane{PaneID: "w1:p1", WorkspaceID: "w1", TabID: "t1", Label: "real"}
+	index := newPaneIndex([]herdrcli.Pane{
+		real,
+		{PaneID: "", WorkspaceID: "w1", TabID: "t1", Label: "no id at all"},
+	})
+
+	// "" is what every lookup that found no pane returns, so this is the
+	// answer to "is a pane nobody has alive".
+	if index.alive[""] {
+		t.Error("a pane id nobody has reads as alive")
+	}
+	// The pane a new mirror is told to split beside.
+	if got := index.anyInWorkspace["w1"]; got != real.PaneID {
+		t.Errorf("the pane to split beside in w1 is %q, and the only addressable "+
+			"pane there is %q", got, real.PaneID)
+	}
+	// How many panes the tab has, which decides whether a mirror follows into
+	// it or opens one of its own.
+	if got := index.panesPerTab["t1"]; got != 1 {
+		t.Errorf("the tab counts %d panes and holds one that can be addressed", got)
+	}
+	// And what closeOrphans walks.
+	if got := index.panesIn["w1"]; len(got) != 1 || got[0] != real.PaneID {
+		t.Errorf("the space lists %q, and only %q can be closed", got, real.PaneID)
+	}
+
+	// The pane that does have an id is untouched by any of this.
+	if !index.alive[real.PaneID] || index.labelOf[real.PaneID] != "real" {
+		t.Errorf("the real pane was lost: alive=%v label=%q",
+			index.alive[real.PaneID], index.labelOf[real.PaneID])
+	}
+}

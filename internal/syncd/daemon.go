@@ -313,6 +313,19 @@ func newPaneIndex(panes []herdrcli.Pane) *paneIndex {
 }
 
 func (p *paneIndex) add(pane herdrcli.Pane) {
+	// A pane with no id is not addressable, so nothing kept about it could be
+	// used -- and keeping it does harm. alive[""] becomes true, and "" is what
+	// every lookup that found no pane returns, so a pane nobody has reads as
+	// alive. It also takes the workspace's entry in anyInWorkspace, which is
+	// the pane a new mirror is told to split beside, and adds one to its tab's
+	// count, which is what decides whether a mirror follows into a tab at all.
+	//
+	// Herdr has no reason to send one. The listing is skipped outright when it
+	// cannot be read, on the same reasoning: a reply that makes no sense is
+	// not one to act on.
+	if pane.PaneID == "" {
+		return
+	}
 	p.alive[pane.PaneID] = true
 	p.labelOf[pane.PaneID] = pane.Label
 	if pane.WorkspaceID != "" {
