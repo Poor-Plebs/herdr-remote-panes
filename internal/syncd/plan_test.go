@@ -864,6 +864,41 @@ func TestLabelIsSafeToDraw(t *testing.T) {
 	}
 }
 
+// theLabelWidth is what maxLabelWidth is expected to be, written out rather
+// than read from it. The sidebar is narrow and shared with the machine name
+// beside it, so how much of a terminal's name may take up is the decision --
+// and the name comes from whatever runs on the far machine, which will use as
+// much room as it is given.
+const theLabelWidth = 28
+
+func TestATerminalsNameIsCutToTwentyEightCells(t *testing.T) {
+	// The two tests that reach this bound ask whether the label came out no
+	// wider than maxLabelWidth plus the machine, which is true of any
+	// maxLabelWidth at all -- a name of four hundred characters included, if
+	// the constant said so.
+	//
+	// Truncate keeps width-1 cells and marks the cut, so a name that is cut
+	// comes back exactly as wide as the bound rather than one under it.
+	d := withConfig(&Daemon{}, config.Defaults())
+	host := config.Host{Target: "bot"}
+
+	// A name that fills the width exactly is left alone.
+	fits := strings.Repeat("y", theLabelWidth)
+	if got := d.label(host, herdrcli.Pane{}, fits); got != fits+"@bot" {
+		t.Errorf("a name of exactly %d cells was changed: %q", theLabelWidth, got)
+	}
+
+	// One cell more is cut, and the mark is part of the width.
+	got := d.label(host, herdrcli.Pane{}, strings.Repeat("x", theLabelWidth+1))
+	want := strings.Repeat("x", theLabelWidth-1) + "\u2026@bot"
+	if got != want {
+		t.Errorf("label = %q, want %q", got, want)
+	}
+	if w := text.Width(got); w != theLabelWidth+len("@bot") {
+		t.Errorf("a cut label is %d cells, want %d", w, theLabelWidth+len("@bot"))
+	}
+}
+
 func TestStatusOrderIsStable(t *testing.T) {
 	// Ranging over the map of machines reshuffled the list between runs, so the
 	// same machines came back in a different order each time. Config order is
