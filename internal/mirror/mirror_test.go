@@ -153,6 +153,48 @@ func TestFailureLogIsRolledOverRatherThanGrowingForever(t *testing.T) {
 	}
 }
 
+// theLogLimit is what maxLogBytes is expected to be, written out rather than
+// read from it. The test above fills the log to the constant and appends,
+// which rolls over for whatever the constant says: it proves the log is rolled
+// over, and nothing about where. Where is the part that matters on disk --
+// one generation is kept, so a laptop gives up twice this and no more.
+//
+// maxDaemonLog is the same size for the daemon's own log, and deliberately not
+// shared with this one. What the two share is the logfile package that does
+// the rolling; the sizes are two logs' worth of judgement about two different
+// logs, and coincide today.
+const theLogLimit = 256 * 1024
+
+func TestTheFailureLogRollsOverAtTwoHundredAndFiftySixKilobytes(t *testing.T) {
+	// Both sides of the bound, so the number cannot move in either direction
+	// without this saying so: at the limit it rolls over, comfortably under it
+	// is left alone. Filled from the written-out number rather than from
+	// maxLogBytes, so raising the constant does not raise what the test writes.
+	for _, tt := range []struct {
+		what   string
+		fill   int
+		rolled bool
+	}{
+		{"exactly the limit", theLogLimit, true},
+		{"a kilobyte under it", theLogLimit - 1024, false},
+	} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "mirror.log")
+		if err := os.WriteFile(path, bytes.Repeat([]byte("x"), tt.fill), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		appendToLog(path, "one more failure")
+
+		_, err := os.Stat(path + ".1")
+		rolled := err == nil
+		if rolled != tt.rolled {
+			info, _ := os.Stat(path)
+			t.Errorf("%s: filled to %d bytes and appended: rolled over = %v, want %v "+
+				"(the log is now %d bytes)", tt.what, tt.fill, rolled, tt.rolled, info.Size())
+		}
+	}
+}
+
 func TestFailureLogIsCreatedPrivate(t *testing.T) {
 	// It records which machines were being reached and why it failed.
 	dir := t.TempDir()
