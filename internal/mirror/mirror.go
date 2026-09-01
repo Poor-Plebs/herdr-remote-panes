@@ -161,7 +161,16 @@ func reportFailure(err error) {
 	// The record the daemon reads gets the same bounded text. It is written to
 	// a file of its own and read back by something that shows it, so it has
 	// both of the same problems.
-	MarkFailed(os.Getenv("HERDR_PANE_ID"), detail)
+	if err := MarkFailed(os.Getenv("HERDR_PANE_ID"), detail); err != nil {
+		// Said in the same file the failure itself goes to, since the mark is
+		// how the daemon tells this from a terminal somebody shut -- and with
+		// close_propagates on, the wrong answer closes the terminal on the
+		// machine. Whoever reads the log afterwards has the failure and the
+		// reason the plugin could not record it, one after the other.
+		message += fmt.Sprintf(" (and the failure could not be recorded for the "+
+			"daemon: %s -- it will read this pane as one you closed)",
+			text.Truncate(text.Sanitize(err.Error()), maxSaidWidth))
+	}
 
 	if dir := os.Getenv("HERDR_PLUGIN_STATE_DIR"); dir != "" {
 		appendToLog(filepath.Join(dir, "mirror.log"), message)

@@ -230,19 +230,27 @@ const maxFailureReason = 2048
 // one for a changed host key, where the second pane fails exactly as the first
 // did -- two terminals flashing open and shut, and two more copies of the
 // banner in the log, before anything says what is actually wrong.
-func MarkFailed(paneID, reason string) {
+// Whether the mark was written is returned, because failing to write it is not
+// a small thing: a pane that goes without one reads as a terminal somebody
+// shut, and with close_propagates on, shutting a terminal here closes the one
+// on the machine. So a disk that will not take a mark of a hundred bytes ends
+// in work on another machine being closed, and every part of that would have
+// happened in silence.
+func MarkFailed(paneID, reason string) error {
 	path := failurePath(paneID)
 	if path == "" {
-		return
+		// No state directory to write into, which is this running outside
+		// Herdr rather than anything going wrong.
+		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
+		return err
 	}
 	if len(reason) > maxFailureReason {
 		reason = reason[:maxFailureReason]
 	}
 	body := strconv.FormatInt(time.Now().Unix(), 10) + "\n" + reason
-	_ = os.WriteFile(path, []byte(body), 0o600)
+	return os.WriteFile(path, []byte(body), 0o600)
 }
 
 // Failed reports whether a pane's bridge died of an error.

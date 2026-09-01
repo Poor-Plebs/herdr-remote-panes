@@ -616,3 +616,45 @@ func TestSshsOwnReasonIsPreferredToWhatWasOnTheScreen(t *testing.T) {
 		t.Errorf("the failure carries the screen rather than the reason: %q", err)
 	}
 }
+
+func TestThePaneSaysWhenTheDaemonWillNotLearnItFailed(t *testing.T) {
+	// The failure goes to the pane and to mirror.log. The mark that tells the
+	// daemon it was a failure goes to a file of its own -- and when that
+	// cannot be written, what is left is a pane that vanished with no reason
+	// beside it, which is the description of a terminal somebody shut. With
+	// close_propagates on, that closes the terminal on the machine.
+	//
+	// So the log says both: what went wrong, and that the plugin could not
+	// record it.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("HERDR_SESSION", "hub")
+	t.Setenv("HERDR_PANE_ID", "w1:p2")
+	t.Setenv(EnvTarget, "bot")
+
+	// Something in the way of the directory the marks live in.
+	marks := filepath.Dir(failurePath("w1:p2"))
+	if err := os.MkdirAll(filepath.Dir(marks), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marks, []byte("in the way"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	reportFailure(errors.New("the machine went away"))
+
+	raw, err := os.ReadFile(filepath.Join(dir, "mirror.log"))
+	if err != nil {
+		t.Fatalf("nothing was written to mirror.log at all: %v", err)
+	}
+	said := string(raw)
+	if !strings.Contains(said, "the machine went away") {
+		t.Errorf("the log does not say what went wrong:\n%s", said)
+	}
+	if !strings.Contains(said, "could not be recorded") {
+		t.Errorf("the log does not say the daemon will not learn of it:\n%s", said)
+	}
+	if !strings.Contains(said, "read this pane as one you closed") {
+		t.Errorf("the log does not say what that means:\n%s", said)
+	}
+}

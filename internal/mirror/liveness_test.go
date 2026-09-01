@@ -633,3 +633,53 @@ func TestAPaneStartingIsNotAPaneThatFailed(t *testing.T) {
 		t.Error("a pane that failed after running is not marked as having failed")
 	}
 }
+
+func TestAMarkThatCannotBeWrittenIsReported(t *testing.T) {
+	// The mark is how the daemon tells a bridge that died from a terminal
+	// somebody shut. Getting that wrong is not a small thing: with
+	// close_propagates on, a pane read as deliberately closed closes the
+	// terminal on the machine -- so a disk that will not take a hundred bytes
+	// ends in work on another machine being closed, and every part of it used
+	// to happen in silence.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("HERDR_SESSION", "hub")
+
+	// A file where the marks directory has to go, so writing one cannot work.
+	if err := MarkFailed("w1:p2", "the machine went away"); err != nil {
+		t.Fatalf("a mark that should have been written was not: %v", err)
+	}
+	marks := filepath.Dir(failurePath("w1:p2"))
+	if err := os.RemoveAll(marks); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marks, []byte("in the way"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := MarkFailed("w1:p2", "the machine went away")
+	if err == nil {
+		t.Fatal("the mark could not have been written and MarkFailed said nothing")
+	}
+
+	// And the pane reads as one that was not marked, which is the state the
+	// daemon would act on.
+	if Failed("w1:p2") {
+		t.Error("a pane whose mark could not be written reads as marked")
+	}
+
+	// The other way it fails is the write rather than the directory, and both
+	// are silent in the same way -- a test meeting only the first says nothing
+	// about the second, which is what a mutation swallowing the write showed.
+	// The directory back, and a directory where the mark itself goes: the path
+	// is fine and the write is impossible.
+	if err := os.Remove(marks); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(failurePath("w1:p2"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := MarkFailed("w1:p2", "the machine went away"); err == nil {
+		t.Error("the mark's own path is a directory and MarkFailed said nothing")
+	}
+}
