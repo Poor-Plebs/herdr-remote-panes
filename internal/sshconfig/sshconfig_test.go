@@ -351,7 +351,7 @@ func TestAnIncludeThatCannotBeReadIsSaidSo(t *testing.T) {
 	// One fragment past the size bound. Its machines go, and that is the whole
 	// of what somebody sees unless this says otherwise.
 	write(filepath.Join(inc, "20-big"),
-		"Host toobig\n"+strings.Repeat("# padding\n", (maxConfigBytes/10)+10))
+		"Host toobig\n"+strings.Repeat("# padding\n", (theConfigLimit/10)+10))
 
 	hosts := Hosts()
 	for _, host := range hosts {

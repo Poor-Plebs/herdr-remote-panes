@@ -10,6 +10,20 @@ import (
 	"time"
 )
 
+// theConfigLimit is what maxConfigBytes is expected to be, written out rather
+// than read from it.
+//
+// The files these tests build are the size of the bound, and taking that size
+// from the constant made them grow with it: raising maxConfigBytes a
+// thousandfold asked for a gigabyte of padding several times over, and the run
+// was killed rather than failing. A killed run is not a verdict, and this bound
+// came back held on one sweep and killed on the next because of it.
+//
+// The value itself is held next door, in the test that keeps it in step with
+// the documentation page that quotes it as 1 MB. Writing it out here is what
+// lets that test be reached at all.
+const theConfigLimit = 1 << 20
+
 // TestTheTwoHalvesAgreeAboutAConfigTooLargeToRead holds them to each other.
 //
 // One half decides what is read and the other explains an empty menu. A bound
@@ -28,7 +42,7 @@ func TestTheTwoHalvesAgreeAboutAConfigTooLargeToRead(t *testing.T) {
 
 	// Ordinary in every way except its size: short lines, real host blocks.
 	var body strings.Builder
-	for i := 0; body.Len() <= maxConfigBytes+1024; i++ {
+	for i := 0; body.Len() <= theConfigLimit+1024; i++ {
 		fmt.Fprintf(&body, "Host machine%06d\n", i)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "config"), []byte(body.String()), 0o600); err != nil {
@@ -67,7 +81,7 @@ func TestAFileTooLargeToBeAConfigIsNotRead(t *testing.T) {
 
 	// A machine named at the top, then padding past the bound. Reading any of
 	// it at all would offer that machine.
-	big := append([]byte("Host buried\n"), make([]byte, maxConfigBytes+1)...)
+	big := append([]byte("Host buried\n"), make([]byte, theConfigLimit+1)...)
 	if err := os.WriteFile(filepath.Join(dir, "big"), big, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -82,9 +96,9 @@ func TestAFileTooLargeToBeAConfigIsNotRead(t *testing.T) {
 	}
 
 	// Exactly the bound is read, because the name says maximum.
-	exact := append([]byte("Host exact\n"), make([]byte, maxConfigBytes-len("Host exact\n"))...)
-	if int64(len(exact)) != int64(maxConfigBytes) {
-		t.Fatalf("the file for the boundary is %d bytes, not %d", len(exact), maxConfigBytes)
+	exact := append([]byte("Host exact\n"), make([]byte, theConfigLimit-len("Host exact\n"))...)
+	if int64(len(exact)) != int64(theConfigLimit) {
+		t.Fatalf("the file for the boundary is %d bytes, not %d", len(exact), theConfigLimit)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "atbound"), exact, 0o600); err != nil {
 		t.Fatal(err)
@@ -104,7 +118,7 @@ func TestAFileTooLargeToBeAConfigIsNotRead(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("a file of exactly %d bytes was not read; the limit is a "+
-			"maximum, so that size is allowed: got %v", maxConfigBytes, hosts)
+			"maximum, so that size is allowed: got %v", theConfigLimit, hosts)
 	}
 	// One large file beside real ones is not a reason to lose them.
 	kept := false
