@@ -429,9 +429,17 @@ func TestALongFailureIsNotKeptWhole(t *testing.T) {
 	// This file is read only to decide whether reopening could help, and the
 	// phrase that says so is in the first line or two. A remote that prints a
 	// megabyte of banner should not have it written to disk on every attempt.
-	MarkFailed("w1:p2", strings.Repeat("x", 4*maxFailureReason))
-	if got := len(FailureReason("w1:p2")); got > maxFailureReason {
-		t.Errorf("kept %d bytes of the reason, want at most %d", got, maxFailureReason)
+	//
+	// A megabyte written out, and a number to compare against. Both used to be
+	// written in terms of maxFailureReason, so raising the bound raised the
+	// input, the threshold and the result together and the test passed for any
+	// value it could take -- including one that puts the whole banner back on
+	// disk. Eight kilobytes is loose enough that tuning the bound does not
+	// break this, and tight enough that losing it does.
+	MarkFailed("w1:p2", strings.Repeat("x", 1<<20))
+	if got := len(FailureReason("w1:p2")); got > 8192 {
+		t.Errorf("kept %d bytes of a megabyte of banner, which is meant to be "+
+			"cut to the couple of lines that say whether retrying helps", got)
 	}
 }
 
