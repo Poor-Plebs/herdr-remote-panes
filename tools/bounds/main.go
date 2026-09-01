@@ -217,17 +217,29 @@ func check(path, original string, m []int, value, pkg string) (verdict string) {
 	}()
 
 	out, err := testCmd(pkg).CombinedOutput()
-	if strings.Contains(string(out), "build failed") {
+	return verdictFor(string(out), err)
+}
+
+// verdictFor reads what `go test` made of a raised bound.
+//
+// Apart from check so that it can be tested without running anything. It is
+// the judgement this whole tool exists to make, and it was wrong once in the
+// direction that matters: every way a run can end badly exits non-zero, and
+// only one of them means a test objected.
+//
+// The order is the point. "held" is the verdict never to invent, since it is
+// the one claiming a test stands behind the bound, so everything that ends a
+// run without a test having failed is answered before it -- a build that never
+// ran, and a process the kernel stopped. capped.Max raised to eight gigabytes
+// was killed at twenty and read as held, which is how the tree's one unheld
+// bound reported clean.
+func verdictFor(out string, err error) string {
+	switch {
+	case strings.Contains(out, "build failed"):
 		return "would not build"
-	}
-	// A killed process exits non-zero without any test having failed, and
-	// "held" is the one verdict this tool must never invent -- it is the one
-	// that says a test stands behind the bound. capped.Max raised to eight
-	// gigabytes was killed at twenty, and read as held.
-	if strings.Contains(string(out), "signal: killed") {
+	case strings.Contains(out, "signal: killed"):
 		return "killed"
-	}
-	if err != nil {
+	case err != nil:
 		return "held"
 	}
 	return "NOT HELD"
