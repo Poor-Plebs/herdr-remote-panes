@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"log"
 	"os"
 	"path/filepath"
@@ -193,5 +194,70 @@ func TestVersionDoesNotClaimTheDaemonIsDownWhenItCannotAsk(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "not running") {
 		t.Errorf("with a socket to knock on and no answer, the report says:\n%s", out.String())
+	}
+}
+
+// theDaemonLogLimit is what maxDaemonLog is expected to be, written out rather
+// than read from it. The size is the whole policy: the daemon is a long-lived
+// process on somebody's laptop, one generation of this file is kept, and the
+// space it may take is twice this number and nothing else.
+//
+// mirror's maxLogBytes is the same 256K for the failure log, and stays a
+// separate number. What the two share is the logfile package that does the
+// rolling; the sizes are two judgements about two different logs.
+const theDaemonLogLimit = 256 * 1024
+
+func TestTheDaemonLogRollsOverAtTwoHundredAndFiftySixKilobytes(t *testing.T) {
+	// Written out rather than read from maxDaemonLog, and checked on both
+	// sides so the number cannot move either way without this saying so. The
+	// log tests above prove the daemon's lines reach the file; where the file
+	// stops growing is a different question and nothing asked it.
+	//
+	// Registered before the stderr swap so it runs after it: cleanups run in
+	// reverse, and the logger must be pointed back at the real stderr rather
+	// than at the one this test is about to take away.
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	// The daemon writes its starting line to stderr as well as to the file,
+	// and that line is not what this test is reading.
+	devnull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wasStderr := os.Stderr
+	os.Stderr = devnull
+	t.Cleanup(func() { os.Stderr = wasStderr; _ = devnull.Close() })
+
+	for _, tt := range []struct {
+		what   string
+		fill   int
+		rolled bool
+	}{
+		{"exactly the limit", theDaemonLogLimit, true},
+		{"a kilobyte under it", theDaemonLogLimit - 1024, false},
+	} {
+		dir := t.TempDir()
+		t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+		path := filepath.Join(dir, "daemon.log")
+		if err := os.WriteFile(path, bytes.Repeat([]byte("x"), tt.fill), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		// Opening the log writes the starting line, which is the write that
+		// decides whether the file had room for it.
+		closeLog := daemonLog()
+		if closeLog == nil {
+			t.Fatal("no log was opened, with a state directory that exists")
+		}
+		closeLog()
+
+		_, err := os.Stat(path + ".1")
+		rolled := err == nil
+		if rolled != tt.rolled {
+			info, _ := os.Stat(path)
+			t.Errorf("%s: filled to %d bytes and started the daemon: rolled over = %v, "+
+				"want %v (the log is now %d bytes)",
+				tt.what, tt.fill, rolled, tt.rolled, info.Size())
+		}
 	}
 }
