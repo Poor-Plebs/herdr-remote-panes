@@ -658,3 +658,71 @@ func TestThePaneSaysWhenTheDaemonWillNotLearnItFailed(t *testing.T) {
 		t.Errorf("the log does not say what that means:\n%s", said)
 	}
 }
+
+// streamingSSH puts an ssh on PATH that sends observe frames and then keeps
+// the connection open, the way a machine with a live terminal does.
+func streamingSSH(t *testing.T, frames int) {
+	t.Helper()
+	dir := t.TempDir()
+	// One frame per line, base64 as the far side sends it, then a wait so the
+	// stream does not simply end -- what is being tested is giving up on a
+	// stream that is still coming.
+	script := "#!/bin/sh\n" +
+		"last=\"\"; for a in \"$@\"; do last=\"$a\"; done\n" +
+		"case \"$last\" in\n" +
+		"  *command\\ -v\\ herdr*) echo /usr/bin/herdr; exit 0;;\n" +
+		"esac\n" +
+		"i=0\n" +
+		"while [ $i -lt " + strconv.Itoa(frames) + " ]; do\n" +
+		"  printf '{\"bytes\":\"aGVsbG8=\"}\\n'\n" +
+		"  i=$((i+1))\n" +
+		"done\n" +
+		"sleep 30\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestAnObservedStreamWithNowhereToGoIsGivenUpOnRatherThanWaitedFor(t *testing.T) {
+	// The pane has gone, so writing what the machine sends fails. Waiting on a
+	// stream this has stopped reading never returns: the far side is still
+	// sending, the pipe fills, the process never exits and the wait never
+	// comes back. What is left is a pane with no output, no reconnect, and
+	// alive as far as anything watching it can tell.
+	//
+	// So giving up on a stream has to mean ending it, not waiting politely for
+	// it to finish -- and that had no test, in the one mode whose whole job is
+	// to keep showing what a machine is doing.
+	streamingSSH(t, 4)
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	// Somewhere to write that is already closed, which is the pane going.
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	read.Close()
+	saved := os.Stdout
+	os.Stdout = write
+	defer func() { os.Stdout = saved; write.Close() }()
+
+	client := remote.NewWithBin("bot", "hub", "/usr/bin/herdr")
+	done := make(chan error, 1)
+	go func() {
+		done <- streamOnce(client, "term_1", 80, 24, make(chan os.Signal))
+	}()
+
+	select {
+	case err := <-done:
+		os.Stdout = saved
+		if !errors.Is(err, errStreamAbandoned) {
+			t.Errorf("a stream with nowhere to write gave %v, want it abandoned", err)
+		}
+	case <-time.After(20 * time.Second):
+		os.Stdout = saved
+		t.Fatal("streamOnce never returned: the far side is still sending and " +
+			"this waited for it, which is the pane that sits there for ever")
+	}
+}
