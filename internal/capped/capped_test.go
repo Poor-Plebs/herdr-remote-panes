@@ -66,3 +66,54 @@ func TestWhatCountsAsOverrunning(t *testing.T) {
 		}
 	}
 }
+
+func TestTheCommandIsStoppedOnceWhenSomethingDoesNotFit(t *testing.T) {
+	// Stop is what makes the cap save the half minute as well as the memory:
+	// without it the command runs to its timeout while everything it prints is
+	// counted and thrown away. In both places this is used the function is a
+	// context's cancel, so losing the call means the far side is left running.
+	//
+	// Nothing exercised it. Every case above leaves Stop nil, so deleting the
+	// call to it altogether broke no test -- which is a whole mechanism, and
+	// the one the type's own comment is about, held by nothing.
+	var stopped int
+	c := Writer{Stop: func() { stopped++ }}
+
+	if _, err := c.Write(make([]byte, theLimit)); err != nil {
+		t.Fatal(err)
+	}
+	if stopped != 0 {
+		t.Errorf("the command was stopped %d times while everything still fitted", stopped)
+	}
+
+	if _, err := c.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if stopped != 1 {
+		t.Errorf("the byte that did not fit stopped the command %d times, want once", stopped)
+	}
+
+	// What arrives after is counted away without stopping it again. Cancelling
+	// a context twice is harmless; doing it once per write of a machine that
+	// prints without stopping is a busy loop against a command already ending.
+	for i := 0; i < 3; i++ {
+		if _, err := c.Write([]byte("more")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if stopped != 1 {
+		t.Errorf("the command was stopped %d times across the whole overrun, want once", stopped)
+	}
+}
+
+func TestAWriterWithNothingToStopStillOverruns(t *testing.T) {
+	// Stop is optional, and the nil case is the one every other test here
+	// takes: it must overrun without reaching for a function that is not there.
+	var c Writer
+	if _, err := c.Write(make([]byte, theLimit+1)); err != nil {
+		t.Fatal(err)
+	}
+	if !c.Overran {
+		t.Error("a writer with no Stop did not record the overrun")
+	}
+}
