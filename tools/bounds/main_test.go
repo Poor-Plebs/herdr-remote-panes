@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -409,5 +410,77 @@ func TestCheckTellsHeldFromNotHeld(t *testing.T) {
 		if string(raw) != tt.source {
 			t.Errorf("%s: the bound was left raised:\n%s", tt.what, raw)
 		}
+	}
+}
+
+// TestTheReportCountsWhatItFound drives the built command over a tree of its
+// own.
+//
+// The walk, the counting and the report are what somebody actually reads, and
+// none of it is reachable from a test of the pieces: main takes its root from
+// the arguments, prints, and exits. Built and run rather than restructured,
+// because a seam here would exist only for the test.
+func TestTheReportCountsWhatItFound(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "bounds")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("building the command: %v\n%s", err, out)
+	}
+
+	// One bound whose test says the number, and one whose test counts up to
+	// the bound itself. The second is the shape this tool exists to find.
+	work := t.TempDir()
+	if err := os.Mkdir(filepath.Join(work, "pkg"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"go.mod": "module probe\n\ngo 1.25\n",
+		"pkg/probe.go": "package probe\n\n" +
+			"const maxHeld = 4\n\n" +
+			"const maxLoose = 4\n\n" +
+			"func Held(n int) bool { return n <= maxHeld }\n\n" +
+			"func Loose(n int) bool { return n <= maxLoose }\n",
+		"pkg/probe_test.go": "package probe\n\nimport \"testing\"\n\n" +
+			"func TestHeld(t *testing.T) {\n\tif !Held(4) || Held(5) {\n\t\tt.Fatal(\"wrong\")\n\t}\n}\n\n" +
+			"func TestLoose(t *testing.T) {\n\tif !Loose(maxLoose) || Loose(maxLoose+1) {\n\t\tt.Fatal(\"wrong\")\n\t}\n}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run := exec.Command(bin, "pkg")
+	run.Dir = work
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("running the command: %v\n%s", err, out)
+	}
+	said := string(out)
+
+	if !strings.Contains(said, "1 held, 1 not, 0 would not build, 0 no answer") {
+		t.Errorf("the summary does not count what is there:\n%s", said)
+	}
+	// Named in the list at the end, and looked for only there. The line-by-line
+	// above it prints every bound's name whatever the verdict, so asking
+	// whether the name appears anywhere is answered by a report that gathers
+	// nothing -- which is how this assertion was written first, and it passed
+	// with the gathering deleted.
+	_, gathered, found := strings.Cut(said, "Nothing noticed these growing a thousandfold")
+	if !found {
+		t.Errorf("the report does not gather what nothing holds:\n%s", said)
+	} else if !strings.Contains(gathered, "maxLoose") {
+		t.Errorf("the bound nothing holds is not named in that list:\n%s", said)
+	}
+	// And the bound that is held is not in that list.
+	if found && strings.Contains(gathered, "maxHeld") {
+		t.Errorf("a bound with a test behind it was listed as loose:\n%s", said)
+	}
+
+	// The tree it walked is the tree it left.
+	raw, err := os.ReadFile(filepath.Join(work, "pkg", "probe.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "const maxHeld = 4\n") {
+		t.Errorf("a bound was left raised in the tree it swept:\n%s", raw)
 	}
 }
