@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/capped"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/logfile"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
@@ -703,7 +704,11 @@ const waitDelay = 2 * time.Second
 
 // maxFrameBytes bounds one frame from the stream. Terminal output arrives in
 // small pieces; anything approaching this is a stream that has gone wrong.
-const maxFrameBytes = 8 * 1024 * 1024
+//
+// Taken from capped rather than written again here. It is the same size a
+// command may print back -- both bound what arrives from a machine -- and the
+// number stood in both places, which is where a pair of bounds drifts apart.
+const maxFrameBytes = capped.Max
 
 // decodeFrame reads one line of the observe stream, which carries terminal
 // output as base64 inside a JSON envelope. It reports whether the line held

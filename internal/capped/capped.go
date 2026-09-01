@@ -22,7 +22,7 @@ import "bytes"
 // memory here until the timeout, at whatever rate the link carries, and the
 // daemon is a long-lived process on somebody's laptop.
 //
-// The same size the mirror allows one frame, which is the other place bytes
+// The mirror takes this for one frame too, which is the other place bytes
 // arrive from a machine.
 const Max = 8 * 1024 * 1024
 
