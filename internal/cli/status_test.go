@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -828,5 +829,43 @@ func TestStatusSaysNothingExtraWhenEveryMachineIsFine(t *testing.T) {
 	}
 	if strings.Contains(out, "not tried again") {
 		t.Errorf("every machine is fine and the listing still advised:\n%s", out)
+	}
+}
+
+func TestTheAdviceKeepsTheCommandHoweverManyMachinesAreDown(t *testing.T) {
+	// The command retries every machine at once, which is precisely what a
+	// fleet of them being down calls for. It used to sit at the end of the
+	// sentence after a list of every machine by name, so twenty down at eighty
+	// columns ran past the lines the advice is allowed and the command was the
+	// part cut off -- the one thing worth saying, gone exactly when it was
+	// worth saying it.
+	build := func(n int) []syncd.HostInfo {
+		var hosts []syncd.HostInfo
+		for i := 0; i < n; i++ {
+			name := fmt.Sprintf("build-runner-%02d", i)
+			hosts = append(hosts, syncd.HostInfo{Target: name, Label: name, GaveUp: true})
+		}
+		return hosts
+	}
+
+	for _, n := range []int{1, 2, 4, 20, 200} {
+		line := howToRetry(build(n))
+		for _, width := range []int{60, 80, 120} {
+			shown := strings.Join(text.Wrap(line, width, maxRetryLines), " ")
+			if !strings.Contains(shown, syncd.PluginID+".connect") {
+				t.Errorf("with %d machines down at %d columns the advice loses the "+
+					"command that retries them all:\n%s", n, width, shown)
+			}
+		}
+	}
+
+	// A few are named and the rest counted, so the sentence stays a sentence.
+	if got := howToRetry(build(200)); !strings.Contains(got, "any of the other 197") {
+		t.Errorf("two hundred machines are not summarised: %q", got)
+	}
+	// And counting only when it saves more than one name: "the other 1" is a
+	// worse line than the name it replaces.
+	if got := howToRetry(build(4)); strings.Contains(got, "other 1 ") {
+		t.Errorf("four machines were summarised rather than named: %q", got)
 	}
 }

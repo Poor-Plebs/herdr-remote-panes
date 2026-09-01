@@ -113,6 +113,12 @@ const maxRetryLines = 4
 //
 // Once, under the table, rather than on each machine's line: the advice is the
 // same for all of them, and the state column is already carrying a sentence.
+//
+// A few machines are named and the rest are counted. Naming all of them read
+// as "pick a or b or c or d or ..." and, past a dozen, ran out of the lines
+// the advice is allowed and was cut off mid-list -- taking the command with
+// it, since that is at the end. Twenty machines down is exactly when the one
+// thing that retries all of them matters, and it was the part that went.
 func howToRetry(hosts []syncd.HostInfo) string {
 	var given []string
 	for _, h := range hosts {
@@ -127,9 +133,29 @@ func howToRetry(hosts []syncd.HostInfo) string {
 	if len(given) > 1 {
 		subject, whose = "They are", "their"
 	}
-	return fmt.Sprintf("%s not tried again on %s own: pick %s from the menu and press "+
-		"enter, or run `herdr plugin action invoke %s.connect` for every machine.",
-		subject, whose, strings.Join(given, " or "), syncd.PluginID)
+	return fmt.Sprintf("%s not tried again on %s own: run `herdr plugin action "+
+		"invoke %s.connect` for every machine, or pick %s from the menu and "+
+		"press enter.", subject, whose, syncd.PluginID, nameSome(given))
+}
+
+// namesShown is how many machines the advice names before it starts counting.
+// Enough to recognise the ones that are down when there are a handful, and few
+// enough that the sentence stays a sentence when there are fifty.
+const namesShown = 3
+
+// nameSome lists a few machines and counts the rest.
+func nameSome(names []string) string {
+	// One more than it names is still named. "or any of the other 1" is a
+	// worse line than the name it stands in for, and counting is only worth
+	// the words when it saves more than one of them.
+	if len(names) <= namesShown+1 {
+		if len(names) < 2 {
+			return strings.Join(names, "")
+		}
+		return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
+	}
+	return fmt.Sprintf("%s or any of the other %d",
+		strings.Join(names[:namesShown], ", "), len(names)-namesShown)
 }
 
 // statusLines is one line per connected machine, as columns.
