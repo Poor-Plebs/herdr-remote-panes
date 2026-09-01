@@ -508,3 +508,56 @@ func TestSanitizedGuardsAWriterThatIsNotAFile(t *testing.T) {
 		t.Errorf("the line no longer ends: %s", strconv.Quote(out.String()))
 	}
 }
+
+func TestRotatingDoesNotLeaveTheReplacedGenerationOpen(t *testing.T) {
+	// The log rotates for as long as the session lasts, and a descriptor the
+	// rotation replaced but never closed is invisible until the process hits
+	// its limit. What that looks like is everything failing at once, hours in,
+	// with an error about too many open files and nothing to say why -- the
+	// same shape the daemon's own descriptor test was written for.
+	//
+	// Nothing held the close. Deleting it outright left every test here green:
+	// rename works on Linux with the handle still open, so the rotation looks
+	// perfect and only the descriptor count knows.
+	//
+	// Linux only, the way that other test is: /proc is where the descriptors a
+	// process holds can be counted.
+	const fds = "/proc/self/fd"
+	if _, err := os.Stat(fds); err != nil {
+		t.Skip("no /proc/self/fd here, so open files cannot be counted")
+	}
+	open := func() int {
+		entries, err := os.ReadDir(fds)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The directory handle this read is holding is one of them.
+		return len(entries) - 1
+	}
+
+	f, err := Open(filepath.Join(t.TempDir(), "rotating.log"), 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	// Longer than the bound, so every line rotates.
+	line := []byte(strings.Repeat("x", 80) + "\n")
+	// One first, so whatever is opened once is already open before counting.
+	if _, err := f.Write(line); err != nil {
+		t.Fatal(err)
+	}
+	before := open()
+
+	const rotations = 20
+	for i := 0; i < rotations; i++ {
+		if _, err := f.Write(line); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if after := open(); after > before {
+		t.Errorf("%d rotations left %d more descriptors open (%d, was %d): the "+
+			"generation being replaced is not closed", rotations, after-before, after, before)
+	}
+}
