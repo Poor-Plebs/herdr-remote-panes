@@ -377,3 +377,36 @@ func TestAConfiguredHerdrThatRunsIsAccepted(t *testing.T) {
 		t.Errorf("a machine whose herdr runs was refused: %v", err)
 	}
 }
+
+func TestBinTakesOnlyTheFirstLineTheMachineSends(t *testing.T) {
+	// The probe's answer is whatever the far machine printed, and a machine is
+	// free to print more than one line: an rc file that writes to stdout, a
+	// `command -v` that matches more than once. The first line is the path and
+	// the rest is not.
+	//
+	// Nothing held that. Deleting the line that cuts at the newline left every
+	// test in this package green, and the whole reply -- newline and all --
+	// became the path this client would go on using for the rest of the
+	// session, quoted into every remote command it built.
+	//
+	// The first line ends the way a machine's own shell might end it -- a
+	// trailing space and a carriage return -- because taking the line and not
+	// trimming it is a separate mistake that also passed.
+	fakeSSH(t, remoteCommandIs+`
+case "$last" in
+  *command\ -v\ herdr*) printf '%s \r\n%s\n' /usr/local/bin/herdr "warning: something the shell said"; exit 0;;
+  *) exit 0;;
+esac`)
+
+	client := New("bot", "")
+	bin, err := client.Bin()
+	if err != nil {
+		t.Fatalf("Bin: %v", err)
+	}
+	if bin != "/usr/local/bin/herdr" {
+		t.Errorf("Bin = %q, want only the first line the machine sent", bin)
+	}
+	if strings.ContainsAny(bin, "\n\r") {
+		t.Errorf("the resolved path carries a line break: %q", bin)
+	}
+}
