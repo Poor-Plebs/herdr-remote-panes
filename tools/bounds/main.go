@@ -32,9 +32,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"syscall"
 )
 
 // bound matches a max constant declaration and splits it so the value can be
@@ -51,7 +54,45 @@ var bound = regexp.MustCompile(`(?m)^(\s*(?:const )?[Mm]ax[A-Za-z]*\s*=\s*)([^/\
 // was never about the bound.
 const raise = 1000
 
+// inFlight is the file a mutation is applied to right now, kept so that a
+// signal can put it back. check clears it once it has restored the file.
+var inFlight struct {
+	sync.Mutex
+	path     string
+	original string
+}
+
+// restoreOnSignal puts the mutated file back when the run is interrupted.
+//
+// The deferred restore in check covers a normal return and a panic, and not a
+// signal: SIGTERM and ctrl-c end the process where it stands, deferred
+// functions and all. A run given up on halfway then left a constant multiplied
+// by a thousand in the tree -- which builds, and which the next commit carries.
+// This tool's whole job is to put things back.
+func restoreOnSignal() {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		s := <-stop
+		inFlight.Lock()
+		if inFlight.path != "" {
+			if err := os.WriteFile(inFlight.path, []byte(inFlight.original), 0o644); err != nil {
+				fmt.Fprintf(os.Stderr, "could not put %s back: %v\n", inFlight.path, err)
+			} else {
+				fmt.Fprintf(os.Stderr, "\nput %s back before stopping\n", inFlight.path)
+			}
+		}
+		inFlight.Unlock()
+		if sig, ok := s.(syscall.Signal); ok {
+			os.Exit(128 + int(sig))
+		}
+		os.Exit(1)
+	}()
+}
+
 func main() {
+	restoreOnSignal()
+
 	root := "internal"
 	if len(os.Args) > 1 {
 		root = os.Args[1]
@@ -156,6 +197,12 @@ func testCmd(pkg string) *exec.Cmd {
 func check(path, original string, m []int, value, pkg string) (verdict string) {
 	raised := original[:m[2]] + original[m[2]:m[3]] + "(" + value + ") * " +
 		fmt.Sprint(raise) + original[m[6]:m[7]] + original[m[1]:]
+	// Recorded before the file is touched, so an interrupt between the write
+	// and the defer below still knows what to put back.
+	inFlight.Lock()
+	inFlight.path, inFlight.original = path, original
+	inFlight.Unlock()
+
 	if err := os.WriteFile(path, []byte(raised), 0o644); err != nil {
 		return "could not write"
 	}
@@ -164,6 +211,9 @@ func check(path, original string, m []int, value, pkg string) (verdict string) {
 			fmt.Fprintf(os.Stderr, "could not put %s back: %v\n", path, err)
 			os.Exit(2)
 		}
+		inFlight.Lock()
+		inFlight.path, inFlight.original = "", ""
+		inFlight.Unlock()
 	}()
 
 	out, err := testCmd(pkg).CombinedOutput()
