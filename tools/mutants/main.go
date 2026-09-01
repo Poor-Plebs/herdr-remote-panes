@@ -424,8 +424,29 @@ func coveredLines(work, pkg string) (map[string]map[int]bool, error) {
 	if err != nil {
 		return nil, err
 	}
+	return linesFromProfile(string(raw), module), nil
+}
+
+// linesFromProfile reads a coverage profile into the lines it says were run.
+//
+// Apart from coveredLines so that the reading can be tested without running a
+// package's tests to make a profile first. Every decision in here is one this
+// tool then takes on trust: a line it thinks was not reached is a line it does
+// not mutate, so a mistake here is this tool quietly doing less and reporting
+// a clean sweep of it.
+//
+// Both ends of a span are covered. A block runs from its first line to its
+// last, and stopping one short would leave the closing line of every covered
+// block unmutated.
+//
+// A block whose numbers will not parse is dropped entirely rather than half
+// read. Taking the half that parsed means a start of zero and a span reaching
+// back to the top of the file, which marks lines as covered that were never
+// run -- and those get mutated and reported as survivors, which is the tool
+// inventing work rather than skipping it.
+func linesFromProfile(raw, module string) map[string]map[int]bool {
 	covered := map[string]map[int]bool{}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for _, line := range strings.Split(raw, "\n") {
 		// path/file.go:startLine.col,endLine.col statements count
 		fields := strings.Fields(line)
 		if len(fields) != 3 || !strings.HasPrefix(fields[0], module) {
@@ -456,7 +477,7 @@ func coveredLines(work, pkg string) (map[string]map[int]bool, error) {
 			covered[file][n] = true
 		}
 	}
-	return covered, nil
+	return covered
 }
 
 func moduleName(dir string) (string, error) {

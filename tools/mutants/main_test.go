@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -1152,5 +1153,96 @@ func TestCoveredLinesSaysWhyItCannotStart(t *testing.T) {
 	if !strings.Contains(err.Error(), "red") {
 		t.Errorf("the error is %q and does not carry what go test said, so "+
 			"somebody has to run it again to find out", err)
+	}
+}
+
+// TestAProfileSpanCoversBothOfItsEnds holds the reading of a coverage profile.
+//
+// Every line this gets wrong is a line the sweep then takes on trust. A line
+// it believes was not reached is a line it does not mutate, so a mistake here
+// is the tool doing less and reporting a clean sweep of it -- and there is
+// nothing in the output that would look different.
+func TestAProfileSpanCoversBothOfItsEnds(t *testing.T) {
+	const module = "example.com/mod"
+
+	got := linesFromProfile(strings.Join([]string{
+		"mode: set",
+		module + "/pkg/kept.go:10.2,12.16 2 1",
+		// Run by nothing, so none of it counts.
+		module + "/pkg/cold.go:30.2,32.16 2 0",
+		// Another module's profile, which is not this package's business.
+		"other.example/elsewhere/x.go:1.1,9.9 1 1",
+	}, "\n"), module)
+
+	for _, n := range []int{10, 11, 12} {
+		if !got["pkg/kept.go"][n] {
+			t.Errorf("line %d is inside the span 10.2,12.16 and is not covered", n)
+		}
+	}
+	for _, n := range []int{9, 13} {
+		if got["pkg/kept.go"][n] {
+			t.Errorf("line %d is outside the span 10.2,12.16 and is covered", n)
+		}
+	}
+	if len(got["pkg/cold.go"]) != 0 {
+		t.Errorf("a block run zero times is covered: %v", got["pkg/cold.go"])
+	}
+	if len(got) != 1 {
+		t.Errorf("files read: %v, want only this module's", got)
+	}
+}
+
+// TestABlockWhoseNumbersWillNotParseIsDroppedWhole guards the half-read case.
+//
+// Reading the half that parsed is worse than reading none of it. A start that
+// will not parse leaves zero, and a span from zero to the block's real end
+// marks the whole top of the file as covered -- lines nothing ran, which then
+// get mutated and reported as survivors. The tool would be inventing work
+// rather than skipping it, and the report gives no sign.
+func TestABlockWhoseNumbersWillNotParseIsDroppedWhole(t *testing.T) {
+	const module = "example.com/mod"
+
+	for _, tt := range []struct {
+		what string
+		span string
+	}{
+		{"the start will not parse", "oops.2,12.16"},
+		{"the end will not parse", "10.2,oops.16"},
+	} {
+		got := linesFromProfile(module+"/pkg/f.go:"+tt.span+" 2 1", module)
+		if len(got["pkg/f.go"]) != 0 {
+			t.Errorf("%s (%s): covered %v, want nothing taken from it",
+				tt.what, tt.span, got["pkg/f.go"])
+		}
+	}
+}
+
+// TestOutputIsOnlyMarkedCutWhenSomethingWasCut holds the boundary.
+func TestOutputIsOnlyMarkedCutWhenSomethingWasCut(t *testing.T) {
+	line := func(n int) []byte {
+		out := ""
+		for i := 0; i < n; i++ {
+			out += fmt.Sprintf("line %d\n", i)
+		}
+		return []byte(out)
+	}
+
+	for _, tt := range []struct {
+		what string
+		have int
+		keep int
+		cut  bool
+	}{
+		{"fewer than it keeps", 3, 5, false},
+		// Exactly the limit: nothing was left out, so saying so is a lie
+		// about the command's output.
+		{"exactly what it keeps", 5, 5, false},
+		{"one more than it keeps", 6, 5, true},
+	} {
+		got := firstLines(line(tt.have), tt.keep)
+		if cut := strings.Contains(got, "..."); cut != tt.cut {
+			t.Errorf("%s: %d lines kept to %d reads as cut = %v, want %v:\n%s",
+				tt.what, tt.have, tt.keep, cut, tt.cut, got)
+		}
 	}
 }
