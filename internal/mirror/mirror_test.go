@@ -458,6 +458,36 @@ func TestWhatAMachineSaysCannotRunAwayWithTheLog(t *testing.T) {
 	}
 }
 
+// theSaidLimit is what maxSaid is expected to be, written out rather than read
+// from it. Standard error belongs to the far machine and it may write as much
+// as it likes for as long as the session lasts, so how much of it is held here
+// -- once per failed pane, in a daemon that stays open all day -- is the
+// decision. maxSaidWidth next to it is one line of the record; this is the
+// whole buffer behind it.
+const theSaidLimit = 4 << 10
+
+func TestOnlyFourKilobytesOfWhatAMachineSaidIsKept(t *testing.T) {
+	// The test above asks whether what is kept is at most maxSaid, which is
+	// true of any maxSaid at all -- a megabyte of a machine's standard error
+	// per failed pane included. Asked as an equality against a number written
+	// out, so the bound cannot move in either direction without this failing.
+	said := &tail{max: maxSaid}
+	_, _ = said.Write(bytes.Repeat([]byte("x"), theSaidLimit*2))
+	if len(said.seen) != theSaidLimit {
+		t.Errorf("a machine that said %d bytes left %d of them here, want %d",
+			theSaidLimit*2, len(said.seen), theSaidLimit)
+	}
+
+	// The other side of it: what fits is kept whole rather than trimmed to
+	// something shorter.
+	fits := &tail{max: maxSaid}
+	_, _ = fits.Write(bytes.Repeat([]byte("y"), theSaidLimit-1))
+	if len(fits.seen) != theSaidLimit-1 {
+		t.Errorf("a machine that said %d bytes left %d of them here, want all of it",
+			theSaidLimit-1, len(fits.seen))
+	}
+}
+
 func TestWhatAMachineSaysCannotDrawOnTheTerminal(t *testing.T) {
 	// It is written to a file somebody will read in a terminal, and it is
 	// whatever the far side chose to print.
