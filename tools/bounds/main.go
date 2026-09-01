@@ -191,12 +191,26 @@ func testCmd(pkg string) *exec.Cmd {
 	return exec.Command("go", "test", pkg, "-count=1")
 }
 
+// raisedSource returns the file with the one bound at m multiplied by raise,
+// and everything else exactly as it was.
+//
+// The value is bracketed because it is an expression and not always a literal.
+// `4 << 10` multiplied without brackets is `4 << 10 * 1000`, which is `4 <<
+// 10000` and not a shift Go will compile -- so every shift-valued bound in the
+// tree would report "would not build" and be quietly skipped, which is the
+// answer that means nothing was tested.
+//
+// Apart from check so it can be read without writing to anybody's tree.
+func raisedSource(original string, m []int, value string) string {
+	return original[:m[3]] + "(" + value + ") * " + fmt.Sprint(raise) +
+		original[m[6]:m[7]] + original[m[1]:]
+}
+
 // check raises one bound and reports what the package's tests made of it. The
 // file is put back whatever happens, since a run that is interrupted has left
 // a mutation behind before.
 func check(path, original string, m []int, value, pkg string) (verdict string) {
-	raised := original[:m[2]] + original[m[2]:m[3]] + "(" + value + ") * " +
-		fmt.Sprint(raise) + original[m[6]:m[7]] + original[m[1]:]
+	raised := raisedSource(original, m, value)
 	// Recorded before the file is touched, so an interrupt between the write
 	// and the defer below still knows what to put back.
 	inFlight.Lock()

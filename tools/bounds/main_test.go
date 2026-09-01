@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -109,6 +110,60 @@ func TestTheScannerSeesEveryBoundThatIsOne(t *testing.T) {
 		}
 		if m[2] != tt.value {
 			t.Errorf("%s: value is %q, want %q", tt.what, m[2], tt.value)
+		}
+	}
+}
+
+// TestTheRaiseIsSomethingGoWillStillCompile guards the mutation itself.
+//
+// A raise that does not compile reports "would not build", which is the answer
+// that means nothing was tested. Made silently, for every bound of a shape
+// nobody tried by hand, that is a sweep of clean-looking verdicts about
+// nothing at all.
+//
+// The brackets are the whole of it. `4 << 10` raised without them is
+// `4 << 10 * 1000`, which Go reads as `4 << 10000`.
+func TestTheRaiseIsSomethingGoWillStillCompile(t *testing.T) {
+	for _, tt := range []struct {
+		what string
+		src  string
+		want string
+	}{
+		{
+			"a product",
+			"package p\n\nconst Max = 8 * 1024 * 1024\n\nfunc f() {}\n",
+			"package p\n\nconst Max = (8 * 1024 * 1024) * 1000\n\nfunc f() {}\n",
+		},
+		{
+			// The one that brackets exist for.
+			"a shift",
+			"package p\n\nconst maxSaid = 4 << 10\n",
+			"package p\n\nconst maxSaid = (4 << 10) * 1000\n",
+		},
+		{
+			"a bound taken from another package",
+			"package p\n\nconst maxFrameBytes = capped.Max\n",
+			"package p\n\nconst maxFrameBytes = (capped.Max) * 1000\n",
+		},
+		{
+			"a trailing comment stays where it was",
+			"package p\n\nconst max = 200 // characters\n",
+			"package p\n\nconst max = (200) * 1000 // characters\n",
+		},
+		{
+			"an aligned entry inside a const block",
+			"package p\n\nconst (\n\tmaxSaid      = 4 << 10\n\tmaxSaidWidth = 200\n)\n",
+			"package p\n\nconst (\n\tmaxSaid      = (4 << 10) * 1000\n\tmaxSaidWidth = 200\n)\n",
+		},
+	} {
+		m := bound.FindStringSubmatchIndex(tt.src)
+		if m == nil {
+			t.Errorf("%s: nothing matched in %q", tt.what, tt.src)
+			continue
+		}
+		value := strings.TrimSpace(tt.src[m[4]:m[5]])
+		if got := raisedSource(tt.src, m, value); got != tt.want {
+			t.Errorf("%s:\n got %q\nwant %q", tt.what, got, tt.want)
 		}
 	}
 }
