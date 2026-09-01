@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -266,5 +267,58 @@ func TestAFileThatCannotBePutBackIsNotForgotten(t *testing.T) {
 	inFlight.Unlock()
 	if still != dir {
 		t.Errorf("a file that was not put back was forgotten anyway (now %q)", still)
+	}
+}
+
+// TestATestRunIsFreshAndBoundedWhereItCanBe reads the command without running
+// it.
+//
+// Two things in here decide whether a verdict means anything.
+//
+// A cached result is a pass reporting on the code as it was before the
+// mutation, and this project has had one: a subprocess test answered
+// "ok (cached)" after the daemon it drives had been edited, because nothing
+// the subprocess read was recorded as an input. `-count=1` is what makes the
+// answer be about the file that is on disk now.
+//
+// And a ceiling that is not really there is worse than a missing one, because
+// the run looks bounded. Where one is claimed, the properties that impose it
+// have to actually be in the command.
+func TestATestRunIsFreshAndBoundedWhereItCanBe(t *testing.T) {
+	was := bounded
+	t.Cleanup(func() { bounded = was })
+
+	const pkg = "./internal/capped/"
+	for _, tt := range []struct {
+		what    string
+		ceiling bool
+	}{
+		{"where a ceiling can be imposed", true},
+		{"where none can be", false},
+	} {
+		bounded = tt.ceiling
+		args := testCmd(pkg).Args
+		joined := strings.Join(args, " ")
+
+		if !slices.Contains(args, "-count=1") {
+			t.Errorf("%s: no -count=1, so a cached pass can answer for the "+
+				"file as it was before the mutation: %s", tt.what, joined)
+		}
+		if !slices.Contains(args, pkg) {
+			t.Errorf("%s: the package under test is not in the command: %s", tt.what, joined)
+		}
+		if !strings.Contains(joined, "go test") {
+			t.Errorf("%s: this does not run the tests at all: %s", tt.what, joined)
+		}
+
+		imposed := slices.Contains(args, "MemoryMax="+memoryCeiling)
+		if imposed != tt.ceiling {
+			t.Errorf("%s: a ceiling is imposed = %v, want %v: %s",
+				tt.what, imposed, tt.ceiling, joined)
+		}
+		if tt.ceiling && !slices.Contains(args, "MemorySwapMax=0") {
+			t.Errorf("%s: memory is capped and swap is not, so the run leans on "+
+				"swap instead of failing: %s", tt.what, joined)
+		}
 	}
 }
