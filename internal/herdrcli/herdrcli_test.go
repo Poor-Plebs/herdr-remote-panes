@@ -722,3 +722,37 @@ func TestWhichHerdrBinaryIsRun(t *testing.T) {
 		t.Errorf("with the variable unset, Bin() = %q, want herdr", got)
 	}
 }
+
+func TestDecodeFindsTheReplyWhateverSurroundsIt(t *testing.T) {
+	// Herdr prints the occasional notice around its JSON -- an available
+	// update, a banner -- which is why this reads line by line instead of
+	// treating the output as one document.
+	//
+	// Each line is trimmed before it is looked at, and nothing held that.
+	// Without the trim a line that starts with a space fails the test for a
+	// leading brace and is skipped as though it were a notice, so the reply it
+	// carried is never found and the command fails with "unreadable response"
+	// -- against a Herdr that indents its output, or one that ends its lines
+	// the other way, neither of which is this plugin's to decide.
+	const reply = `{"id":"x","result":{"type":"pane_list","panes":[]}}`
+
+	for _, tt := range []struct {
+		what string
+		out  string
+	}{
+		{"on its own", reply},
+		{"indented", "   " + reply},
+		{"after a notice", "herdr 0.9.0 is available\n" + reply},
+		{"indented, after a notice, and ended the other way",
+			"herdr 0.9.0 is available\r\n  " + reply + "  \r"},
+	} {
+		result, err := Decode([]byte(tt.out), []string{"pane", "list"})
+		if err != nil {
+			t.Errorf("%s: %v", tt.what, err)
+			continue
+		}
+		if len(result) == 0 {
+			t.Errorf("%s: the reply was found but came back empty", tt.what)
+		}
+	}
+}
