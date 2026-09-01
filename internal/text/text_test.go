@@ -391,3 +391,33 @@ func TestASkinToneIsPartOfTheEmojiItRecolours(t *testing.T) {
 		}
 	}
 }
+
+func TestARunOfEmojiSelectorsPromotesOnlyOneCharacter(t *testing.T) {
+	// A selector asks for the emoji form of the character before it, and a
+	// terminal draws that in two cells rather than one -- so the first
+	// selector after a one-cell character adds a cell. A second selector has
+	// nothing of its own to promote: what precedes it is already emoji.
+	//
+	// Nothing held that. Dropping the line that moves `previous` along left
+	// every selector after the first still looking at the character before
+	// them all, so each added another cell and "a" with three selectors
+	// measured four. Width decides where a name is cut and how far the next
+	// column starts, and these names come from the far machine, which chooses
+	// its own bytes.
+	const a, selector = "a", "️"
+	for _, tt := range []struct {
+		what string
+		s    string
+		want int
+	}{
+		{"the character alone", a, 1},
+		{"one selector promotes it", a + selector, 2},
+		{"a second selector promotes nothing", a + selector + selector, 2},
+		{"nor does a third", a + selector + selector + selector, 2},
+		{"a selector with nothing before it", selector, 0},
+	} {
+		if got := Width(tt.s); got != tt.want {
+			t.Errorf("%s: Width(%q) = %d, want %d", tt.what, tt.s, got, tt.want)
+		}
+	}
+}
