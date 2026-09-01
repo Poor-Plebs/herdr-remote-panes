@@ -870,6 +870,40 @@ func TestTheAdviceKeepsTheCommandHoweverManyMachinesAreDown(t *testing.T) {
 	}
 }
 
+// theRetryLines is what maxRetryLines is expected to be, written out rather
+// than read from it. The advice sits under the table and names machines and a
+// command, so it is longer than a terminal on any day the machines are not
+// called a and b; how many lines it may take before the table is pushed off
+// the screen is the decision.
+const theRetryLines = 4
+
+func TestTheAdviceUnderTheTableStopsAtFourLines(t *testing.T) {
+	// The test above wraps to maxRetryLines and asks whether the command
+	// survived, which it does at any number of lines at all -- one, or forty.
+	// How many lines is the part that decides whether the table above the
+	// advice is still on the screen, and nothing asked it.
+	//
+	// Wrap returns the moment it has filled the last line it is allowed, so a
+	// message with more to say comes back as exactly that many lines.
+	tooMuch := strings.TrimSpace(strings.Repeat("machine ", 200))
+
+	got := text.Wrap(tooMuch, 60, maxRetryLines)
+	if len(got) != theRetryLines {
+		t.Errorf("advice that does not fit wrapped to %d lines, want %d:\n%s",
+			len(got), theRetryLines, strings.Join(got, "\n"))
+	}
+	// The last of them says there was more, rather than stopping mid-sentence
+	// as though that were all the advice there was.
+	if last := got[len(got)-1]; !strings.HasSuffix(last, "\u2026") {
+		t.Errorf("the last line does not say the advice was cut: %q", last)
+	}
+
+	// A message that fits is not padded out to the bound.
+	if short := text.Wrap("connect again to try them", 60, maxRetryLines); len(short) != 1 {
+		t.Errorf("advice that fits wrapped to %d lines, want 1: %v", len(short), short)
+	}
+}
+
 func TestOneMachineCannotFillTheListingWithWhatItSays(t *testing.T) {
 	// The state column carries what ssh printed, and a machine chooses those
 	// bytes. Wrapped without a bound, a banner of a couple of thousand
