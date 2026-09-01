@@ -118,11 +118,36 @@ func TestObserveRetriesWhenTheStreamBreaks(t *testing.T) {
 	}
 }
 
+// theFrameLimit is what maxFrameBytes is expected to be, written out rather
+// than read from it. Two things follow from writing it out.
+//
+// The bound is pinned. A test that says maxFrameBytes says nothing about what
+// maxFrameBytes should be: raise the constant and the frame below rises with
+// it, so the case passed for any value the bound could take.
+//
+// And the test stays cheap. The frame is built from this rather than from the
+// constant, so raising the constant no longer builds a frame to match --
+// maxFrameBytes+1024 at a thousandfold is eight gigabytes of 'x' with base64
+// on top, which the kernel killed rather than let fail. A killed run is not a
+// verdict, and this one came back held on one sweep and killed on the next.
+//
+// mirror.go takes maxFrameBytes from capped.Max, where the size is decided and
+// pinned; this says what the mirror expects to be given.
+const theFrameLimit = 8 * 1024 * 1024
+
+func TestTheFrameLimitIsEightMegabytes(t *testing.T) {
+	if maxFrameBytes != theFrameLimit {
+		t.Errorf("maxFrameBytes = %d, want %d -- it is taken from capped.Max, "+
+			"which bounds what one command may print back",
+			maxFrameBytes, theFrameLimit)
+	}
+}
+
 func TestOneEnormousFrameDoesNotEndTheMirror(t *testing.T) {
 	// A frame too large for the buffer ends the scan. Treating that as a
 	// closed terminal would quietly shut the pane; reconnecting resumes from
 	// the terminal's current state, which is what a viewer wants.
-	huge := strings.Repeat("x", maxFrameBytes+1024)
+	huge := strings.Repeat("x", theFrameLimit+1024)
 	client := observeSSH(t, "echo '"+frame("before")+"'\n"+
 		fmt.Sprintf("printf '%%s\\n' '%s'\n", `{"bytes":"`+base64.StdEncoding.EncodeToString([]byte(huge))+`"}`))
 
