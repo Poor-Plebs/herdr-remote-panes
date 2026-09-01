@@ -1,10 +1,11 @@
 // Command bounds asks whether each bound in the tree is held by anything.
 //
-// Every max* constant is raised a thousandfold in turn and that package's own
-// tests are run. A bound whose loss nothing notices is a bound with no test
-// behind it -- and the reason to look for those mechanically is that they do
-// not look like gaps. Four were found this way, and every one had a test that
-// read as though it held the bound:
+// Every max constant is raised a thousandfold in turn -- exported or not, with
+// a suffix or without -- and that package's own tests are run. A bound whose
+// loss nothing notices is a bound with no test behind it, and the reason to
+// look for those mechanically is that they do not look like gaps. Four were
+// found this way, and every one had a test that read as though it held the
+// bound:
 //
 //	if n := len([]rune(long.SafeAgent())); n > maxAgentName {
 //
@@ -12,6 +13,14 @@
 // any value the bound could take, including one that lets a machine put five
 // hundred characters in a sidebar. Measuring against the bound under test is
 // the shape; a number written out is the fix.
+//
+// Raising a bound is not always cheap. Where a test sizes its own input from
+// the constant -- []int{Max}, or a payload repeated maxFrameBytes times -- a
+// thousandfold bound allocates a thousandfold with it. capped.Max at eight
+// gigabytes took twenty gigabytes of memory and the machine with it, and the
+// killed process exited non-zero, which this tool used to read as "held": the
+// one verdict it must never invent. Killed is now its own answer, and the
+// tests run under a memory ceiling where the machine can impose one.
 //
 // Not part of `make check`: it builds and tests each package once per bound,
 // which is minutes rather than seconds. An unheld bound is something to read
@@ -28,9 +37,14 @@ import (
 	"strings"
 )
 
-// bound matches a max* constant declaration and splits it so the value can be
+// bound matches a max constant declaration and splits it so the value can be
 // replaced without disturbing the name or the comment after it.
-var bound = regexp.MustCompile(`(?m)^(\s*(?:const )?max[A-Za-z]+\s*=\s*)([^/\n]+?)(\s*(?://.*)?)$`)
+//
+// Both cases and no required suffix: `max[A-Za-z]+` read only unexported names
+// that carried one, so it walked past `const Max` in capped -- the tree's one
+// exported bound, and an unheld one -- and past a function-local `const max`
+// in herdrcli. A bound the scanner does not see reports as nothing at all.
+var bound = regexp.MustCompile(`(?m)^(\s*(?:const )?[Mm]ax[A-Za-z]*\s*=\s*)([^/\n]+?)(\s*(?://.*)?)$`)
 
 // raise is how much bigger the bound is made. Large enough that no realistic
 // input is bounded by it any more, so a test that still passes is a test that
@@ -43,8 +57,14 @@ func main() {
 		root = os.Args[1]
 	}
 
-	var held, unheld, unbuildable int
-	var loose []string
+	bounded = ceiling()
+	if !bounded {
+		fmt.Fprint(os.Stderr, "No memory ceiling available here. A bound whose test sizes its own\n"+
+			"input from it can take the machine down rather than report.\n\n")
+	}
+
+	var held, unheld, unbuildable, noAnswer int
+	var loose, unanswered []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return err
@@ -67,6 +87,10 @@ func main() {
 				held++
 			case "would not build":
 				unbuildable++
+			case "killed", "could not write":
+				noAnswer++
+				unanswered = append(unanswered,
+					fmt.Sprintf("%s:%d  %s = %s  -- %s", path, line, name, value, verdict))
 			default:
 				unheld++
 				loose = append(loose, fmt.Sprintf("%s:%d  %s = %s", path, line, name, value))
@@ -80,7 +104,8 @@ func main() {
 		os.Exit(2)
 	}
 
-	fmt.Printf("\n%d held, %d not, %d would not build\n", held, unheld, unbuildable)
+	fmt.Printf("\n%d held, %d not, %d would not build, %d no answer\n",
+		held, unheld, unbuildable, noAnswer)
 	if len(loose) > 0 {
 		fmt.Print("\nNothing noticed these growing a thousandfold. Read each one and\n" +
 			"decide which it is: a bound nothing can observe, or one whose test\n" +
@@ -89,6 +114,40 @@ func main() {
 			fmt.Println("  " + one)
 		}
 	}
+	if len(unanswered) > 0 {
+		fmt.Print("\nThese answered nothing: the process was killed rather than failed, so\n" +
+			"whether anything holds the bound is still unknown. A test that sizes its\n" +
+			"own input from the constant allocates a thousandfold along with it -- read\n" +
+			"the test, and raise these by hand by a little rather than by a lot.\n\n")
+		for _, one := range unanswered {
+			fmt.Println("  " + one)
+		}
+	}
+}
+
+// memoryCeiling bounds one test process, where the machine can impose it.
+const memoryCeiling = "2G"
+
+// bounded records whether that ceiling is actually available.
+var bounded bool
+
+// ceiling reports whether a memory ceiling can be put on a test, by imposing
+// one once rather than by looking for the binary. systemd-run exists on
+// machines whose user session it cannot talk to, and a ceiling that is not
+// really there is worse than a missing one: the run looks bounded.
+func ceiling() bool {
+	return exec.Command("systemd-run", "--user", "--scope", "-q",
+		"-p", "MemoryMax="+memoryCeiling, "-p", "MemorySwapMax=0", "true").Run() == nil
+}
+
+// testCmd runs one package's tests, under the ceiling where there is one.
+func testCmd(pkg string) *exec.Cmd {
+	if bounded {
+		return exec.Command("systemd-run", "--user", "--scope", "-q",
+			"-p", "MemoryMax="+memoryCeiling, "-p", "MemorySwapMax=0",
+			"go", "test", pkg, "-count=1")
+	}
+	return exec.Command("go", "test", pkg, "-count=1")
 }
 
 // check raises one bound and reports what the package's tests made of it. The
@@ -107,9 +166,16 @@ func check(path, original string, m []int, value, pkg string) (verdict string) {
 		}
 	}()
 
-	out, err := exec.Command("go", "test", pkg, "-count=1").CombinedOutput()
+	out, err := testCmd(pkg).CombinedOutput()
 	if strings.Contains(string(out), "build failed") {
 		return "would not build"
+	}
+	// A killed process exits non-zero without any test having failed, and
+	// "held" is the one verdict this tool must never invent -- it is the one
+	// that says a test stands behind the bound. capped.Max raised to eight
+	// gigabytes was killed at twenty, and read as held.
+	if strings.Contains(string(out), "signal: killed") {
+		return "killed"
 	}
 	if err != nil {
 		return "held"
