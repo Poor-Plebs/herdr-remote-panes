@@ -4,6 +4,13 @@
 # wanted.
 /mutants
 
+# The other two tools are package main as well, and the Makefile runs them with
+# `go run` too. `go build ./tools/bounds` left one of these in the tree while
+# the tests for that tool were being written, which is how the gap was noticed:
+# two of the three were covered and the reason applies to all of them.
+/bounds
+/herdrcheck
+
 # `go build .` from here writes this, and once got as far as a tagged release
 # commit before anybody looked. The Makefile and build.sh both build to bin/,
 # so a binary with this name is never wanted.
