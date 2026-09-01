@@ -45,4 +45,5 @@
 ./internal/text (since v0.4.6)	2026-08-31	3	3	0	0
 ./internal/version	2026-08-28	9	7	2	0
 ./tools/bounds	2026-09-01	1	1	0	0
+./tools/herdrcheck	2026-09-01	10	10	0	0
 ./tools/mutants	2026-09-01	121	117	4	0
