@@ -112,6 +112,22 @@ func asked(t *testing.T) []string {
 	return strings.Split(strings.TrimSpace(string(raw)), "\n")
 }
 
+// teardownsOf counts how many times a machine's connection has been torn down.
+//
+// Tearing one down is the one call that names the machine and asks it to run
+// nothing: "ssh -O exit -- bot". Every other call has a command after the
+// target.
+func teardownsOf(t *testing.T, target string) int {
+	t.Helper()
+	n := 0
+	for _, line := range asked(t) {
+		if strings.HasSuffix(strings.TrimSpace(line), "| "+target) {
+			n++
+		}
+	}
+	return n
+}
+
 // addPaneOn puts a pane into a machine's own state, as work started there does:
 // a space of its own, nothing to do with the one shared with this machine.
 func addPaneOn(t *testing.T, statePath, workspace, title string) string {
@@ -3232,19 +3248,7 @@ func TestTheOldConnectionIsTornDownWhenSettingsChange(t *testing.T) {
 	}
 	settle(t, d, here, 2, there)
 
-	// Tearing one down is the one call that names the machine and asks it to
-	// run nothing: "ssh -O exit -- bot". Every other call has a command after
-	// the target.
-	teardowns := func() int {
-		n := 0
-		for _, line := range asked(t) {
-			if strings.HasSuffix(strings.TrimSpace(line), "| bot") {
-				n++
-			}
-		}
-		return n
-	}
-	before := teardowns()
+	before := teardownsOf(t, "bot")
 
 	cfg.Session = "somewhere-else"
 	d.setConfig(cfg)
@@ -3253,21 +3257,21 @@ func TestTheOldConnectionIsTornDownWhenSettingsChange(t *testing.T) {
 	}
 	settle(t, d, here, 2, there)
 
-	if got := teardowns() - before; got != 1 {
+	if got := teardownsOf(t, "bot") - before; got != 1 {
 		t.Errorf("changing the session tore down %d connections, want 1: the old one "+
 			"is a process and a socket that nothing will close now", got)
 	}
 
 	// And an edit that changes nothing keeps the connection it has: rebuilding
 	// one costs a round trip and drops whatever it was multiplexing.
-	before = teardowns()
+	before = teardownsOf(t, "bot")
 	d.setConfig(cfg)
 	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
 		t.Fatalf("reconnect without an edit: %s", reply.Message)
 	}
 	settle(t, d, here, 2, there)
 
-	if got := teardowns() - before; got != 0 {
+	if got := teardownsOf(t, "bot") - before; got != 0 {
 		t.Errorf("connecting again with the same settings tore down %d connections, want none", got)
 	}
 }
@@ -4793,5 +4797,50 @@ func TestMirroringIntoTheSpaceThisNamedSaysNothing(t *testing.T) {
 	}
 	if said := logged.String(); strings.Contains(said, "which is not") {
 		t.Errorf("the space this named was reported as one it did not:\n%s", said)
+	}
+}
+
+// TestDisconnectingClosesTheConnectionAsWell holds the other end of a machine's
+// life.
+//
+// What disconnect visibly does is close the panes here and leave the work
+// running there, and that half is tested from several directions. The
+// connection itself is not visible: an SSH ControlMaster is a process holding
+// a socket, and it lives until something tells it to exit. One left behind
+// fails nothing and shows up nowhere -- it is a process and a socket per
+// disconnect, for as long as the session lasts.
+//
+// TestTheOldConnectionIsTornDownWhenSettingsChange holds this same call on the
+// settings-changed path, which happens when somebody edits a config. This one
+// is the path somebody takes over and over: d in the menu to put a machine
+// away, enter to bring it back.
+func TestDisconnectingClosesTheConnectionAsWell(t *testing.T) {
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	// There is a connection to tear down, and connecting did not tear one down
+	// on the way: without both of these the count below would prove nothing.
+	if len(asked(t)) == 0 {
+		t.Fatal("the machine was never asked anything, so there is no connection here")
+	}
+	if before := teardownsOf(t, "bot"); before != 0 {
+		t.Fatalf("connecting tore down %d connections before the test began", before)
+	}
+
+	if reply := d.dispatch(Command{Cmd: "disconnect", Host: "bot"}); !reply.OK {
+		t.Fatalf("disconnect: %s", reply.Message)
+	}
+
+	if got := teardownsOf(t, "bot"); got != 1 {
+		t.Errorf("disconnecting tore down %d connections, want 1: the ControlMaster "+
+			"is a process and a socket that nothing will close now", got)
 	}
 }
