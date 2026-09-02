@@ -154,6 +154,47 @@ func givenUp(t *testing.T, d *Daemon, target string) *hostSync {
 	return state
 }
 
+func TestAPassWhereEveryMachineFailedWritesTheRetryDownItself(t *testing.T) {
+	// The other half of the join. The test below proves a retry already
+	// written down is taken by the pass; the ones above prove the scheduler
+	// writes one when asked. Neither asks whether the pass ever calls the
+	// scheduler, and deleting that one line from reconcileOnce broke nothing
+	// in this package: every test here either calls the scheduler itself or
+	// sets linkRetryAt by hand first.
+	//
+	// What is left without it is the case the whole mechanism is for. A lid
+	// closing or a VPN dropping fails every machine in one pass, each counts
+	// its own failures to the limit and is given up on, and nothing writes
+	// down a time to try again -- so coming back needs an explicit connect for
+	// every machine, for something that was never about them. The README and
+	// the troubleshooting page both promise it retries itself.
+	withFakeHerdr(t)
+	d := New(machineConfig("bot", "workbox"))
+
+	// Given up on, and nothing scheduled by hand: the pass has to do it.
+	states := []*hostSync{givenUp(t, d, "bot"), givenUp(t, d, "workbox")}
+	d.mu.Lock()
+	for _, state := range states {
+		if !state.linkRetryAt.IsZero() {
+			t.Fatalf("%s already had a retry written down, so this would prove "+
+				"nothing", state.host.Target)
+		}
+	}
+	d.mu.Unlock()
+
+	d.reconcileOnce()
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, state := range states {
+		if state.linkRetryAt.IsZero() {
+			t.Errorf("%s came out of a pass that failed every machine with no "+
+				"time to try again, so it waits to be connected to by hand",
+				state.host.Target)
+		}
+	}
+}
+
 func TestADueRetryIsActuallyTakenByThePass(t *testing.T) {
 	// The half that matters. Scheduling a retry and skipping the machine
 	// anyway is two correct pieces either side of a decision nothing joins:
