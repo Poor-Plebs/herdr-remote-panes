@@ -1460,3 +1460,56 @@ func TestAPasteEndsAtTheMarkerAndNowhereElse(t *testing.T) {
 		})
 	}
 }
+
+// TestTheMenuAsksTheTerminalItIsDrawnOn holds the stdin that stty is given.
+//
+// stty reports the size of the terminal on its standard input, so handing it
+// the menu's own is the whole of how the menu learns how wide it is. Nothing
+// checked that: under `go test` there is no terminal either way, so the call
+// fails and windowSize falls back to 80x20 whichever it was given -- which is
+// also what every other test in this package renders at, so nothing noticed.
+//
+// What it costs is a menu drawn for a terminal nobody has. The fallback is a
+// guess, and everything about the layout is measured from it: the name column,
+// how much of a status line fits, how many machines are listed before it
+// scrolls. On a wide terminal the menu would sit in 80 columns of it, and on a
+// narrow one it would run off the side.
+//
+// The stand-in stty answers only if it was actually given the menu's input,
+// which is what makes the size below the assertion rather than the fallback.
+func TestTheMenuAsksTheTerminalItIsDrawnOn(t *testing.T) {
+	dir := t.TempDir()
+	ran := filepath.Join(dir, "stty-ran")
+	script := "#!/bin/sh\n" +
+		"echo ran >> " + ran + "\n" +
+		"if grep -q 'the terminal the menu is on'; then echo '40 100'; fi\n"
+	if err := os.WriteFile(filepath.Join(dir, "stty"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if err := os.WriteFile(filepath.Join(dir, "tty"),
+		[]byte("the terminal the menu is on\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tty, err := os.Open(filepath.Join(dir, "tty"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tty.Close()
+
+	saved := os.Stdin
+	os.Stdin = tty
+	cols, rows := windowSize()
+	os.Stdin = saved
+
+	// The stand-in was reached, or the size below says nothing about stdin.
+	if _, err := os.Stat(ran); err != nil {
+		t.Fatalf("stty was never run, so this is measuring the fallback: %v", err)
+	}
+	if cols != 100 || rows != 40 {
+		t.Errorf("the menu measured %dx%d, want 100x40: stty was not given the "+
+			"terminal to ask about, so the menu is drawn for a guessed size",
+			cols, rows)
+	}
+}
