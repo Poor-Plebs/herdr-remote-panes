@@ -4403,6 +4403,58 @@ func TestConnectingAgainPicksUpAModeThatChangedUnderneath(t *testing.T) {
 	// connects, which the stand-in cannot do, so that one is still open.
 }
 
+func TestAConfigFaultThatComesBackIsSaidAgain(t *testing.T) {
+	// A half-written file is the ordinary case here: saving is not atomic in
+	// every editor and a pass comes round every couple of seconds, so the
+	// complaint is said once rather than once per pass. What makes that "once
+	// per distinct complaint" rather than "once ever" is forgetting it when
+	// the file reads again.
+	//
+	// Nothing held the forgetting. Without it the first fault is the last one
+	// ever mentioned: the same mistake made again next week is kept in use
+	// silently, and the log somebody is sent to read says nothing about the
+	// file they have just broken.
+	said := captureLog(t)
+	path := withConfigFile(t, `{"placement":"tab","hosts":[{"target":"bot"}]}`)
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := New(loaded)
+
+	// The same fault twice, with a good read in between. The same text both
+	// times on purpose: "distinct" is about the complaint, so a different
+	// error would be said again whether it was forgotten or not.
+	const broken = `{"placement":`
+	good := `{"placement":"split","hosts":[{"target":"bot"}]}`
+
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		// Every reread is gated on the file having changed, and a test can
+		// write twice inside one filesystem timestamp.
+		when := time.Now().Add(time.Duration(len(body)) * time.Second)
+		if err := os.Chtimes(path, when, when); err != nil {
+			t.Fatal(err)
+		}
+		d.rereadConfig()
+	}
+
+	write(broken)
+	if n := strings.Count(said.String(), "could not reread"); n != 1 {
+		t.Fatalf("a broken config was complained about %d times, want once", n)
+	}
+	write(good)
+	write(broken)
+
+	if n := strings.Count(said.String(), "could not reread"); n != 2 {
+		t.Errorf("the same fault came back and was complained about %d times in "+
+			"total, want twice: the first one is being remembered for ever", n)
+	}
+}
+
 func TestTheConfigIsRereadOnceAndThenLeftAlone(t *testing.T) {
 	// The tests around this one set configStamp by hand before calling --
 	// "as the daemon would have stamped it on the pass that read it" -- so
