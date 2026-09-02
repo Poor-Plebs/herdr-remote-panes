@@ -317,6 +317,38 @@ func TestClosingTheLastTerminalLeavesAWayBack(t *testing.T) {
 	}
 }
 
+func TestAFailedConnectIsVisibleBeforeAnyPassRunsAgain(t *testing.T) {
+	// The listing reads Connected straight off lastErr, and a connect that
+	// failed has to record why. The test below asks the same question after a
+	// pass, and a pass writes lastErr itself from a different line -- so the
+	// one on the connect path was held by nothing, and deleting it left a
+	// machine whose connect had just failed reading as connected, with nothing
+	// said about it.
+	//
+	// The gap between the two matters: a connect is what somebody just asked
+	// for and is watching the menu for. The next pass is a couple of seconds
+	// away, and until it runs the listing would be telling them it worked.
+	withFakeHerdr(t)
+	sshFails(t, "ssh: connect to host bot port 22: Connection refused")
+
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); reply.OK {
+		t.Fatal("connecting to a machine that refused was reported as working")
+	}
+
+	// Asked straight away, with no pass in between.
+	hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+	if len(hosts) != 1 {
+		t.Fatalf("status = %+v, want the machine listed", hosts)
+	}
+	if hosts[0].Connected {
+		t.Error("a machine whose connect had just failed reads as connected")
+	}
+	if hosts[0].LastError == "" {
+		t.Error("nothing is said about why the connect failed")
+	}
+}
+
 func TestAMachineThatIsNotAnsweringGetsNoSpaceAndNoTerminal(t *testing.T) {
 	// Nothing is created for a machine that cannot be reached: an empty space
 	// named after it would sit in the sidebar looking like somewhere to go.
