@@ -1,6 +1,7 @@
 package syncd
 
 import (
+	"errors"
 	"io"
 	"log"
 	"reflect"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/mirror"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
 )
 
 func newTestHost() *hostSync {
@@ -625,4 +627,73 @@ func TestAFocusThatFailedIsNotAlsoAnnouncedAsDone(t *testing.T) {
 	if strings.Contains(out, "focused w1") {
 		t.Errorf("the focus was refused and the log announces it anyway: %q", out)
 	}
+}
+
+// TestAMachineLetGoOfMidCallIsNoLongerThisPassToDecide holds the re-check that
+// awayFromTheLock makes when it takes the daemon's lock back.
+//
+// The lock is dropped for the round trip on purpose, so the menu and the
+// status listing stay answerable while three machines are being polled. The
+// price is that a command can run in the gap, and disconnect is one: it takes
+// the machine out of d.hosts and closes its panes. A pass that carried on
+// would then be acting for a machine somebody had just let go of, reopening
+// the panes the disconnect had closed, and -- because the failure is recorded
+// against the machine -- counting the disconnect as that machine's fault.
+//
+// The whole of the guard is one comparison against d.hosts, and nothing
+// reached it: the pass paths that use this all run with a machine that stays
+// put. Both directions are checked below, because a guard that fires always
+// passes the half of this test that matters and breaks everything else.
+func TestAMachineLetGoOfMidCallIsNoLongerThisPassToDecide(t *testing.T) {
+	newDaemon := func() (*Daemon, *hostSync) {
+		state := newTestHost()
+		state.host = config.Host{Target: "bot"}
+		return &Daemon{hosts: map[string]*hostSync{"bot": state}}, state
+	}
+
+	t.Run("let go of while the lock was down", func(t *testing.T) {
+		d, state := newDaemon()
+
+		ran := false
+		d.mu.Lock()
+		got, err := awayFromTheLock(d, state, func(*remote.Client) (int, error) {
+			// The lock really is down here: taking it is what proves it, and
+			// disconnect is doing exactly this much while the pass waits.
+			ran = true
+			d.mu.Lock()
+			delete(d.hosts, "bot")
+			d.mu.Unlock()
+			return 42, nil
+		})
+		d.mu.Unlock()
+
+		if !ran {
+			t.Fatal("the call never ran, so nothing here was tested")
+		}
+		if !errors.Is(err, errWentAwayMidPass) {
+			t.Errorf("err = %v, want errWentAwayMidPass", err)
+		}
+		if got != 0 {
+			t.Errorf("answered %d for a machine that had gone; the pass would carry on with it", got)
+		}
+	})
+
+	t.Run("still the same machine", func(t *testing.T) {
+		// The control: without it, a guard that refused everything would look
+		// exactly as good as the one that is here.
+		d, state := newDaemon()
+
+		d.mu.Lock()
+		got, err := awayFromTheLock(d, state, func(*remote.Client) (int, error) {
+			return 42, nil
+		})
+		d.mu.Unlock()
+
+		if err != nil {
+			t.Errorf("err = %v, want the answer to come back", err)
+		}
+		if got != 42 {
+			t.Errorf("answered %d, want 42", got)
+		}
+	})
 }
