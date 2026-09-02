@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1494,6 +1495,61 @@ func TestAMachineThisDaemonNeverTouchedKeepsWhatItHad(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "term_1") {
 		t.Errorf("the machine was kept but not what it had:\n%s", raw)
+	}
+}
+
+func TestDismissedTerminalsAreWrittenInAFixedOrder(t *testing.T) {
+	// The snapshot is only written when its bytes change, which is what the
+	// test below holds. That rests on the same state producing the same bytes,
+	// and dismissed terminals come out of a map: Go randomises the order it
+	// walks one, so without sorting them the file differs from itself pass
+	// after pass and is rewritten every couple of seconds -- the bug that test
+	// is named for, arriving by a different door.
+	//
+	// Nothing held the sorting. The fixture below carries no dismissed
+	// terminals at all, so putting them in order and not doing so produce the
+	// same empty list.
+	//
+	// Eight of them, because an unsorted walk can come out sorted by chance
+	// and eight makes that one run in forty thousand. Two would be one in two.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("HERDR_SESSION", "default")
+
+	dismissed := map[string]bool{}
+	for _, id := range []string{"t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8"} {
+		dismissed[id] = true
+	}
+	d := withConfig(&Daemon{hosts: map[string]*hostSync{
+		"bot": {
+			host:       config.Host{Target: "bot"},
+			mirrors:    map[string]string{},
+			dismissed:  dismissed,
+			shellPanes: map[string]bool{},
+		},
+	}}, config.Defaults())
+
+	d.persist()
+
+	path, err := snapshotPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("nothing was written: %v", err)
+	}
+	var written snapshot
+	if err := json.Unmarshal(raw, &written); err != nil {
+		t.Fatalf("what was written is not a snapshot: %v", err)
+	}
+	got := written.Hosts["bot"].Dismissed
+	if len(got) != len(dismissed) {
+		t.Fatalf("wrote %d dismissed terminals, want %d: %v", len(got), len(dismissed), got)
+	}
+	if !sort.StringsAreSorted(got) {
+		t.Errorf("dismissed terminals were written as %v, which is not an order "+
+			"the next pass will agree with, so the file is rewritten every time", got)
 	}
 }
 
