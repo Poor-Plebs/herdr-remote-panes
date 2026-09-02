@@ -195,6 +195,52 @@ func TestAPassWhereEveryMachineFailedWritesTheRetryDownItself(t *testing.T) {
 	}
 }
 
+func TestATakenRetryHandsBackAFullBudgetOfAttempts(t *testing.T) {
+	// A machine given up on when everything was down gets another go without
+	// being asked, and it gets it with a full budget of attempts as though it
+	// had just been connected to. Handing back the budget is what makes the
+	// retry worth taking: carrying the old count means the first failure gives
+	// up again instantly and the retry bought nothing.
+	//
+	// Nothing held that. The test below sets the retry by hand and watches it
+	// be taken; it never asks what the machine is given when it is.
+	withFakeHerdr(t)
+	d := New(machineConfig("bot", "workbox"))
+
+	states := []*hostSync{givenUp(t, d, "bot"), givenUp(t, d, "workbox")}
+	d.mu.Lock()
+	due := time.Now().Add(-time.Second)
+	for _, state := range states {
+		state.linkRetryAt = due
+	}
+	d.mu.Unlock()
+
+	// Still down when the retry comes round, which is what makes this the case
+	// the clearing is for rather than the one below.
+	sshFails(t, "ssh: connect to host bot port 22: Connection refused")
+
+	d.reconcileOnce()
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, state := range states {
+		if state.failCount >= maxHostAttempts {
+			t.Errorf("%s has %d failures counted, which is the limit: the retry "+
+				"handed back nothing and the next failure gives up again",
+				state.host.Target, state.failCount)
+		}
+	}
+
+	// Not asserted: that taking the retry clears the time it was due at. That
+	// line cannot be reached from here -- a pass that ends well clears the
+	// time on the success path whatever the retry did, and a pass that ends
+	// badly for these machines is what this fixture could not arrange: ssh
+	// failing does not make the pass fail for them. Deleting the clearing
+	// leaves this test green, and an assertion about it here would be one that
+	// cannot fail. It is still unheld, and saying so beats pretending.
+	_ = due
+}
+
 func TestADueRetryIsActuallyTakenByThePass(t *testing.T) {
 	// The half that matters. Scheduling a retry and skipping the machine
 	// anyway is two correct pieces either side of a decision nothing joins:
