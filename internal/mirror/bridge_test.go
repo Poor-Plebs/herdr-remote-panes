@@ -734,3 +734,39 @@ func TestAnObservedStreamWithNowhereToGoIsGivenUpOnRatherThanWaitedFor(t *testin
 			"this waited for it, which is the pane that sits there for ever")
 	}
 }
+
+func TestAttachAsksToTakeOverAStaleClient(t *testing.T) {
+	// A direct attach is exclusive, and the remote client does not always die
+	// with its SSH channel: a mirror pane that is killed can leave `herdr
+	// terminal attach` running on the far side, and every later attempt to
+	// mirror that terminal fails with "already has an attached client".
+	// --takeover is what evicts it.
+	//
+	// Whether takeover is switched on is tested next door. Whether the flag
+	// reaches the command line was not, and deleting the line that appends it
+	// left every test in this package green -- so what came back was a
+	// terminal that mirrors once and then not again until somebody tidies the
+	// far side by hand.
+	for _, tt := range []struct {
+		what    string
+		setting string
+		want    bool
+	}{
+		{"on when nothing says otherwise", "", true},
+		{"off when turned off", "false", false},
+	} {
+		ssh := recordingSSH(t)
+		t.Setenv(EnvTakeover, tt.setting)
+
+		client := remote.NewWithBin("bot", "hub", "/usr/bin/herdr")
+		_ = attach(client, "term_1")
+
+		sent := ssh.ranOnMachine()
+		if !strings.Contains(sent, "terminal attach") {
+			t.Fatalf("%s: no attach reached the machine:\n%s", tt.what, sent)
+		}
+		if got := strings.Contains(sent, "--takeover"); got != tt.want {
+			t.Errorf("%s: --takeover sent = %v, want %v:\n%s", tt.what, got, tt.want, sent)
+		}
+	}
+}
