@@ -1353,3 +1353,57 @@ func TestAMachineTheDaemonKnowsTakesTheDefaultModesRules(t *testing.T) {
 		})
 	}
 }
+
+func TestAConfiguredMachineCarriesItsLabelIntoTheMenu(t *testing.T) {
+	// The label is what the menu shows for a machine, and what its panes and
+	// its space are named after. Nothing here asserted one: deleting the line
+	// that copies it onto the entry left every test in this package green, and
+	// what comes back is a configured machine listed under nothing.
+	//
+	// The sanitising matters as much as the copying. A label is hand-edited
+	// and reaches a pane's name, its space's name, and the suffix those are
+	// matched against -- an escape that survives is drawn rather than read.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"),
+		[]byte("Host plain\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	cfg := `{"hosts":[` +
+		`{"target":"named","label":"build box"},` +
+		`{"target":"unnamed"},` +
+		`{"target":"escaped","label":"bad\u001b[31mlabel"}` +
+		`]}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	labels := map[string]string{}
+	configured := map[string]bool{}
+	entries, _ := collect()
+	for _, e := range entries {
+		labels[e.Target] = e.Label
+		configured[e.Target] = e.Configured
+	}
+
+	if got := labels["named"]; got != "build box" {
+		t.Errorf("a machine with a label is listed as %q, want %q", got, "build box")
+	}
+	// No label given, so the target stands in: an entry with nothing in it is
+	// a machine nobody can pick out of the list.
+	if got := labels["unnamed"]; got != "unnamed" {
+		t.Errorf("a machine with no label is listed as %q, want its target", got)
+	}
+	if got := labels["escaped"]; strings.ContainsRune(got, 0x1b) {
+		t.Errorf("a hand-edited label reached the menu with an escape in it: %q", got)
+	}
+	if !configured["named"] || configured["plain"] {
+		t.Errorf("configured = %v, want only the machines the plugin config names", configured)
+	}
+}
