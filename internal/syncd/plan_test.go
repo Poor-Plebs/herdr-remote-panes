@@ -1024,6 +1024,54 @@ func TestStatusIsSafeWhileMachinesChange(t *testing.T) {
 	wg.Wait()
 }
 
+func TestAPassPrunesTheMarksLeftBehind(t *testing.T) {
+	// The test below holds what pruning does, including the interval that
+	// stops it running every couple of seconds. What it does not ask is
+	// whether a pass ever prunes at all: it calls maybePrune itself, three
+	// times, and deleting the one call in reconcileOnce broke nothing.
+	//
+	// Without it the marks are never cleared while the daemon runs, which is
+	// the bug the interval work was built on top of: Herdr reuses pane ids, so
+	// a stale ".failed" is eventually read as belonging to whatever lands on
+	// that id next, and a pane somebody deliberately closed gets reopened.
+	withFakeHerdr(t)
+
+	d := New(machineConfig("bot"))
+	// A pass with no machines connected returns before it prunes, so there has
+	// to be one. Without this the test fails against working code, which is a
+	// setup that proves nothing rather than a defect.
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect bot: %s", reply.Message)
+	}
+
+	// Where the marks live, taken from the environment the stand-in set up
+	// rather than guessed at. Written after connecting, so nothing the connect
+	// does can clear it first.
+	marks := filepath.Join(os.Getenv("HERDR_PLUGIN_STATE_DIR"), "panes",
+		os.Getenv("HERDR_SESSION"))
+	if err := os.MkdirAll(marks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A mark for a pane no listing will mention.
+	stale := filepath.Join(marks, "w9-p9.failed")
+	if err := os.WriteFile(stale, []byte("1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Connecting runs a pass of its own, which prunes and starts the interval.
+	// Nought means "never pruned", so the throttle cannot stand in for the
+	// wiring: the interval has its own test below, and this one is about
+	// whether a pass asks to prune at all.
+	d.lastPrune.Store(0)
+
+	d.reconcileOnce()
+
+	if _, err := os.Stat(stale); err == nil {
+		t.Error("a pass left behind a mark for a pane that is not there, so the " +
+			"next pane to land on that id inherits it")
+	}
+}
+
 func TestMarksArePrunedMoreThanOnce(t *testing.T) {
 	// Pruning used to happen once, on the first pane listing after startup.
 	// Every mark dropped later in the session then stayed until the daemon was
