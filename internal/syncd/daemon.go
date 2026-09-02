@@ -491,6 +491,44 @@ func NewWithConfigError(cfg config.Config, configErr error) *Daemon {
 	return d
 }
 
+// restoreConnections brings back the machines a starting daemon should have.
+//
+// Two groups, in this order and not together. First every configured machine
+// that is not disabled, all at once: one at a time, each unreachable one costs
+// its whole connect timeout before the next is even tried, so a couple of them
+// and the machines that are fine are still not back.
+//
+// Then the machines that were connected but are not written down: one picked
+// from ~/.ssh/config never reaches the config file, so the snapshot is the only
+// record that it was there at all.
+//
+// The order is the load-bearing part. rememberedHosts works out what to bring
+// back from what is already connected, so it can only leave out a machine that
+// the first group has by then put into d.hosts. Asking before connecting would
+// name every configured machine that is also remembered, and connect is not
+// free for one already up: it builds a client and makes its whole reachability
+// round trip before it ever looks at d.hosts.
+//
+// Its own function because Run does nothing a test can call: it binds the
+// control socket and then waits for a signal.
+func (d *Daemon) restoreConnections() {
+	var configured []config.Host
+	for _, h := range d.config().Hosts {
+		if !h.Disabled {
+			configured = append(configured, h)
+		}
+	}
+	d.connectEach(configured)
+
+	var remembered []config.Host
+	for _, target := range d.rememberedHosts() {
+		if host, err := d.hostConfig(target); err == nil {
+			remembered = append(remembered, host)
+		}
+	}
+	d.connectEach(remembered)
+}
+
 // rememberedHosts lists machines the snapshot says were connected and that
 // starting up has not already dealt with.
 func (d *Daemon) rememberedHosts() []string {
@@ -560,30 +598,7 @@ func (d *Daemon) Run() error {
 
 	go d.serveControl(listener)
 
-	// Every configured machine at once. One at a time, each unreachable one
-	// costs its whole connect timeout before the next is even tried, so a
-	// couple of them and the machines that are fine are still not back.
-	var configured []config.Host
-	for _, h := range d.config().Hosts {
-		if !h.Disabled {
-			configured = append(configured, h)
-		}
-	}
-	d.connectEach(configured)
-
-	// Then the machines that were connected but are not written down: one
-	// picked from ~/.ssh/config never reaches the config file, so the snapshot
-	// is the only record that it was there at all.
-	//
-	// After the configured ones rather than alongside them, because which
-	// machines are remembered is worked out from which are already connected.
-	var remembered []config.Host
-	for _, target := range d.rememberedHosts() {
-		if host, err := d.hostConfig(target); err == nil {
-			remembered = append(remembered, host)
-		}
-	}
-	d.connectEach(remembered)
+	d.restoreConnections()
 
 	// Herdr stops a plugin's startup process with a signal, and the default
 	// action is to die on the spot: the deferred cleanup above never ran, so

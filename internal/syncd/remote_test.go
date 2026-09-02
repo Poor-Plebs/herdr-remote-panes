@@ -4844,3 +4844,81 @@ func TestDisconnectingClosesTheConnectionAsWell(t *testing.T) {
 			"is a process and a socket that nothing will close now", got)
 	}
 }
+
+// callsTo counts everything said to one machine over ssh.
+func callsTo(t *testing.T, target string) int {
+	t.Helper()
+	n := 0
+	for _, line := range asked(t) {
+		if strings.HasPrefix(strings.TrimSpace(line), target+" | ") {
+			n++
+		}
+	}
+	return n
+}
+
+// TestStartingUpBringsEachMachineBackOnce holds the order the daemon restores
+// in, which is the whole of what Run does that a test could ever check.
+//
+// Run itself binds the control socket and then waits for a signal, so nothing
+// reached any of this: the machines a daemon has after it starts were decided
+// by code no test ran. planSnapshotRestore, which chooses among the remembered
+// ones, is held three ways in plan_test.go -- but it is only ever handed a
+// correct "already connected" set because the configured machines are
+// connected first, and that ordering lived in Run.
+//
+// Connecting twice is not free. connect builds a client and makes its whole
+// reachability round trip before it looks at d.hosts, so a machine that is both
+// configured and remembered would pay for two of them on every daemon start --
+// which is every machine somebody actually uses, since those are the ones the
+// snapshot remembers.
+func TestStartingUpBringsEachMachineBackOnce(t *testing.T) {
+	withFakeHerdr(t)
+	withRemoteHerdrRunning(t, true)
+
+	// Mirroring for everything, including a machine that is not in the config
+	// and inherits this: plain SSH connects without saying anything to the
+	// machine, and a transcript is what the counting below reads.
+	cfg := machineConfig("bot", "old")
+	cfg.Mode = config.ModeAttach
+	cfg.Hosts[1].Disabled = true
+	d := New(cfg)
+
+	// What the last run left behind: a machine that is also in the config, and
+	// one that only the snapshot knows about, as a machine picked out of
+	// ~/.ssh/config is.
+	d.snapshot = snapshot{Hosts: map[string]hostSnapshot{"bot": {}, "ghost": {}}}
+
+	d.restoreConnections()
+
+	for _, want := range []string{"bot", "ghost"} {
+		if _, ok := d.hosts[want]; !ok {
+			t.Errorf("%s was not brought back: %v", want, keysOf(d.hosts))
+		}
+	}
+	if _, ok := d.hosts["old"]; ok {
+		t.Error("a machine disabled in the config was connected at startup")
+	}
+
+	// ghost was connected exactly once, by the second group. bot is in both
+	// groups and must still have been connected once, which is what asking
+	// after connecting buys.
+	ghost := callsTo(t, "ghost")
+	if ghost == 0 {
+		t.Fatal("nothing was said to ghost, so there is nothing to compare against")
+	}
+	if got := callsTo(t, "bot"); got != ghost {
+		t.Errorf("bot was spoken to %d times and ghost %d: a machine in both the "+
+			"config and the snapshot was connected twice", got, ghost)
+	}
+}
+
+// keysOf names what a map holds, for a failure that has to say what was there.
+func keysOf(hosts map[string]*hostSync) []string {
+	out := make([]string, 0, len(hosts))
+	for target := range hosts {
+		out = append(out, target)
+	}
+	sort.Strings(out)
+	return out
+}
