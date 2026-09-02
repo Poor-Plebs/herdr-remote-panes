@@ -2643,6 +2643,42 @@ func TestAnUnlabelledPaneIsNotQueuedForAnotherClose(t *testing.T) {
 	}
 }
 
+func TestAPaneClosedOnTheRetryIsNoLongerListedToClose(t *testing.T) {
+	// The test below holds the dangerous case: the id was reused, so the entry
+	// is dropped without closing anything. This holds the ordinary one, which
+	// nothing did -- the pane is still the pane that was refused, the close
+	// works this time, and the entry has to go.
+	//
+	// Deleting the line that records what was closed left every test here
+	// green, because the other route out of the list covers the case they were
+	// written for. What is left is an entry for a pane that is already gone,
+	// asking to close it again on the next pass.
+	here := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+
+	// Refused last pass, and still the same pane: the label matches, which is
+	// what says the id has not been handed to something else.
+	d.unclosed["w1:p6"] = "build@bot"
+	index := newPaneIndex([]herdrcli.Pane{
+		{PaneID: "w1:p6", WorkspaceID: "w1", Label: "build@bot"},
+	})
+	before := here().Calls["pane close"]
+
+	d.retryUnclosed(index)
+
+	if got := here().Calls["pane close"]; got != before+1 {
+		t.Errorf("the refused pane was closed %d times, want once", got-before)
+	}
+	if label, ok := d.unclosed["w1:p6"]; ok {
+		t.Errorf("a pane that was closed is still listed to close as %q", label)
+	}
+	// And struck from the listing this pass is working from, as every other
+	// close here corrects.
+	if index.alive["w1:p6"] {
+		t.Error("the closed pane is still in the listing the pass reads")
+	}
+}
+
 func TestARecycledPaneIdIsNotClosedByAnOldRefusal(t *testing.T) {
 	// The list of panes to try closing again is a list of ids, and Herdr reuses
 	// ids. A pane that goes by some other route between two passes -- somebody
