@@ -312,7 +312,7 @@ func TestProblemsReportsSettingsThatAreNotSettings(t *testing.T) {
 	  "herdr_bin": "/usr/bin/herdr",
 	  "hosts": [
 	    {"target": "bot", "auto_start": false},
-	    {"target": "ci", "mode": "ssh", "targt": "typo"}
+	    {"target": "ci", "mode": "ssh", "targt": "typo", "auto_start": true}
 	  ]
 	}`
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(raw), 0o600); err != nil {
@@ -343,7 +343,11 @@ func TestProblemsReportsSettingsThatAreNotSettings(t *testing.T) {
 		}
 	}
 
-	// A machine listing the same unknown key twice is said once.
+	// The same unknown key in two machines is said once. Both entries above
+	// carry auto_start for this: with it in only one of them the count could
+	// never reach two, so the check read as though it held the collapsing and
+	// held nothing -- deleting the line that does the collapsing broke no test
+	// at all.
 	if strings.Count(problems, `"hosts[].auto_start"`) > 1 {
 		t.Errorf("the same unknown setting was reported more than once:\n%s", problems)
 	}
