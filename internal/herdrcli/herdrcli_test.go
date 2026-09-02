@@ -756,3 +756,24 @@ func TestDecodeFindsTheReplyWhateverSurroundsIt(t *testing.T) {
 		}
 	}
 }
+
+func TestWhatHerdrSaidOnStandardErrorReachesTheFailure(t *testing.T) {
+	// RunError is tested thoroughly with bytes handed straight to it. Whether
+	// Herdr's own standard error ever reaches it was not, and deleting the
+	// line that captures it left every test in this package green: the command
+	// still fails, and still reports, and what it reports is an exit status
+	// with nothing Herdr said about it.
+	//
+	// A failure that names no reason is a shape this project keeps finding.
+	// The same hole in the mirror left one real mirror.log holding a hundred
+	// and forty-one failures and not one reason among them.
+	fakeHerdr(t, "echo 'that space is not a thing' >&2\nexit 1\n")
+
+	_, err := Run("pane", "list")
+	if err == nil {
+		t.Fatal("a herdr that exited non-zero was reported as success")
+	}
+	if !strings.Contains(err.Error(), "that space is not a thing") {
+		t.Errorf("the failure reads %q, and herdr said why on standard error", err)
+	}
+}
