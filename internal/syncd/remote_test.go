@@ -4343,6 +4343,66 @@ func TestReplacingAPaneSaysWhichPaneItWas(t *testing.T) {
 	}
 }
 
+func TestConnectingAgainPicksUpAModeThatChangedUnderneath(t *testing.T) {
+	// Connecting a machine that is already connected takes the branch that
+	// updates the state in place, and what it updates is the mode: whether
+	// this machine mirrors or is a plain SSH terminal, which seven places read
+	// and which decides what the whole pass does with it.
+	//
+	// Nothing held it. The set-mode tests do not reach this line -- toggling
+	// from the menu disconnects first, so the reconnect builds a fresh state
+	// through the other branch -- and deleting it broke none of them. What is
+	// left is a machine whose config says one thing while the daemon goes on
+	// doing another, until it is disconnected or the daemon is restarted.
+	withFakeHerdr(t)
+	withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.Hosts[0].Label = "before"
+	// The real constructor: a mirroring connect reaches the maps a pass fills
+	// in, which an empty daemon leaves nil.
+	d := New(cfg)
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+	if len(hosts) != 1 || hosts[0].SSHOnly {
+		t.Fatalf("a machine set to mirror reads as ssh-only: %+v", hosts)
+	}
+
+	// The file changed underneath, as editing it and pressing connect does.
+	// Not through set-mode, which disconnects first and so never reaches the
+	// line this is about.
+	ssh := machineConfig("bot")
+	ssh.Hosts[0].Mode = "ssh"
+	ssh.Hosts[0].Label = "after"
+	d.setConfig(ssh)
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connecting again: %s", reply.Message)
+	}
+	hosts = d.dispatch(Command{Cmd: "status"}).Hosts
+	if len(hosts) != 1 {
+		t.Fatalf("status = %+v, want the machine listed", hosts)
+	}
+	if !hosts[0].SSHOnly {
+		t.Error("the config says this machine is a plain SSH terminal and the " +
+			"daemon is still mirroring it")
+	}
+	// The settings beside the mode are updated by their own line, and go
+	// stale the same way: a label is what the machine is called everywhere it
+	// appears.
+	if hosts[0].Label != "after" {
+		t.Errorf("the machine is listed as %q; the config renamed it to %q",
+			hosts[0].Label, "after")
+	}
+	// Not asserted: whether Herdr is there, which is the third line here.
+	// Reaching it needs a machine that gains or loses Herdr between two
+	// connects, which the stand-in cannot do, so that one is still open.
+}
+
 func TestTheConfigIsRereadOnceAndThenLeftAlone(t *testing.T) {
 	// The tests around this one set configStamp by hand before calling --
 	// "as the daemon would have stamped it on the pass that read it" -- so
