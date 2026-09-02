@@ -452,3 +452,47 @@ func TestAnIncludeThatIsSkippedSaysWhy(t *testing.T) {
 		}
 	})
 }
+
+func TestAMachineInTwoIncludedFilesIsOfferedOnce(t *testing.T) {
+	// A host read through an Include is added only if it has not been seen,
+	// and the marking is what makes the second sighting a repeat. Deleting
+	// that marking left every test here green.
+	//
+	// The fuzz target does assert that a host is never offered twice, and ran
+	// a hundred thousand times without finding this: it is handed one file's
+	// contents, and what is missing here is a host arriving from two files.
+	// A fuzzer over a string cannot build a directory of them.
+	//
+	// What it costs is the same machine listed twice in the menu, which reads
+	// as two machines to connect to and picks a different one each time.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, "conf.d")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"10-first":  "Host bot\n  HostName bot.example\n",
+		"20-second": "Host bot\n  HostName bot.example\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(home, "config")
+	if err := os.WriteFile(path, []byte("Include "+dir+"/*\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hosts := hostsFrom(path, 0)
+	offered := 0
+	for _, host := range hosts {
+		if host == "bot" {
+			offered++
+		}
+	}
+	if offered != 1 {
+		t.Errorf("bot is offered %d times from two included files, want once: %v",
+			offered, hosts)
+	}
+}
