@@ -3666,6 +3666,70 @@ func TestAMachineWithoutHerdrIsRecognisedFromTheErrorItself(t *testing.T) {
 	}
 }
 
+func TestAdoptingAMachineClearsTheHusksInItsSpace(t *testing.T) {
+	// The test below holds what closeOrphans does. This holds that anything
+	// calls it: adopting a plain SSH machine is the one path that clears the
+	// husks a Herdr restart left in its space, and deleting the call from it
+	// broke no test at all -- closeOrphans went on passing its own, and the
+	// panes stayed there wearing live names.
+	//
+	// The unit and the wiring, and neither stands in for the other. That gap
+	// has turned up in this package before: a flag that was tested and never
+	// sent, a bound that was pinned and never applied.
+	withFakeHerdr(t)
+	withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	// The real constructor rather than an empty daemon: reconcileHost reaches
+	// the maps a pass fills in, which withConfig on a bare Daemon leaves nil.
+	d := New(cfg)
+
+	host := cfg.Hosts[0]
+	state := newTestHost()
+	state.host = host
+	// The pass gives up its lock for a round trip to the machine, so the
+	// machine has to be there to go to.
+	state.client = remote.NewWithBin(host.Target, cfg.SessionFor(host), cfg.BinFor(host))
+	state.workspaceID = "w1"
+	// A plain SSH machine that has not been adopted: the branch that clears
+	// husks, and the one a Herdr restart leaves a machine in.
+	state.sshOnly = true
+	state.adopted = false
+	// No mirrors, on purpose. Adopting in SSH mode also closes the mirrors the
+	// machine was tracking, since they cannot be kept up in this mode -- so a
+	// tracked pane goes whether or not the husks are cleared, and could not
+	// tell the two apart. With none, the call this test is about is the only
+	// thing here that closes anything.
+
+	// Known to the daemon, as a machine a pass reconciles always is.
+	d.hosts = map[string]*hostSync{host.Target: state}
+
+	index := newPaneIndex([]herdrcli.Pane{
+		// A husk: wearing this machine's name with no mirror behind it.
+		{PaneID: "w1:p1", WorkspaceID: "w1", Label: "shell@bot"},
+		// Somebody else's pane in the same space, to be left alone.
+		{PaneID: "w1:p3", WorkspaceID: "w1", Label: "notes"},
+	})
+
+	// Held, as the pass holds it.
+	d.mu.Lock()
+	err := d.reconcileHost(state, index)
+	d.mu.Unlock()
+	if err != nil {
+		t.Fatalf("reconciling an unadopted ssh machine: %v", err)
+	}
+
+	if index.alive["w1:p1"] {
+		t.Error("adopting the machine left a husk wearing its name in its space")
+	}
+	if !index.alive["w1:p3"] {
+		t.Error("a pane that is not this machine's was closed as one of its husks")
+	}
+	if !state.adopted {
+		t.Error("the machine was not marked adopted, so this would run every pass")
+	}
+}
+
 func TestLeftoverPanesAreClosedWithoutAskingWhereTheSpaceIs(t *testing.T) {
 	// Panes wearing a machine's name with no mirror behind them are husks a
 	// Herdr restart left in its space. Nothing had ever called the thing that
