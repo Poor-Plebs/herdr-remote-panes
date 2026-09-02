@@ -802,3 +802,44 @@ func TestWhatHerdrSaidOnStandardErrorReachesTheFailure(t *testing.T) {
 		t.Errorf("the failure reads %q, and herdr said why on standard error", err)
 	}
 }
+
+// TestALineThatDidNotParseIsNotTakenAsTheResponse holds the skip that keeps a
+// half-decoded envelope out of the answer.
+//
+// Decode reads the output line by line because Herdr prints notices around its
+// JSON. A line that is not JSON at all costs nothing to skip: json.Unmarshal
+// validates the whole document before it decodes any of it, so a truncated or
+// malformed line leaves the envelope untouched and the check below would catch
+// it anyway.
+//
+// A line that is valid JSON of the wrong shape is the case that needs the
+// skip. Validation passes, decoding runs until it reaches the bad field, and
+// by then Result is set and the error pointer is allocated -- so the envelope
+// looks answered even though Unmarshal returned an error. Taken as the
+// response, it becomes an APIError carrying an empty code and an empty
+// message: "herdr plugin pane open: : ", a failure that names nothing, in
+// place of one quoting what actually came back.
+//
+// Not hypothetical either. An error field that is a string rather than an
+// object is what a Herdr speaking an older or newer protocol looks like from
+// here, which is the shape parseOpenedPane is already careful about.
+func TestALineThatDidNotParseIsNotTakenAsTheResponse(t *testing.T) {
+	out := `{"result":{"pane":{"pane_id":"w1:p2"}},"error":"a string, not an object"}`
+
+	result, err := Decode([]byte(out), []string{"plugin", "pane", "open"})
+	if err == nil {
+		t.Fatalf("a response that could not be parsed was read as a success: %s", result)
+	}
+
+	var api *APIError
+	if errors.As(err, &api) && api.Code == "" {
+		t.Errorf("reported as an API failure that names nothing: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "unreadable response") {
+		t.Errorf("the error does not say the response could not be read: %q", err.Error())
+	}
+	// What makes it diagnosable: the output itself travels with the failure.
+	if !strings.Contains(err.Error(), "a string, not an object") {
+		t.Errorf("the failure does not carry what came back: %q", err.Error())
+	}
+}
