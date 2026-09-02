@@ -700,3 +700,37 @@ func TestDecliningTheQuestionLeavesTheTerminalsAlone(t *testing.T) {
 		t.Errorf("the question was declined and the mode was changed anyway: %v", got.modes)
 	}
 }
+
+// TestAMachineOnlyTheDaemonKnowsCarriesItsLabelToo holds the same copy as
+// TestAConfiguredMachineCarriesItsLabelIntoTheMenu, for the row that has no
+// config entry behind it.
+//
+// This is the third kind of machine in the menu: one connected by a name
+// somebody selected, in neither the plugin config nor ~/.ssh/config, kept
+// listed for as long as it is connected because this is the screen that
+// disconnects it. A configured machine takes its label from the config, and
+// that copy is held. This one has no entry to take it from, so the daemon's
+// listing is the only place its name exists at all.
+//
+// Without the copy the row falls back to the target, which for this kind of
+// machine is an address somebody typed once -- so the menu offers "10.0.0.7"
+// where the machine is called buildbox, and the one row whose name cannot be
+// recovered from a file on disk is the one that loses it.
+func TestAMachineOnlyTheDaemonKnowsCarriesItsLabelToo(t *testing.T) {
+	connected := &syncd.Reply{OK: true, Hosts: []syncd.HostInfo{
+		{Target: "10.0.0.7", Label: "buildbox", Connected: true, Mirrors: 1},
+	}}
+
+	got := runMenuRefusing(t, "Host alpha\n", "", "q", nil, connected)
+	drawn := visible(got.drawn)
+
+	// The machine reached the menu at all, or what follows is about a row that
+	// was never drawn.
+	if !strings.Contains(drawn, "10.0.0.7") {
+		t.Fatalf("the connected machine is not in the menu at all:\n%s", drawn)
+	}
+	if !strings.Contains(drawn, "buildbox") {
+		t.Errorf("a machine only the daemon knows is listed under its address and "+
+			"not the name it was given:\n%s", drawn)
+	}
+}
