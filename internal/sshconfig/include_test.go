@@ -496,3 +496,45 @@ func TestAMachineInTwoIncludedFilesIsOfferedOnce(t *testing.T) {
 			offered, hosts)
 	}
 }
+
+func TestAnIncludeThatWillNotExpandSaysWhy(t *testing.T) {
+	// An Include whose pattern cannot be parsed expands to nothing, and
+	// nothing is also what a config with no machines in it looks like. Keeping
+	// those two apart is what this package is for: a config that is skipped
+	// must not also be pronounced fine, or somebody stares at an empty menu
+	// with nothing anywhere saying why.
+	//
+	// Nothing held the recording. Deleting the line that notes the reason left
+	// every test here green -- the machines still go missing, and Unreadable,
+	// which is what the menu shows and what the troubleshooting page tells
+	// somebody to go and read, has nothing to say about them.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A bracket a glob cannot close, which filepath.Glob answers with a syntax
+	// error rather than with no matches.
+	body := "Host before\nInclude " + dir + "/[\n"
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hosts := Hosts()
+	why := Unreadable()
+
+	if why == "" {
+		t.Fatal("an Include that could not be expanded was passed over in silence")
+	}
+	// Not asserted here: that the reason names the pattern. note() puts the
+	// path in front of every reason itself, so looking for it can never fail
+	// while note is called at all -- it would say nothing the line above has
+	// not already said. Replacing the glob's own words with "unusable" passes
+	// either way, and is a wording choice rather than a defect.
+	// The machines written beside it still read: one bad pattern is not a
+	// reason to lose them.
+	if len(hosts) != 1 || hosts[0] != "before" {
+		t.Errorf("got %v, want the machine written beside the bad include", hosts)
+	}
+}
