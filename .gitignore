@@ -9,6 +9,7 @@
 # the tests for that tool were being written, which is how the gap was noticed:
 # two of the three were covered and the reason applies to all of them.
 /bounds
+/deletions
 /herdrcheck
 
 # `go build .` from here writes this, and once got as far as a tagged release

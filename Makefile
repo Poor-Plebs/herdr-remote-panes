@@ -13,7 +13,7 @@ STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
 # known when it was pinned.
 GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@latest
 
-.PHONY: check fmt vet lint test build mutants vuln herdr bounds clean
+.PHONY: check fmt vet lint test build mutants deletions vuln herdr bounds clean
 
 ## check: everything CI does, in the order it does it
 check: fmt vet lint test build
