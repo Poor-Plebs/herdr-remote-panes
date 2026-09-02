@@ -265,14 +265,11 @@ func sweep(path, original string, lines []string, i int, root, pkg string, limit
 	if err := os.WriteFile(path, []byte(withoutLine(lines, i)), 0o644); err != nil {
 		return "would not build"
 	}
-	if exec.Command("go", "build", pkg).Run() != nil {
+	if buildCmd(root, pkg).Run() != nil {
 		return "would not build"
 	}
 
-	cmd := exec.Command("systemd-run", "--user", "--scope", "-q",
-		"-p", "MemoryMax="+memoryCeiling, "-p", "MemorySwapMax=0",
-		"go", "test", pkg, "-count=1")
-	cmd.Dir = root
+	cmd := testCmd(root, pkg)
 	done := make(chan struct{})
 	var out []byte
 	var failed bool
@@ -289,6 +286,31 @@ func sweep(path, original string, lines []string, i int, root, pkg string, limit
 		<-done
 		return verdictFor(string(out), failed, true)
 	}
+}
+
+// buildCmd compiles the package in the tree being swept.
+//
+// In that tree and not this one. The deletion is written into the copy, so a
+// build run anywhere else compiles source nothing has touched and answers for
+// the wrong file -- it says every deletion compiles, including the ones that
+// do not, and the run reports on a tree it never changed.
+func buildCmd(root, pkg string) *exec.Cmd {
+	cmd := exec.Command("go", "build", pkg)
+	cmd.Dir = root
+	return cmd
+}
+
+// testCmd runs one package's tests in the tree being swept, under the ceiling.
+//
+// -count=1 because a cached result is a pass reporting on the file as it was
+// before the deletion, which is the answer this whole tool is trying not to
+// give.
+func testCmd(root, pkg string) *exec.Cmd {
+	cmd := exec.Command("systemd-run", "--user", "--scope", "-q",
+		"-p", "MemoryMax="+memoryCeiling, "-p", "MemorySwapMax=0",
+		"go", "test", pkg, "-count=1")
+	cmd.Dir = root
+	return cmd
 }
 
 // withoutLine is the file with one line taken out of it.

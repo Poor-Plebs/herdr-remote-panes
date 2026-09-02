@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -128,5 +129,47 @@ func TestALineIsTakenOutWithoutDisturbingTheRest(t *testing.T) {
 	if strings.Count(got, "\n") != strings.Count(source, "\n")-1 {
 		t.Errorf("the file lost %d lines, want one",
 			strings.Count(source, "\n")-strings.Count(got, "\n"))
+	}
+}
+
+// TestBothCommandsRunInTheTreeBeingSwept holds what -root is for.
+//
+// The deletion is written into the tree named by -root. A command run anywhere
+// else answers for a file nothing has touched: the build says every deletion
+// compiles, including the ones that do not, and the tests pass because they are
+// testing source that was never changed. The run reports on a tree it never
+// altered, and the tree it did alter is somebody's working copy.
+//
+// The build was doing exactly that. It set no directory at all, so with -root
+// it compiled the real tree while the deletion sat in the copy.
+func TestBothCommandsRunInTheTreeBeingSwept(t *testing.T) {
+	const root, pkg = "/tmp/sweep", "./internal/capped/"
+
+	build := buildCmd(root, pkg)
+	if build.Dir != root {
+		t.Errorf("the build runs in %q, want the tree being swept, %q", build.Dir, root)
+	}
+	if !slices.Contains(build.Args, pkg) {
+		t.Errorf("the build does not name the package: %v", build.Args)
+	}
+
+	run := testCmd(root, pkg)
+	if run.Dir != root {
+		t.Errorf("the tests run in %q, want the tree being swept, %q", run.Dir, root)
+	}
+	if !slices.Contains(run.Args, "-count=1") {
+		t.Errorf("no -count=1, so a cached pass can answer for the file as it was "+
+			"before the deletion: %v", run.Args)
+	}
+	if !slices.Contains(run.Args, "MemoryMax="+memoryCeiling) {
+		t.Errorf("no memory ceiling, and a deleted loop increment takes the machine "+
+			"rather than the run: %v", run.Args)
+	}
+	if !slices.Contains(run.Args, "MemorySwapMax=0") {
+		t.Errorf("memory is capped and swap is not, so a runaway grinds instead of "+
+			"failing: %v", run.Args)
+	}
+	if !strings.Contains(strings.Join(run.Args, " "), "go test") {
+		t.Errorf("this does not run the tests at all: %v", run.Args)
 	}
 }
