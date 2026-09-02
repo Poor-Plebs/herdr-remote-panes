@@ -736,3 +736,64 @@ func TestAReconnectDoesNotFinishTheLastStreamsSentence(t *testing.T) {
 		t.Error("the abandon happens after the stream it is meant to precede")
 	}
 }
+
+// TestAMirrorThatCouldNotStartSaysSoWhereItCanBeRead holds the one decision in
+// Run.
+//
+// Run is the mirror's entire entry point and had no coverage at all, so what a
+// pane does when its bridge fails was settled by code no test ran.
+// shouldReportFailure, which decides whether an exit is worth reporting, is
+// held three separate ways in this package -- a table of errors, a case in
+// bridge_test.go, and the deliberate-close case. None of them reaches the call
+// it guards.
+//
+// The reporting is not a nicety. Herdr does not capture a pane process's
+// stderr and closes the pane the moment its command exits, so a mirror that
+// cannot start leaves nothing behind but an exit status nobody sees. The log
+// written here is what the troubleshooting page tells people to read.
+func TestAMirrorThatCouldNotStartSaysSoWhereItCanBeRead(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("HERDR_PANE_ID", "w1:p2")
+	t.Setenv(EnvTarget, "bot")
+	t.Setenv(EnvTerminal, "build")
+	// Nothing on the path, so there is no ssh and the bridge fails at once
+	// rather than waiting out a connection.
+	t.Setenv("PATH", dir)
+
+	// The pane is held open afterwards so somebody can read the message. A
+	// test is not somebody, and five seconds of the suite is a real cost.
+	saved := holdOpen
+	holdOpen = time.Millisecond
+	t.Cleanup(func() { holdOpen = saved })
+
+	// The message also goes to the pane, which here is the test's own output.
+	quiet, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer quiet.Close()
+	savedOut := os.Stdout
+	os.Stdout = quiet
+	runErr := Run()
+	os.Stdout = savedOut
+
+	// The bridge really did fail, or what follows is about a mirror that
+	// worked and had nothing to report.
+	if runErr == nil {
+		t.Fatal("a bridge with no ssh on the path should have failed")
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "mirror.log"))
+	if err != nil {
+		t.Fatalf("a mirror that could not start wrote nothing to mirror.log, "+
+			"which is where somebody is sent to find out why: %v", err)
+	}
+	got := string(raw)
+	if !strings.Contains(got, "build") {
+		t.Errorf("the entry does not say which terminal it was: %q", got)
+	}
+	if !strings.Contains(got, "not reachable") {
+		t.Errorf("the entry does not say what went wrong: %q", got)
+	}
+}
