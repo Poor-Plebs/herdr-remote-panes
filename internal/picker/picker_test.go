@@ -1407,3 +1407,56 @@ func TestAConfiguredMachineCarriesItsLabelIntoTheMenu(t *testing.T) {
 		t.Errorf("configured = %v, want only the machines the plugin config names", configured)
 	}
 }
+
+// TestAPasteEndsAtTheMarkerAndNowhereElse holds the two lines that put the
+// end-marker scan back when a byte does not continue it.
+//
+// The scan keeps a count of how much of ESC [ 201 ~ it has seen. One line
+// restarts that count at 1 for a byte that could begin the marker afresh, and
+// one clears it for a byte that could not. TestAPasteContainingEscapesIsStill
+// Swallowed already covers a paste holding an escape, but its decoys either
+// continue the marker or fail on their first byte, so the count is never put
+// back from halfway. Removing either line leaves that test passing, and
+// FuzzAPasteNeverPressesAnything passing with it.
+//
+// They fail in opposite directions and both are the menu acting on text.
+// Without the restart the real marker is missed while a partial match is in
+// hand, and the swallow runs on past the paste into whatever was typed next.
+// Without the clear, a stretch of pasted text that merely ends like the marker
+// finishes the paste early, and the rest of what was pasted arrives as
+// keypresses -- which in this menu is not typing: d disconnects the machine
+// under the cursor and a digit connects to one.
+func TestAPasteEndsAtTheMarkerAndNowhereElse(t *testing.T) {
+	const start, end = "\x1b[200~", "\x1b[201~"
+
+	for _, tt := range []struct{ what, paste, after string }{
+		{
+			// The count is at two when the marker itself arrives.
+			"a paste whose last bytes are half of an escape",
+			"hello\x1b[",
+			"d",
+		},
+		{
+			// A real escape, then a byte that continues nothing, then bytes
+			// that would complete the marker if the count had not been cleared.
+			"a paste holding something that only ends like the marker",
+			"\x1bX[201~and more pasted text, d included",
+			"q",
+		},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			r := strings.NewReader(start + tt.paste + end + tt.after)
+			if got := parseKey(r); got != keyNone {
+				t.Errorf("a paste registered as %v, want nothing pressed", got)
+			}
+			rest, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(rest) != tt.after {
+				t.Errorf("the paste ended with %q still to read, want %q: the swallow "+
+					"stopped in the wrong place", rest, tt.after)
+			}
+		})
+	}
+}
