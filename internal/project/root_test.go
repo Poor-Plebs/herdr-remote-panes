@@ -235,3 +235,47 @@ func TestOnlyAWholePageAboutSomethingUnbuiltCounts(t *testing.T) {
 		t.Error("a page declaring itself a plan is being read as documentation")
 	}
 }
+
+func TestPagesAreSeparatedEvenWhenOneDoesNotEndInANewline(t *testing.T) {
+	// DocsText hands every page to whatever is searching it as one string, and
+	// nine files in this repository ask questions of that string. The pages
+	// are joined with a newline of their own so the last line of one cannot
+	// run into the first line of the next.
+	//
+	// Nothing held that. Every page here happens to end with a newline, so
+	// deleting the join changes nothing today -- which is what makes it worth
+	// writing down rather than leaving. The first page added without one turns
+	// the next page's heading into the tail of somebody else's sentence, and
+	// every question asked of this string is a Contains, which still matches a
+	// heading glued to the end of a line. Nothing would fail; the docs would
+	// just quietly stop having a heading there.
+	//
+	// Against a repository of its own, since the point is a page this one does
+	// not have.
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"go.mod": "module probe\n\ngo 1.25\n",
+		// Deliberately without a trailing newline.
+		"README.md":               "# Readme\n\nthe last line of the readme",
+		"docs/troubleshooting.md": "# When something looks wrong\n\nnot much\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(dir)
+
+	text, err := DocsText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "\n# When something looks wrong") {
+		t.Errorf("the second page's heading does not start a line:\n%q", text)
+	}
+	if strings.Contains(text, "readme# When something looks wrong") {
+		t.Errorf("one page's last line ran into the next page's heading:\n%q", text)
+	}
+}
