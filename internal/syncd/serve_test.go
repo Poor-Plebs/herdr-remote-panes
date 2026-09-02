@@ -338,3 +338,46 @@ func TestHerdrBeingAwayIsSaidOnceRatherThanEveryPass(t *testing.T) {
 		t.Errorf("recovery was reported %d times", n)
 	}
 }
+
+// TestTheWaitBetweenAcceptsStopsGrowing holds the ceiling on that wait.
+//
+// TestAFailingAcceptWaitsBetweenTriesRatherThanSpinning holds the floor, by
+// counting attempts and refusing thousands of them. This is the same
+// measurement in the other direction. The delay doubles after every failure,
+// and the ceiling is what stops it doubling for ever: without it the wait runs
+// away -- 5ms, 10, 20, and on past a minute -- on a socket the daemon is
+// supposed to be retrying.
+//
+// Two things go wrong together. A failure that clears is not noticed until the
+// sleep it is inside ends, so a burst of too many open files that passes in a
+// second can leave the daemon unreachable for minutes. And the giving-up line,
+// which is the one thing that tells somebody the daemon is up and cannot be
+// reached, is only reached between sleeps, so it arrives long after the grace
+// period it names.
+//
+// Measured over this grace with this listener: 238 attempts with the ceiling
+// and 10 without. The bound below is loose for the reason the floor's bound is
+// loose -- what it has to tell apart is a bounded wait from a runaway one, and
+// a slow machine must not make it fail.
+func TestTheWaitBetweenAcceptsStopsGrowing(t *testing.T) {
+	shortRetries(t, 500*time.Millisecond)
+	captureLog(t)
+
+	listener := &scriptedListener{steps: []step{{err: tempError{}}}}
+	d := New(machineConfig("bot"))
+
+	done := make(chan struct{})
+	go func() { d.serveControl(listener); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("serveControl never gave up on a failure that does not clear")
+	}
+
+	if n := listener.calls(); n < 40 {
+		t.Errorf("accept was tried %d times in %s: with the wait bounded it is "+
+			"hundreds, so this is a delay doubling with nothing to stop it, and a "+
+			"daemon asleep on a socket it is meant to be retrying",
+			n, 500*time.Millisecond)
+	}
+}
