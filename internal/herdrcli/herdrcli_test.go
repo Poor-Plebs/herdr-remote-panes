@@ -74,6 +74,31 @@ func TestParseOpenedPane(t *testing.T) {
 	if _, err := parseOpenedPane([]byte(`{"type":"plugin_pane_opened"}`)); err == nil {
 		t.Error("a response without a pane id must be an error, not an empty pane")
 	}
+
+	// The other level, which Herdr 0.8.2 does not send and which this reads
+	// anyway. Nothing held it: deleting the fallback left every test here
+	// green, because the shape it is for is not among them.
+	//
+	// It is the shape reading the wrong level would have wanted, and getting
+	// that wrong once already made the daemon reopen a pane on every reconcile
+	// tick. What version sends which is Herdr's to change, so being able to
+	// read both is the point rather than an accident.
+	bare := `{"type":"plugin_pane_opened","pane":{"pane_id":"w1:p3","terminal_id":"term_c"}}`
+	pane, err = parseOpenedPane([]byte(bare))
+	if err != nil {
+		t.Fatalf("a pane at the top level: %v", err)
+	}
+	if pane.PaneID != "w1:p3" {
+		t.Errorf("top-level pane id = %q, want w1:p3", pane.PaneID)
+	}
+	if pane.TerminalID != "term_c" {
+		t.Errorf("top-level terminal id = %q, want term_c", pane.TerminalID)
+	}
+	// Not asserted: which of the two wins when a reply carries both. Swapping
+	// that order passes, and it should -- the recording of what Herdr 0.8.2
+	// really sends has the nested one and no top-level pane beside it, so a
+	// case with both would be a reply nothing sends and an order nothing
+	// depends on.
 }
 
 func TestAgentState(t *testing.T) {
