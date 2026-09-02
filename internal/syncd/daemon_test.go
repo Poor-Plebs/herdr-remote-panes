@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/mirror"
 )
 
 func newTestHost() *hostSync {
@@ -160,11 +161,29 @@ func TestForgetPaneClearsMirrorBookkeeping(t *testing.T) {
 	// in the SSH path would ever revisit, so they would sit in its space as
 	// dead panes wearing live names.
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
 
 	state := newTestHost()
 	state.mirrors["t1"] = "w1:p2"
 	state.labels["w1:p2"] = "build@bot"
 	state.reportedAgents["w1:p2"] = agentReport{agent: "claude", state: "idle"}
+
+	// The marks the mirror keeps on disk are bookkeeping about a pane too, and
+	// this asked only about the maps in memory: deleting either clearing call
+	// left it green. They matter more than the maps, because they outlive the
+	// daemon. A stale live mark stops the next daemon reopening a pane it
+	// should, and a stale failure puts a reason on a pane that never failed.
+	//
+	// One for the pane being forgotten, one for the pane beside it.
+	for _, paneID := range []string{"w1:p2", "w1:p3"} {
+		mirrorIsRunning(t, paneID, "t-"+paneID)
+		if err := mirror.MarkFailed(paneID, "could not reach bot"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !mirror.IsLive("w1:p2") || !mirror.Failed("w1:p2") {
+		t.Fatal("the marks were never written, so clearing them would prove nothing")
+	}
 
 	// Which panes have been considered for moving is the daemon's record, not
 	// a machine's: a pane belongs to one machine at most.
@@ -175,6 +194,17 @@ func TestForgetPaneClearsMirrorBookkeeping(t *testing.T) {
 	if len(state.mirrors) != 0 || len(state.labels) != 0 || len(state.reportedAgents) != 0 {
 		t.Errorf("bookkeeping survived: mirrors=%v labels=%v agents=%v",
 			state.mirrors, state.labels, state.reportedAgents)
+	}
+	if mirror.IsLive("w1:p2") {
+		t.Error("a pane that is gone is still marked as having a mirror running")
+	}
+	if mirror.Failed("w1:p2") {
+		t.Errorf("a pane that is gone still carries a failure: %q",
+			mirror.FailureReason("w1:p2"))
+	}
+	// And the pane beside it keeps both, since forgetting is about one pane.
+	if !mirror.IsLive("w1:p3") || !mirror.Failed("w1:p3") {
+		t.Error("forgetting one pane cleared another pane's marks")
 	}
 }
 
