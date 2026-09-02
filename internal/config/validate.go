@@ -118,8 +118,17 @@ func (c Config) Problems() []string {
 			problems = append(problems, err.Error())
 		}
 		if seen[host.Target] {
+			// Not "the last entry counts", which is what this said and is not
+			// what happens. Nothing merges the entries, so each reader picks
+			// one for itself: the daemon reaches the machine under the first,
+			// because hostConfig returns the first target that matches, while
+			// the menu draws the last, because it overwrites the row it
+			// already has for that target. Telling somebody the last one wins
+			// sends them to edit the entry that does not decide how their
+			// machine is reached.
 			problems = append(problems, fmt.Sprintf(
-				"host %q is listed more than once; only the last entry counts", host.Target))
+				"host %q is listed more than once; it is reached using the first entry "+
+					"and shown in the menu from the last, so remove one", host.Target))
 		}
 		seen[host.Target] = true
 

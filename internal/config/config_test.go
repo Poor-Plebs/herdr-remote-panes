@@ -851,3 +851,54 @@ func TestAMachineOverrideThatChangesNothingSaysSo(t *testing.T) {
 		t.Error("a machine with nothing of its own was given a line")
 	}
 }
+
+// TestTheModeIsWrittenToTheEntryTheMachineIsReachedUnder holds SetHostMode to
+// the entry that decides anything.
+//
+// A target written twice is warned about, not merged and not rejected, so each
+// reader picks one: the daemon reaches the machine under the first, because
+// hostConfig returns the first match, and the menu draws the last, because it
+// overwrites the row it already has. Writing the mode anywhere but the first
+// would be a toggle that saves the file and leaves the machine reached exactly
+// as it was.
+//
+// The order here is load-bearing rather than incidental, which is easy to miss:
+// walking the list backwards passes every other test in this file.
+func TestTheModeIsWrittenToTheEntryTheMachineIsReachedUnder(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+
+	written := `{"hosts":[{"target":"bot"},{"target":"bot","mode":"observe"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(written), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both entries survive loading, or this is about a duplicate that was
+	// quietly merged away before anything below ran.
+	before, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(before.Hosts) != 2 {
+		t.Fatalf("hosts = %+v, want both entries kept", before.Hosts)
+	}
+	if before.EffectiveMode(before.Hosts[0]) == before.EffectiveMode(before.Hosts[1]) {
+		t.Fatalf("both entries already mean the same thing, so nothing here is tested: %+v", before.Hosts)
+	}
+
+	if _, err := SetHostMode("bot", ModeAttach); err != nil {
+		t.Fatalf("SetHostMode: %v", err)
+	}
+
+	reloaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(reloaded.Hosts) != 2 {
+		t.Fatalf("hosts = %+v, want the duplicate left as it was found", reloaded.Hosts)
+	}
+	if first := reloaded.Hosts[0]; first.Mode != ModeAttach {
+		t.Errorf("the first entry is %+v, want attach: the mode was written where "+
+			"hostConfig will not read it, so the machine is reached as it was before", first)
+	}
+}

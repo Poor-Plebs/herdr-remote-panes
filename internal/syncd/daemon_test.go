@@ -697,3 +697,49 @@ func TestAMachineLetGoOfMidCallIsNoLongerThisPassToDecide(t *testing.T) {
 		}
 	})
 }
+
+// TestADuplicateIsWarnedAboutInTheTermsItActuallyBehavesIn ties the warning to
+// the behaviour it describes.
+//
+// A target written twice is not merged and not rejected, so every reader
+// chooses one for itself. This one -- hostConfig, which decides how the
+// machine is reached and what mode it is operated in -- takes the first match.
+// The menu takes the last, because it overwrites the row it already holds for
+// a target.
+//
+// The warning used to say "only the last entry counts", which reads as advice
+// and sends somebody to edit the entry that does not decide how their machine
+// is reached. A message about what happens is only worth having while it is
+// still true, so it is checked here against the thing it is about rather than
+// against itself in the package it is written in.
+func TestADuplicateIsWarnedAboutInTheTermsItActuallyBehavesIn(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{
+		{Target: "bot"},
+		{Target: "bot", Mode: config.ModeObserve},
+	}
+	d := withConfig(&Daemon{}, cfg)
+
+	// The two entries have to disagree, or which one is picked says nothing.
+	if cfg.EffectiveMode(cfg.Hosts[0]) == cfg.EffectiveMode(cfg.Hosts[1]) {
+		t.Fatalf("both entries mean the same thing: %+v", cfg.Hosts)
+	}
+
+	host, err := d.hostConfig("bot")
+	if err != nil {
+		t.Fatalf("hostConfig: %v", err)
+	}
+	if got := cfg.EffectiveMode(host); got != cfg.EffectiveMode(cfg.Hosts[0]) {
+		t.Errorf("the machine is reached in %q mode, and the warning says the first "+
+			"entry decides, which is %q", got, cfg.EffectiveMode(cfg.Hosts[0]))
+	}
+
+	warning := strings.Join(d.config().Problems(), "\n")
+	if !strings.Contains(warning, "listed more than once") {
+		t.Fatalf("nothing warned that bot is listed twice: %q", warning)
+	}
+	if !strings.Contains(warning, "first entry") {
+		t.Errorf("the warning does not say which entry the machine is reached "+
+			"under, which is the one thing somebody needs from it: %q", warning)
+	}
+}
