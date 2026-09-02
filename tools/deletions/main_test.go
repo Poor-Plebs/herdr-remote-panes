@@ -173,3 +173,41 @@ func TestBothCommandsRunInTheTreeBeingSwept(t *testing.T) {
 		t.Errorf("this does not run the tests at all: %v", run.Args)
 	}
 }
+
+// TestTheWorkIsCountedBeforeAnyOfItIsDone holds the pass that makes a long run
+// legible.
+//
+// The count is what "12/300, about 40m left" is measured against, so it has to
+// be the same set the sweep then walks -- a count that includes what the sweep
+// skips reports a run that never finishes, and one that misses candidates
+// reports a run that overshoots its own total.
+func TestTheWorkIsCountedBeforeAnyOfItIsDone(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	// Two identical lines in one file: neither is offered, because a report
+	// naming one of them could not say which.
+	code := write("code.go", "package p\n\nfunc F(s *S) {\n\ts.Stop()\n\ts.n = 1\n\ts.n = 1\n\treturn\n}\n")
+	// A test file, which the sweep does not ask about at all.
+	write("code_test.go", "package p\n\nfunc TestF(t *testing.T) {\n\ts.Stop()\n}\n")
+
+	got, err := candidatesIn([]string{code, filepath.Join(dir, "code_test.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, c := range got {
+		if c.path != code {
+			t.Errorf("candidate from %s; only non-test files are swept", c.path)
+		}
+		lines = append(lines, strings.TrimSpace(c.lines[c.at]))
+	}
+	if want := []string{"s.Stop()"}; !slices.Equal(lines, want) {
+		t.Errorf("offered %v, want %v", lines, want)
+	}
+}

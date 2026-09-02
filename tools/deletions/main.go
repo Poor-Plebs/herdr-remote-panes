@@ -201,34 +201,35 @@ func main() {
 		os.Exit(2)
 	}
 
+	todo, err := candidatesIn(entries)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	fmt.Printf("%d statements to try in %s\n", len(todo), pkg)
+
 	counts := map[string]int{}
 	var loose, hung []string
-	for _, path := range entries {
-		if strings.HasSuffix(path, "_test.go") {
-			continue
+	started, lastReport := time.Now(), time.Now()
+	for i, c := range todo {
+		verdict := sweep(c.path, c.original, c.lines, c.at, *root, pkg, limit)
+		counts[verdict]++
+		where := fmt.Sprintf("%s:%d  %s", c.path, c.at+1, strings.TrimSpace(c.lines[c.at]))
+		switch verdict {
+		case "SURVIVED":
+			loose = append(loose, where)
+		case "hung":
+			hung = append(hung, where)
 		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(2)
-		}
-		original := string(raw)
-		lines := strings.Split(original, "\n")
-		for i, line := range lines {
-			// Only where the line is the one it says it is: two identical
-			// lines in a file would make the report point at either.
-			if !deletable(line) || strings.Count(original, line+"\n") != 1 {
-				continue
-			}
-			verdict := sweep(path, original, lines, i, *root, pkg, limit)
-			counts[verdict]++
-			where := fmt.Sprintf("%s:%d  %s", path, i+1, strings.TrimSpace(line))
-			switch verdict {
-			case "SURVIVED":
-				loose = append(loose, where)
-			case "hung":
-				hung = append(hung, where)
-			}
+		// Every 25, or every minute, whichever comes first. A sweep of the
+		// daemon is one build and one test run per statement for three hundred
+		// statements, and silence from something that is working reads exactly
+		// like silence from something that is stuck.
+		if n := i + 1; n%25 == 0 || time.Since(lastReport) >= time.Minute {
+			lastReport = time.Now()
+			left := time.Duration(float64(time.Since(started)) / float64(n) * float64(len(todo)-n))
+			fmt.Printf("... %d/%d, %d survived, about %s left\n",
+				n, len(todo), counts["SURVIVED"], left.Round(time.Second))
 		}
 	}
 
@@ -286,6 +287,47 @@ func sweep(path, original string, lines []string, i int, root, pkg string, limit
 		<-done
 		return verdictFor(string(out), failed, true)
 	}
+}
+
+// candidate is one statement the sweep will try, and the file it lives in.
+type candidate struct {
+	path     string
+	original string
+	lines    []string
+	at       int
+}
+
+// candidatesIn is every statement worth deleting in these files, in the order
+// they will be tried.
+//
+// Gathered before any of them is tried, so the run can say how far along it is
+// and how long is left. Counting them costs one read of each file against
+// hours of building and testing, and the alternative is a sweep that says
+// nothing until it is finished.
+//
+// Test files are left out: what a test does to itself is not what this asks
+// about. A line that appears twice in its file is left out as well, since the
+// report could not say which of them it meant.
+func candidatesIn(paths []string) ([]candidate, error) {
+	var out []candidate
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		original := string(raw)
+		lines := strings.Split(original, "\n")
+		for i, line := range lines {
+			if !deletable(line) || strings.Count(original, line+"\n") != 1 {
+				continue
+			}
+			out = append(out, candidate{path: path, original: original, lines: lines, at: i})
+		}
+	}
+	return out, nil
 }
 
 // buildCmd compiles the package in the tree being swept.
