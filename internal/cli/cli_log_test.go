@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/version"
 )
 
@@ -259,5 +261,71 @@ func TestTheDaemonLogRollsOverAtTwoHundredAndFiftySixKilobytes(t *testing.T) {
 				"want %v (the log is now %d bytes)",
 				tt.what, tt.fill, rolled, tt.rolled, info.Size())
 		}
+	}
+}
+
+func TestTheDaemonRunsOnDefaultsWhenTheConfigCannotBeRead(t *testing.T) {
+	// The daemon says "continuing with defaults" and then has to be running on
+	// them. Without the line that puts them there it carries on with the zero
+	// value instead: no session name, no poll interval, no label format -- and
+	// the message it just printed is untrue.
+	//
+	// This was unreachable from a test until the load was lifted out of run,
+	// which ends in the daemon's own Run and does not return. That is why
+	// nothing held it.
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	var said strings.Builder
+	log.SetOutput(&said)
+
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
+		[]byte("{ this is not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := daemonConfig()
+	if err == nil {
+		t.Fatal("a config that could not be read was reported as fine")
+	}
+
+	// The three that decide whether a daemon can do anything at all. A zero
+	// config has none of them.
+	want := config.Defaults()
+	if cfg.Session != want.Session {
+		t.Errorf("session = %q, want %q", cfg.Session, want.Session)
+	}
+	if cfg.PollInterval != want.PollInterval {
+		t.Errorf("poll interval = %q, want %q", cfg.PollInterval, want.PollInterval)
+	}
+	if cfg.LabelFormat != want.LabelFormat {
+		t.Errorf("label format = %q, want %q", cfg.LabelFormat, want.LabelFormat)
+	}
+
+	// And it said so, since the message and the fallback are one promise.
+	if !strings.Contains(said.String(), "continuing with defaults") {
+		t.Errorf("nothing said the daemon was carrying on with defaults:\n%s", said.String())
+	}
+}
+
+func TestAConfigThatReadsIsUsedAsWritten(t *testing.T) {
+	// The other half: a readable config is handed over unchanged and reports
+	// no error, so the daemon does not announce a fault it did not have.
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	log.SetOutput(io.Discard)
+
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
+		[]byte(`{"session":"chosen"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := daemonConfig()
+	if err != nil {
+		t.Fatalf("a config that reads was reported as broken: %v", err)
+	}
+	if cfg.Session != "chosen" {
+		t.Errorf("session = %q, want the one the config names", cfg.Session)
 	}
 }

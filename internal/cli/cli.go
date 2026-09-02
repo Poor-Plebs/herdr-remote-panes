@@ -102,15 +102,7 @@ func run(command string, args []string) error {
 	}
 	switch command {
 	case "daemon":
-		// A configuration that cannot be read must not stop the daemon: the
-		// menu and every action reach it over its socket, so exiting here
-		// leaves them all failing with no visible reason.
-		cfg, err := config.Load()
-		if err != nil {
-			log.Printf("%v", err)
-			log.Print("continuing with defaults; fix the config and reconnect")
-			cfg = config.Defaults()
-		}
+		cfg, err := daemonConfig()
 		// Settings that are readable but will not do what they look like they
 		// say. Reporting them beats guessing silently, which is how a mode
 		// spelled wrong quietly turned mirroring on.
@@ -359,6 +351,30 @@ func versionLines(binary, daemon string) []string {
 // maxDaemonLog bounds the daemon's log. It is quiet in ordinary use -- a line
 // when a machine is connected or given up on -- so this is generous.
 const maxDaemonLog = 256 * 1024
+
+// daemonConfig is what the daemon runs on, and what went wrong reading it.
+//
+// A configuration that cannot be read must not stop the daemon: the menu and
+// every action reach it over its socket, so exiting here leaves them all
+// failing with no visible reason.
+//
+// What it carries on with is the defaults, and not the zero value. The
+// difference is a daemon with no session name, no poll interval and no label
+// format -- and the line above it, which says it is continuing with defaults,
+// would be saying something untrue. The error is handed back as well as the
+// configuration, because the daemon reports it separately once it is up.
+//
+// Apart from run so that this can be tested at all: run ends in the daemon's
+// own Run, which does not return.
+func daemonConfig() (config.Config, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		log.Printf("%v", err)
+		log.Print("continuing with defaults; fix the config and reconnect")
+		return config.Defaults(), err
+	}
+	return cfg, nil
+}
 
 // daemonLog also writes the daemon's diagnostics to a file, and returns a
 // function that closes it. Standard error is kept as well, so nothing is lost
