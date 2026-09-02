@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
@@ -583,4 +584,45 @@ func TestACallHerdrRefusedIsNotRememberedAsApplied(t *testing.T) {
 			t.Error("forgot the agent had been reported though the release failed")
 		}
 	})
+}
+
+// TestAFocusThatFailedIsNotAlsoAnnouncedAsDone holds the guard between a
+// refused focus and the line that says it happened.
+//
+// The log is the only account of what the daemon did, and focusHost exists
+// because a menu that appears to do nothing is the complaint being answered.
+// Somebody reading the log to find out why picking a machine did not bring its
+// space to the front is exactly who "bot: focused w1" misleads: it names the
+// space it did not go to, immediately under the error saying why.
+//
+// Three of the other guard returns in this file were measured and left alone.
+// Falling through the marshal failure in saveSnapshot cannot happen at all --
+// a snapshot is strings, ints and maps of them, which json.MarshalIndent has
+// no way to refuse. Falling through the workspace lookup above only reaches
+// the "no space of its own to go to" line, which says the same thing. Both are
+// equivalent rather than unheld.
+func TestAFocusThatFailedIsNotAlsoAnnouncedAsDone(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	withBrokenHerdr(t)
+
+	var logged strings.Builder
+	saved := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(saved) })
+
+	state := newTestHost()
+	state.workspaceID = "w1"
+	d := &Daemon{hosts: map[string]*hostSync{"bot": state}}
+
+	d.focusHost("bot")
+
+	out := logged.String()
+	// The fixture proves itself: a focus that succeeded would leave no refusal
+	// to find, and this test would be asserting about a call that never failed.
+	if !strings.Contains(out, "server_unavailable") {
+		t.Fatalf("the focus did not actually fail, so nothing here is being tested: %q", out)
+	}
+	if strings.Contains(out, "focused w1") {
+		t.Errorf("the focus was refused and the log announces it anyway: %q", out)
+	}
 }
