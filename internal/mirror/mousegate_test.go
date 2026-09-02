@@ -401,3 +401,39 @@ func TestEveryModeDroppedFromTheHandshakeIsWrittenDown(t *testing.T) {
 			"this is checking nothing", len(mouseModes))
 	}
 }
+
+// TestGivingUpDoesNotSwallowWhatWasBeingHeld holds the case where the two
+// tests above meet.
+//
+// Each of them reaches one half and neither reaches this.
+// TestAStreamThatStopsMidSequenceLosesNothing sends six bytes, so the limit
+// never fires and flush at the end of the stream is what returns them.
+// TestAStreamOfNothingButEscapesGivesUpEventually sends whole sequences, so
+// nothing is in hand at the moment the limit does fire.
+//
+// Giving up with half a sequence held is where bytes can go missing. The limit
+// opens the gate and drops what was held, so flush has nothing left to return
+// and those bytes are gone for good -- after Write has already told whoever is
+// copying into this that every one of them was written.
+//
+// The order matters as much as the bytes. Once the limit has opened the gate
+// everything after it passes straight through, so anything still held has to
+// go out in front of it rather than trailing the rest of the session.
+func TestGivingUpDoesNotSwallowWhatWasBeingHeld(t *testing.T) {
+	long := strings.Repeat("\x1b[?1000h", (preambleLimit/8)+64)
+	// The preamble has to be long enough to give up on, or this is the other
+	// test with a different ending.
+	if len(long) <= preambleLimit {
+		t.Fatalf("the preamble is %d bytes and the limit is %d, so the gate never gives up",
+			len(long), preambleLimit)
+	}
+
+	got := string(through(t, nil, []byte(long+"\x1b[?100"), []byte("hello")))
+
+	if !strings.Contains(got, "\x1b[?100") {
+		t.Errorf("the half sequence in hand when the gate gave up was never written: %q", got)
+	}
+	if got != "\x1b[?100hello" {
+		t.Errorf("got %q, want the held bytes and then what followed them", got)
+	}
+}
