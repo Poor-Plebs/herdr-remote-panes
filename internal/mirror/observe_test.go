@@ -406,3 +406,34 @@ func TestOneResizeCostsOneWait(t *testing.T) {
 		t.Errorf("a window that is not being resized waited %s", took)
 	}
 }
+
+func TestAScreenRepaintPastTheDefaultBufferStillArrives(t *testing.T) {
+	// The scanner is handed a buffer that may grow to maxFrameBytes. Without
+	// that line it keeps bufio's own default, which stops a line at 64KB --
+	// and a repaint of a large terminal is one frame well past that. What it
+	// looks like is a mirror that ends the moment somebody clears a big
+	// screen.
+	//
+	// Nothing held it. The oversized-frame test above sends more than eight
+	// megabytes, which is past bufio's default and past maxFrameBytes both, so
+	// it passes whichever bound is in force and cannot tell them apart. This
+	// frame is chosen to sit between the two, where they disagree.
+	const repaint = 200 * 1024
+	if repaint <= 64*1024 {
+		t.Fatal("the frame must be past bufio's default for this to test anything")
+	}
+	if repaint >= theFrameLimit {
+		t.Fatal("the frame must be under maxFrameBytes, or it is the other test")
+	}
+
+	payload := strings.Repeat("x", repaint)
+	client := observeSSH(t, "printf '%s\\n' '"+frame(payload)+"'\n")
+
+	out, err := whatItWrote(t, client, nil)
+	if err != nil {
+		t.Fatalf("a frame of %d bytes ended the stream: %v", repaint, err)
+	}
+	if len(out) != repaint {
+		t.Errorf("the terminal shows %d bytes of the repaint, want %d", len(out), repaint)
+	}
+}
