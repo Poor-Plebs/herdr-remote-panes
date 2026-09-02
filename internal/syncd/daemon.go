@@ -3071,6 +3071,23 @@ func (d *Daemon) claimedPanes(also *hostSync) map[string]bool {
 // This only decides. Acting on the list needs the host lock released, because
 // opening a terminal on the machine takes that lock again.
 func (d *Daemon) planStrayCapture(state *hostSync, index *paneIndex) []strayPane {
+	// Forget panes that are gone, so ids reused later are judged afresh.
+	//
+	// Above the guard, because which panes have been judged is the daemon's
+	// record and not this machine's. Below it, one machine turned to plain ssh
+	// stopped the forgetting for every pane the daemon knew -- and Herdr reuses
+	// pane ids, so the first pass after mirroring resumed read a brand new pane
+	// as one it had already offered to move, skipped it, and then recorded it as
+	// seen in earnest. A pane somebody made, never offered, for good.
+	//
+	// Nothing alive is touched, so the judging below reads the same map it would
+	// have read before.
+	for paneID := range d.seenStray {
+		if !index.alive[paneID] {
+			delete(d.seenStray, paneID)
+		}
+	}
+
 	if state.sshOnly || state.workspaceID == "" {
 		return nil
 	}
@@ -3104,12 +3121,6 @@ func (d *Daemon) planStrayCapture(state *hostSync, index *paneIndex) []strayPane
 		d.seenStray[paneID] = true
 	}
 
-	// Forget panes that are gone, so ids reused later are judged afresh.
-	for paneID := range d.seenStray {
-		if !index.alive[paneID] {
-			delete(d.seenStray, paneID)
-		}
-	}
 	return strays
 }
 

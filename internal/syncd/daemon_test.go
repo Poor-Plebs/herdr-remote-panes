@@ -743,3 +743,50 @@ func TestADuplicateIsWarnedAboutInTheTermsItActuallyBehavesIn(t *testing.T) {
 			"under, which is the one thing somebody needs from it: %q", warning)
 	}
 }
+
+// TestPanesJudgedForMovingAreForgottenWhateverTheMachineIsDoing holds the
+// pruning of seenStray against the machine that happens to be passing through.
+//
+// seenStray is the daemon's record and not a machine's, which is what
+// TestForgetPaneClearsMirrorBookkeeping says in its own comment: a pane belongs
+// to one machine at most, and which panes have been considered for moving
+// belongs to none of them. The pruning of it sat below a guard about the
+// machine in hand, so a machine not mirroring stopped it for every pane the
+// daemon knew.
+//
+// What that costs is a pane nobody gets. Herdr reuses pane ids; the entry is
+// kept so a reused one is judged afresh. Left behind, the first pass after
+// mirroring resumes reads a brand new pane as one it has already offered to
+// move, skips it, and then records it as seen in earnest -- so it is never
+// offered at all.
+func TestPanesJudgedForMovingAreForgottenWhateverTheMachineIsDoing(t *testing.T) {
+	for _, tt := range []struct {
+		what    string
+		arrange func(*hostSync)
+	}{
+		{"one that is mirroring", func(s *hostSync) { s.workspaceID = "w1" }},
+		{"one turned to plain ssh", func(s *hostSync) { s.workspaceID = "w1"; s.sshOnly = true }},
+		{"one with no space of its own", func(s *hostSync) { s.workspaceID = "" }},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			d := withConfig(&Daemon{seenStray: map[string]bool{"w1:p9": true}}, config.Defaults())
+			state := newTestHost()
+			state.host = config.Host{Target: "bot"}
+			tt.arrange(state)
+
+			// w1:p9 has gone; something else is there instead.
+			index := newPaneIndex([]herdrcli.Pane{{PaneID: "w1:p1", WorkspaceID: "w1"}})
+			if index.alive["w1:p9"] {
+				t.Fatal("the fixture left the pane alive, so there is nothing to forget")
+			}
+
+			d.planStrayCapture(state, index)
+
+			if d.seenStray["w1:p9"] {
+				t.Errorf("a pane that is gone is still remembered as judged: %v; the "+
+					"next pane on that id is one the plugin will not offer to move",
+					d.seenStray)
+			}
+		})
+	}
+}
