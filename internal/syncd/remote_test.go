@@ -5000,3 +5000,87 @@ func TestTheWarningAboutTwoSpacesGoesWhenTheSpacesDo(t *testing.T) {
 			"reconnecting would put it away")
 	}
 }
+
+// TestBorrowingSomebodyElsesSpaceIsSaidEachTimeItHappens holds the whole of
+// the borrowed-space notice, which nothing reached: not the saying of it, not
+// the not-repeating, and not the saying of it again.
+//
+// A machine's space is found by the exact name this gives it and, failing
+// that, by a tolerant match on the hub's name. The tolerant one keeps the
+// terminals in a space made before remote_workspace_format changed, and it is
+// also the one way into another hub's space -- with one space, so the
+// duplicate warning beside it never fires. The line is the only thing that
+// reports it.
+//
+// Once per occurrence, which is three separate behaviours. Said when it starts,
+// because a hub quietly mirroring into another's space is where its terminals
+// went. Not said again while it lasts, because reconcile runs every couple of
+// seconds and a line repeated at that rate is a line nobody reads. And said
+// again when it happens afresh, which needs the flag put back on the one path
+// that can -- no space of that name found at all, which is what a space being
+// closed or renamed on the machine looks like from here.
+func TestBorrowingSomebodyElsesSpaceIsSaidEachTimeItHappens(t *testing.T) {
+	here := withFakeHerdr(t)
+	there, remoteState := withRemoteHerdr(t)
+
+	spacesOn := func(ws map[string]map[string]any) {
+		t.Helper()
+		raw, err := json.Marshal(fakeHerdr{
+			Panes: map[string]map[string]any{}, Workspaces: ws, Next: 5,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(remoteState, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Not the name this gives the space, but a tolerant match on the hub: what
+	// another hub's space looks like from here.
+	borrowed := "☁  " + config.HubName()
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.RemoteWorkspaceFormat = "pairing"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	var logged strings.Builder
+	saved := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(saved) })
+	said := func() int {
+		return strings.Count(logged.String(), "mirroring into the space called")
+	}
+
+	passes := func(ws map[string]map[string]any) {
+		t.Helper()
+		spacesOn(ws)
+		for i := 0; i < 3; i++ {
+			d.reconcileAll()
+		}
+	}
+
+	passes(map[string]map[string]any{"b1": {"workspace_id": "b1", "label": borrowed}})
+	if got := said(); got != 1 {
+		t.Fatalf("mirroring into another hub's space was said %d times, want once: %s",
+			got, logged.String())
+	}
+
+	// Gone from the machine, which is what closing or renaming it looks like.
+	passes(map[string]map[string]any{"z9": {"workspace_id": "z9", "label": "nothing like it"}})
+	if got := said(); got != 1 {
+		t.Errorf("a space going away was worth another %d lines, want none", got-1)
+	}
+
+	// And it happens again, with a different space this time.
+	passes(map[string]map[string]any{"b2": {"workspace_id": "b2", "label": borrowed}})
+	if got := said(); got != 2 {
+		t.Errorf("borrowing a space a second time was said %d times in all, want twice: "+
+			"the notice is not repeated for a fresh occurrence", got)
+	}
+}
