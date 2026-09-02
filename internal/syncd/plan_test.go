@@ -2106,11 +2106,17 @@ func TestChangingAModeIsNotUndoneByAnUnreachableMachine(t *testing.T) {
 		t.Errorf("summary = %q, want it to name the cause", summary)
 	}
 
-	// What the reply reads as: the change, then the machine's state.
+	// What the reply reads as: the change, then the machine's state. Composed
+	// here rather than asked for, so what this holds is the length -- summary
+	// is the only part of it that came from anywhere.
+	//
+	// There was an assertion here that this string contains "mirroring off for
+	// staging". It could not fail: the line above concatenates that literal.
+	// Checked by making the daemon report "mirroring ON" for a machine being
+	// turned off, which this test passed -- the behaviour it is named for is
+	// held by TestTogglingMirroringOnAndOffFromTheMenu, which asks the daemon
+	// instead of imitating it.
 	reply := "mirroring off for staging" + ", but it is not reachable: " + summary
-	if !strings.Contains(reply, "mirroring off for staging") {
-		t.Errorf("reply = %q, want it to say the change happened", reply)
-	}
 	if len(reply) > 200 {
 		t.Errorf("reply is %d characters, too long for a menu screen", len(reply))
 	}
