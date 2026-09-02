@@ -1,6 +1,8 @@
 package syncd
 
 import (
+	"io"
+	"log"
 	"reflect"
 	"testing"
 
@@ -519,6 +521,66 @@ func TestWhatIsRememberedAboutANewRemoteTerminal(t *testing.T) {
 		if len(state.pendingPlacement)+len(state.pendingFocus) != 0 {
 			t.Errorf("a note was filed under no terminal at all: %v %v",
 				state.pendingPlacement, state.pendingFocus)
+		}
+	})
+}
+
+// TestACallHerdrRefusedIsNotRememberedAsApplied holds the three guards that
+// stand between a failed Herdr call and the bookkeeping that says it worked.
+//
+// Each of these caches exists to stop reconcile redoing work every poll, so
+// each is a claim that Herdr has already been told something. Recording that
+// claim when the call in fact failed does not lose one update, it loses every
+// future one: the cache matches from then on and the call is never made again.
+//
+// TestForgetPane holds the other half of the same hazard -- what is remembered
+// about a pane that has gone. This is what is remembered about a call that
+// never landed, which is the half with no pane death to clear it.
+//
+// The guard in each case is the bare return after the log line. No operator is
+// flipped by removing one, and it is a return rather than a side effect, so
+// neither make mutants nor make deletions would offer it: all three survived
+// being taken out by hand with the whole suite green.
+func TestACallHerdrRefusedIsNotRememberedAsApplied(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	withBrokenHerdr(t)
+
+	// The failures are logged on purpose; this test is about what is kept, not
+	// about what is said.
+	saved := log.Writer()
+	log.SetOutput(io.Discard)
+	t.Cleanup(func() { log.SetOutput(saved) })
+
+	d := &Daemon{}
+
+	t.Run("a name that did not take", func(t *testing.T) {
+		// Left in the cache, the pane keeps Herdr's default plugin pane title
+		// rather than the machine's name, and no later poll ever tries again.
+		state := newTestHost()
+		d.retitle(state, "w1:p2", "build@bot")
+		if got, ok := state.labels["w1:p2"]; ok {
+			t.Errorf("remembered %q as the pane's name though the rename failed", got)
+		}
+	})
+
+	t.Run("an agent that was not reported", func(t *testing.T) {
+		// Left in the cache, the sidebar keeps showing a bare ssh pane and the
+		// agent it is running is never announced again.
+		state := newTestHost()
+		d.syncAgent(state, "w1:p2", herdrcli.Pane{Agent: "claude", AgentStatus: "working"})
+		if got, ok := state.reportedAgents["w1:p2"]; ok {
+			t.Errorf("remembered %+v as reported though the report failed", got)
+		}
+	})
+
+	t.Run("an agent that was not released", func(t *testing.T) {
+		// Dropped from the cache, the plugin forgets it ever claimed the agent,
+		// so it never releases it: the sidebar shows one that stopped running.
+		state := newTestHost()
+		state.reportedAgents["w1:p2"] = agentReport{agent: "claude", state: "idle"}
+		d.syncAgent(state, "w1:p2", herdrcli.Pane{})
+		if _, ok := state.reportedAgents["w1:p2"]; !ok {
+			t.Error("forgot the agent had been reported though the release failed")
 		}
 	})
 }
