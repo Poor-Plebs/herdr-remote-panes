@@ -51,6 +51,28 @@ mutants:
 	@if [ -z "$(PKG)" ]; then echo "usage: make mutants PKG=./internal/config [FILES=one.go]"; exit 2; fi
 	SINCE=$(SINCE) go run ./tools/mutants $(PKG) $(FILES)
 
+## deletions: statements that can be removed without any test noticing
+##
+## `make mutants` flips operators and drops negations, which finds a decision
+## nothing checks. It never removes a statement, so a side effect nothing
+## checks is invisible to it -- and to everything else here. Thirteen were
+## found this way: a command that was never cancelled, a descriptor leaked on
+## every rotation, a flag never sent, the same machine listed twice.
+##
+## Not part of check: it builds and tests the package once per statement, which
+## is minutes for a small one and hours for the daemon. A survivor is something
+## to read rather than a failure.
+##
+##   make deletions PKG=./internal/capped
+##   make deletions PKG=./internal/syncd SECS=180 ROOT=/tmp/sweep
+##
+## ROOT sweeps a copy so a long run leaves your tree free to commit from:
+##
+##   git worktree add --detach /tmp/sweep HEAD
+deletions:
+	@if [ -z "$(PKG)" ]; then echo "usage: make deletions PKG=./internal/capped [SECS=180] [ROOT=dir]"; exit 2; fi
+	go run ./tools/deletions $(if $(ROOT),-root $(ROOT)) $(PKG) $(SECS)
+
 ## vuln: known vulnerabilities in what this builds against
 ##
 ## Not part of check, because it needs the network and asks a database that
