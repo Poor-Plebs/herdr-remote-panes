@@ -4343,6 +4343,54 @@ func TestReplacingAPaneSaysWhichPaneItWas(t *testing.T) {
 	}
 }
 
+func TestTheConfigIsRereadOnceAndThenLeftAlone(t *testing.T) {
+	// The tests around this one set configStamp by hand before calling --
+	// "as the daemon would have stamped it on the pass that read it" -- so
+	// what the daemon stamps is simulated rather than exercised. Deleting the
+	// line that writes it broke none of them.
+	//
+	// Without it nothing on disk ever matches what was last read, so every
+	// pass rereads the file, reloads it into the daemon and says "the config
+	// changed on disk and has been reread". A pass comes round every couple of
+	// seconds, and this is the log somebody is told to go and read.
+	said := captureLog(t)
+	path := withConfigFile(t, `{"placement":"tab","hosts":[{"target":"bot"}]}`)
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := New(loaded)
+	// Deliberately no stamp set here. The daemon has to write its own down.
+
+	// The first pass reads it, since nothing has been stamped yet.
+	d.rereadConfig()
+	// And these change nothing on disk, so they must do nothing at all.
+	d.rereadConfig()
+	d.rereadConfig()
+
+	if n := strings.Count(said.String(), "has been reread"); n != 1 {
+		t.Errorf("a config that did not change was reread %d times, want once", n)
+	}
+
+	// And a real change is still picked up: this must not be a daemon that
+	// simply stopped looking.
+	if err := os.WriteFile(path, []byte(`{"placement":"split","hosts":[{"target":"bot"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newer := time.Now().Add(time.Second)
+	if err := os.Chtimes(path, newer, newer); err != nil {
+		t.Fatal(err)
+	}
+	d.rereadConfig()
+
+	if got := d.config().Placement; got != "split" {
+		t.Errorf("the file says placement %q and the daemon is using %q", "split", got)
+	}
+	if n := strings.Count(said.String(), "has been reread"); n != 2 {
+		t.Errorf("a config that did change was reread %d times, want twice", n)
+	}
+}
+
 func TestAConfigRestoredFromABackupIsRead(t *testing.T) {
 	// The file is watched by its modification time, and a restored one is
 	// older than what replaced it. `cp -p` an earlier copy back, or check one
