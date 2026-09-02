@@ -4922,3 +4922,81 @@ func keysOf(hosts map[string]*hostSync) []string {
 	sort.Strings(out)
 	return out
 }
+
+// TestTheWarningAboutTwoSpacesGoesWhenTheSpacesDo holds the other end of the
+// duplicate-space warning.
+//
+// TestTwoSpacesWithOneNameOnAMachineAreReported holds the raising of it: two
+// spaces on the
+// machine answering to one name, which is the state where both hubs are
+// mirroring into the same place and neither is wrong. Nothing held the
+// clearing.
+//
+// There are two ways it can clear and only one of them is the ordinary one.
+// When a space is still found, the count is written again from what was just
+// listed. When none is found at all -- the spaces renamed, or closed on the
+// machine, which is exactly what somebody does about this warning --
+// findRemoteWorkspace returns without creating anything, because it is the
+// reconcile path and reconcile does not open terminals. So that branch is the
+// only place the flag can be put back, and without it the menu goes on warning
+// about two spaces that are no longer there for as long as the daemon runs.
+func TestTheWarningAboutTwoSpacesGoesWhenTheSpacesDo(t *testing.T) {
+	here := withFakeHerdr(t)
+	there, remoteState := withRemoteHerdr(t)
+
+	spacesOn := func(ws map[string]map[string]any) {
+		t.Helper()
+		raw, err := json.Marshal(fakeHerdr{
+			Panes: map[string]map[string]any{}, Workspaces: ws, Next: 5,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(remoteState, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.RemoteWorkspaceFormat = "pairing"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	warned := func() bool {
+		t.Helper()
+		hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+		if len(hosts) != 1 {
+			t.Fatalf("want one machine, got %+v", hosts)
+		}
+		return hosts[0].SharedName
+	}
+
+	// Another hub's daemon makes a second space of the same name.
+	spacesOn(map[string]map[string]any{
+		"w1":    {"workspace_id": "w1", "label": "pairing"},
+		"other": {"workspace_id": "other", "label": "pairing"},
+	})
+	for i := 0; i < 3; i++ {
+		d.reconcileAll()
+	}
+	// Raised, or the clearing below is about a warning that was never on.
+	if !warned() {
+		t.Fatal("two spaces of one name did not raise the warning, so nothing here is tested")
+	}
+
+	// And then they are dealt with: renamed on the machine, which is what the
+	// warning is asking for.
+	spacesOn(map[string]map[string]any{
+		"w9": {"workspace_id": "w9", "label": "pairing, and mine alone"},
+	})
+	for i := 0; i < 3; i++ {
+		d.reconcileAll()
+	}
+	if warned() {
+		t.Error("the warning outlived the two spaces it was about; nothing but " +
+			"reconnecting would put it away")
+	}
+}
