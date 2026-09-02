@@ -667,3 +667,36 @@ func TestWhatTheDaemonSaysOnARefusalScreenCarriesNoEscape(t *testing.T) {
 		t.Errorf("the reason was thrown away rather than made safe:\n%s", visible(got.drawn))
 	}
 }
+
+// TestDecliningTheQuestionLeavesTheTerminalsAlone holds the menu's half of the
+// safeguard: what it does with the answer.
+//
+// TestOnlyMGoesAheadWithClosingTerminals holds confirmToggle exhaustively --
+// escape, enter, q, d and a digit all come back false. None of that reaches
+// the menu, which has to act on the answer, and acting on it is one break in a
+// switch case. Removed, the menu asks the question, throws the answer away and
+// closes the terminals regardless, with every case of that thorough test still
+// passing.
+//
+// What is lost is not a setting. Turning mirroring on closes the machine's
+// plain SSH terminals, and a plain SSH terminal's shell goes with its pane,
+// carrying whatever was running in it. The question is the last thing between
+// somebody and that, and m sits one key from d.
+func TestDecliningTheQuestionLeavesTheTerminalsAlone(t *testing.T) {
+	connected := &syncd.Reply{OK: true, Hosts: []syncd.HostInfo{
+		{Target: "bot", Label: "bot", Connected: true, Terminals: 3},
+	}}
+
+	// m asks; enter is one of the keys somebody escaping an unexpected prompt
+	// presses. Then q, to leave the menu the way a person would.
+	got := runMenuRefusing(t, "Host bot\n", "", "m\rq", nil, connected)
+
+	// The question was put, or what follows is about a prompt that never came.
+	if !strings.Contains(visible(got.drawn), "Turn mirroring on for bot?") {
+		t.Fatalf("the question was never asked, so nothing here is tested:\n%s",
+			visible(got.drawn))
+	}
+	if len(got.modes) != 0 {
+		t.Errorf("the question was declined and the mode was changed anyway: %v", got.modes)
+	}
+}
