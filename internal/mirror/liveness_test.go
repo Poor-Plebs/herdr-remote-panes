@@ -683,3 +683,48 @@ func TestAMarkThatCannotBeWrittenIsReported(t *testing.T) {
 		t.Error("the mark's own path is a directory and MarkFailed said nothing")
 	}
 }
+
+// TestASessionThatDoesNotNameItselfKeepsItsMarks holds the fallback that puts
+// those marks in a session's own directory rather than the shared one.
+//
+// Marks are kept per session because pane ids repeat across Herdr sessions.
+// They used to live directly in the parent, so Prune still sweeps the parent
+// as well -- and it sweeps it with nothing known, since nothing reads those any
+// more, which means every mark it finds there goes.
+//
+// A session with no name in the environment therefore has to land somewhere
+// other than that parent. Without the fallback the path collapses onto it, and
+// the marks a running mirror is keeping sit exactly where the next session's
+// tidying deletes them all. A deleted live mark is not a lost file: it is how
+// the daemon tells a mirror that is running from a pane Herdr restored with
+// nothing behind it, so the pane somebody is working in reads as a husk and is
+// replaced.
+func TestASessionThatDoesNotNameItselfKeepsItsMarks(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", state)
+
+	// A pane whose session never said what it was called.
+	t.Setenv("HERDR_SESSION", "")
+	done := markLive("w1:p2", "t1")
+	defer done()
+	if !IsLive("w1:p2") {
+		t.Fatal("the mirror never marked itself live, so there is nothing to lose")
+	}
+
+	// Another session tidies up. It knows nothing of this pane, and its sweep
+	// of the shared parent claims nothing at all.
+	t.Setenv("HERDR_SESSION", "hub")
+	Prune(map[string]bool{})
+
+	t.Setenv("HERDR_SESSION", "")
+	if !IsLive("w1:p2") {
+		entries, _ := os.ReadDir(filepath.Join(state, "panes"))
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("another session's tidying took the mark of a mirror that is "+
+			"running, so its pane reads as one Herdr restored empty and is "+
+			"replaced; panes/ holds %v", names)
+	}
+}
