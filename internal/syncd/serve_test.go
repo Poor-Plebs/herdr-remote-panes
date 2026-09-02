@@ -211,6 +211,43 @@ func TestADeadControlSocketSaysSoRatherThanLookingHealthy(t *testing.T) {
 	}
 }
 
+func TestAFailingAcceptWaitsBetweenTriesRatherThanSpinning(t *testing.T) {
+	// The test above holds that a failure that never clears is retried and
+	// then given up on, with "gave up after %d attempts, which is not a grace
+	// period" for a floor. What it cannot see is the ceiling: an accept that
+	// fails instantly and is retried instantly is a loop with nothing in it,
+	// and "at least two attempts" is as true of that as of a daemon waiting
+	// properly between tries.
+	//
+	// Nothing held the waiting. Deleting the floor leaves the delay at nought
+	// on the first failure, so the sleep is for no time at all; deleting the
+	// sleep does the same more directly. Either way the daemon spends its
+	// grace period burning a core on a socket that is not going to answer,
+	// which is the state it is in while somebody waits for the menu.
+	shortRetries(t, 30*time.Millisecond)
+	captureLog(t)
+
+	listener := &scriptedListener{steps: []step{{err: tempError{}}}}
+	d := New(machineConfig("bot"))
+
+	done := make(chan struct{})
+	go func() { d.serveControl(listener); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("serveControl retried a failure that never clears forever")
+	}
+
+	// A millisecond floor across thirty milliseconds is tens of attempts, and
+	// the doubling makes it fewer. A spin is thousands. The bound is loose on
+	// purpose: what it has to tell apart is waiting from not waiting, and a
+	// slow machine must not make it fail.
+	if n := listener.calls(); n > 500 {
+		t.Errorf("accept was tried %d times in %s, which is a loop with no wait "+
+			"in it rather than a daemon backing off", n, 30*time.Millisecond)
+	}
+}
+
 func TestADaemonWritesDownWhatItIsRunningWith(t *testing.T) {
 	// The config file used to be the answer to this, holding every setting at
 	// its value. It now holds what somebody chose, so the log has to carry it
