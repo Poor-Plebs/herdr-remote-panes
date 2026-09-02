@@ -770,3 +770,83 @@ func TestAttachAsksToTakeOverAStaleClient(t *testing.T) {
 		}
 	}
 }
+
+// TestAPlainSSHPaneIsJoinedToTheMachineBothWays holds the three lines that
+// make a plain SSH pane a terminal rather than a window onto nothing.
+//
+// shell is run by several tests here and sits at 96% coverage, but the
+// stand-in ssh they use writes what it was asked into files and never to its
+// own streams, so nothing ever checked that those streams are connected. All
+// three of stdin, stdout and stderr survive being deleted.
+//
+// Each is the whole of the feature from one side. Without stdout a pane is
+// blank: the shell is running, the machine is fine, and nothing it prints ever
+// arrives. Without stdin nothing typed reaches the machine. Without stderr the
+// half of a session that reports trouble is thrown away, which is where "ssh
+// could not connect" and a host-key warning both live.
+func TestAPlainSSHPaneIsJoinedToTheMachineBothWays(t *testing.T) {
+	dir := t.TempDir()
+	typed := filepath.Join(dir, "reached-the-machine")
+
+	// A machine that says something on each stream and keeps what it was told.
+	script := "#!/bin/sh\n" +
+		"echo 'what the machine printed'\n" +
+		"echo 'what the machine complained about' >&2\n" +
+		"cat > " + typed + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+	t.Setenv("HERDR_PANE_ID", "w1:p2")
+	t.Setenv(EnvTarget, "bot")
+	t.Setenv(EnvMode, "ssh")
+
+	// The pane: what somebody sees, and what they type.
+	seen, err := os.Create(filepath.Join(dir, "the-pane"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer seen.Close()
+	if err := os.WriteFile(filepath.Join(dir, "keystrokes"),
+		[]byte("what somebody typed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := os.Open(filepath.Join(dir, "keystrokes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer keys.Close()
+
+	savedOut, savedErr, savedIn := os.Stdout, os.Stderr, os.Stdin
+	os.Stdout, os.Stderr, os.Stdin = seen, seen, keys
+	runErr := bridge()
+	os.Stdout, os.Stderr, os.Stdin = savedOut, savedErr, savedIn
+
+	if runErr != nil {
+		t.Fatalf("bridge: %v", runErr)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "the-pane"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shown := string(raw)
+	if !strings.Contains(shown, "what the machine printed") {
+		t.Errorf("nothing the machine printed reached the pane, so it shows an "+
+			"empty screen with a healthy session behind it: %q", shown)
+	}
+	if !strings.Contains(shown, "what the machine complained about") {
+		t.Errorf("what the machine said went wrong never reached the pane, which "+
+			"is where a refused connection and a host-key warning are read: %q", shown)
+	}
+
+	got, err := os.ReadFile(typed)
+	if err != nil {
+		t.Fatalf("the machine was given no input at all: %v", err)
+	}
+	if !strings.Contains(string(got), "what somebody typed") {
+		t.Errorf("what was typed never reached the machine: %q", got)
+	}
+}
