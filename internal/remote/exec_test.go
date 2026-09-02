@@ -60,3 +60,40 @@ func TestSSHArgsBoundTheConnect(t *testing.T) {
 		t.Errorf("ssh args %q should bound the connect", args)
 	}
 }
+
+// TestAFailureWithNothingOnStderrSaysItOnce holds the other half of what a
+// failed command reports.
+//
+// When the command prints its reason, the reason is the message and the exit
+// status is the prefix -- "exit status 3: the reason" -- which is what
+// TestRunCommandReportsStderr holds. When it prints nothing there is no reason
+// to add, and what was added instead was the exit status a second time. For a
+// command that could not start at all, that is a whole sentence twice over.
+//
+// It matters because these do not stay here. Every caller puts what it was
+// doing in front, so the menu draws "bot is not reachable over ssh: " and then
+// the same words twice, which is how one failure becomes a paragraph.
+func TestAFailureWithNothingOnStderrSaysItOnce(t *testing.T) {
+	for _, tt := range []struct {
+		what  string
+		argv  []string
+		twice string
+	}{
+		{"a command that failed quietly", []string{"sh", "-c", "exit 3"}, "exit status 3"},
+		{"a command that could not start", []string{"/nonexistent/ssh", "bot"}, "no such file or directory"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			_, errOut, err := runCommand(tt.argv)
+			if err == nil {
+				t.Fatal("a failing command should error")
+			}
+			// The case this names, or it is testing the branch beside it.
+			if len(strings.TrimSpace(string(errOut))) != 0 {
+				t.Fatalf("stderr carried %q, so this is the other branch", errOut)
+			}
+			if n := strings.Count(err.Error(), tt.twice); n != 1 {
+				t.Errorf("%q says %q %d times, want once", err, tt.twice, n)
+			}
+		})
+	}
+}

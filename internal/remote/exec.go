@@ -70,7 +70,14 @@ func runCommand(argv []string) (stdout, stderr []byte, err error) {
 	if runErr != nil {
 		msg := strings.TrimSpace(errOut.Buf.String())
 		if msg == "" {
-			msg = runErr.Error()
+			// Nothing was printed, so the exit status is the whole of what is
+			// known and there is no detail to put after it. Adding one anyway
+			// meant adding the same words again: "exit status 3: exit status
+			// 3", or for a command that never started, a sentence about a
+			// missing file twice over. These travel to the menu and the log
+			// through two or three more callers, each of which puts what it
+			// was doing in front.
+			return out.Buf.Bytes(), errOut.Buf.Bytes(), runErr
 		}
 		return out.Buf.Bytes(), errOut.Buf.Bytes(), fmt.Errorf("%w: %s", runErr, msg)
 	}
