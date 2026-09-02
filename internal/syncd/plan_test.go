@@ -1396,6 +1396,59 @@ func TestPaneTargetNeverCarriesBothKindsOfTarget(t *testing.T) {
 	}
 }
 
+func TestAMachineThisDaemonNeverTouchedKeepsWhatItHad(t *testing.T) {
+	// A pass writes what it can see. A daemon that has just started can see
+	// almost nothing, and the window before it has connected to anything was
+	// enough: everything not yet reached lost its terminals and its place in
+	// the list. So a machine still in the snapshot and absent from the pass is
+	// carried over -- unless this daemon connected it and then dropped it,
+	// which is gone on purpose.
+	//
+	// The carrying over reads from the snapshot the last pass wrote, and the
+	// line that updates it was held by nothing: the test below covers when the
+	// file is written, not what goes in it. Without the update the snapshot
+	// stays at whatever the daemon started with, so a machine that appeared
+	// after startup and then went is dropped rather than kept.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("HERDR_SESSION", "default")
+
+	d := withConfig(&Daemon{hosts: map[string]*hostSync{
+		"bot": {
+			host:       config.Host{Target: "bot"},
+			mirrors:    map[string]string{"term_1": "w1:p1"},
+			dismissed:  map[string]bool{},
+			shellPanes: map[string]bool{},
+		},
+	}}, config.Defaults())
+
+	// A first pass, which is where the machine enters the snapshot.
+	d.persist()
+
+	// It goes from what the pass can see, without this daemon having connected
+	// and dropped it: touched is what says "gone on purpose", and it is empty.
+	d.mu.Lock()
+	d.hosts = map[string]*hostSync{}
+	d.mu.Unlock()
+	d.persist()
+
+	path, err := snapshotPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("nothing was written: %v", err)
+	}
+	if !strings.Contains(string(raw), "bot") {
+		t.Errorf("a machine this daemon never touched was dropped from the "+
+			"snapshot when a pass could not see it:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), "term_1") {
+		t.Errorf("the machine was kept but not what it had:\n%s", raw)
+	}
+}
+
 func TestSnapshotIsOnlyWrittenWhenItChanges(t *testing.T) {
 	// Reconciling happens every couple of seconds whether anything changed or
 	// not, and persist used to write the file every time: the same bytes, tens
