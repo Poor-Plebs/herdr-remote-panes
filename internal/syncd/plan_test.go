@@ -3336,6 +3336,45 @@ func TestASlowCommandStillGetsItsAnswer(t *testing.T) {
 	}
 }
 
+func TestAConnectionThatSaysNothingIsNotHeldOpenForever(t *testing.T) {
+	// Both deadlines on the exchange, and neither was held. A client that
+	// opens the socket and then says nothing -- a menu killed mid-keystroke,
+	// a pane that went while it was asking -- leaves the read waiting with
+	// nothing to wait for, and the daemon answers over one socket at a time.
+	//
+	// The write deadline is the other half, and this needs it too: once the
+	// read gives up, the reason is written back to a client that is not
+	// reading either, so without a deadline on the write the exchange is
+	// stuck at the next line instead of the last one.
+	//
+	// Shortened so the test is quick. What matters is that the exchange ends
+	// on its own, not how long it takes.
+	restore := exchangeTimeout
+	exchangeTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { exchangeTimeout = restore })
+
+	// A pipe with nobody at the other end: reads block until somebody writes,
+	// and writes block until somebody reads. Neither ever happens here.
+	server, client := net.Pipe()
+	t.Cleanup(func() { client.Close() })
+
+	done := make(chan struct{})
+	go func() {
+		serveExchange(server, func(Command) Reply {
+			t.Error("a connection that sent nothing was dispatched as a command")
+			return Reply{}
+		})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a connection that said nothing held the exchange open; the " +
+			"deadlines are what end it, and the daemon answers one at a time")
+	}
+}
+
 func TestARequestThatCannotBeReadSaysWhy(t *testing.T) {
 	// It is the plugin talking to itself, so a malformed command means a bug,
 	// and the shape of it is the only clue there will be. "bad request" was
