@@ -2225,9 +2225,20 @@ func (d *Daemon) reconcileOnce() {
 	for _, state := range d.hosts {
 		states = append(states, state)
 	}
+	// Read here rather than below, since the lock is already in hand.
+	pending := len(d.unclosed)
 	d.mu.Unlock()
 
-	if len(states) == 0 {
+	// No machines and nothing left over from one: listing panes every couple
+	// of seconds for nobody is what this saves.
+	//
+	// The leftovers are the reason it is not simply len(states). A pane Herdr
+	// refused to close is remembered daemon-wide and outlives the machine it
+	// belonged to, and retryUnclosed below is the only thing that ever looks
+	// at that list again -- so stopping here on the last disconnect leaves the
+	// pane on screen, wearing the name of a machine that is gone, for as long
+	// as the daemon runs.
+	if len(states) == 0 && pending == 0 {
 		return
 	}
 

@@ -5084,3 +5084,69 @@ func TestBorrowingSomebodyElsesSpaceIsSaidEachTimeItHappens(t *testing.T) {
 			"the notice is not repeated for a fresh occurrence", got)
 	}
 }
+
+// TestAPaneRefusedWhileDisconnectingIsStillTriedAgain holds the close site
+// that disconnect uses.
+//
+// closeRefused is called from five places and TestAPaneHerdrWouldNotCloseIs
+// ClosedOnceItWill reaches the mechanism through one of them. What that cannot
+// see is any single site: with five callers, removing one leaves the others to
+// record the pane, so each one on its own is unheld. The log word is what
+// tells them apart -- this is the one that says "close", the others say "close
+// mirror", "close stale terminal" and "close leftover".
+//
+// Disconnect is the one with nothing behind it. It takes the machine out of
+// d.hosts and drops its bookkeeping, and the sweeps that would find a pane
+// again by its label run on adoption. So a refusal here that is not written
+// down is a mirror left on screen, wearing a live machine's name, for as long
+// as the daemon runs -- and the machine it belonged to is gone, so nothing
+// will ever look at it again.
+func TestAPaneRefusedWhileDisconnectingIsStillTriedAgain(t *testing.T) {
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	before := panesFor(here(), "bot")
+	if before == 0 {
+		t.Fatal("the machine has no panes, so there is nothing for a close to refuse")
+	}
+
+	// Both spellings of "close this pane", so a fallback from one to the other
+	// does not quietly do the work this is about.
+	refuseOnMachine(t, os.Getenv(fakeHerdrState), "plugin pane close,pane close")
+	asked := here().Calls["plugin pane close"]
+
+	if reply := d.dispatch(Command{Cmd: "disconnect", Host: "bot"}); !reply.OK {
+		t.Fatalf("disconnect: %s", reply.Message)
+	}
+
+	// The refusal was reached, or what follows is about a close that never
+	// happened.
+	if here().Calls["plugin pane close"] == asked {
+		t.Fatalf("disconnecting tried to close nothing: %+v", here().Calls)
+	}
+	if got := panesFor(here(), "bot"); got != before {
+		t.Fatalf("while the close is refused the panes should still be there, "+
+			"got %d of %d", got, before)
+	}
+
+	// Herdr stops refusing. The next pass has to close what disconnect could
+	// not, which it can only do from what the refusal wrote down.
+	if err := os.Remove(os.Getenv(fakeHerdrState) + ".refuse"); err != nil {
+		t.Fatal(err)
+	}
+	d.reconcileAll()
+
+	if got := panesFor(here(), "bot"); got != 0 {
+		t.Errorf("after Herdr stopped refusing, %d panes are still open for a "+
+			"machine that was disconnected: the refusal was logged and forgotten, "+
+			"and nothing is left that knows about them", got)
+	}
+}
