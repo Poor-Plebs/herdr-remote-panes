@@ -2,9 +2,11 @@ package mirror
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -375,6 +377,78 @@ func TestSameProgramRejectsARecycledProcessID(t *testing.T) {
 	// An id that does not exist at all.
 	if sameProgram(0x7FFFFFFF) {
 		t.Error("a process id that cannot exist was accepted")
+	}
+}
+
+// TestARecycledProcessIDDoesNotMakeAMarkLive holds the line that ASKS
+// sameProgram, rather than sameProgram itself.
+//
+// The check beside this one calls sameProgram directly and holds it three
+// ways. The line in readMark that acts on the answer was held by none of them:
+// no mark ever carried a pid that was alive and belonged to something else, so
+// the guard could have been deleted and every test still passed.
+//
+// What it costs is the whole point of the mark. A pane whose mirror has died
+// reads as live for as long as an unrelated process holds the recycled id, and
+// everything downstream believes a mirror is already running there -- so the
+// pane is never repaired and never reopened, and it is the one thing the
+// bookkeeping exists to notice.
+//
+// The pid has to be one this process may signal, or the check above returns
+// first and the guard is never reached: `syscall.Kill(1, 0)` is "operation not
+// permitted" for anyone but root, so process 1 would pass this test while
+// proving nothing about sameProgram. Measured on the profile -- with a child of
+// our own the Kill branch runs zero times and this one runs once.
+func TestARecycledProcessIDDoesNotMakeAMarkLive(t *testing.T) {
+	if _, err := os.ReadFile("/proc/self/comm"); err != nil {
+		t.Skip("no /proc to check against; the id is taken at face value here")
+	}
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("no sleep to hold a process id with")
+	}
+
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("HERDR_SESSION", "hub")
+
+	// Something alive that is emphatically not a mirror, which is what a
+	// recycled id looks like from here.
+	other := exec.Command(sleep, "30")
+	if err := other.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = other.Process.Kill()
+		_, _ = other.Process.Wait()
+	})
+	pid := other.Process.Pid
+
+	// The fixture is in the state this is about, said rather than assumed: the
+	// id is signalable, so the existence check passes and the guard below is
+	// what has to reject it.
+	if err := syscall.Kill(pid, 0); err != nil {
+		t.Fatalf("the stand-in process cannot be signalled (%v), so this would be "+
+			"rejected for existing rather than for being something else", err)
+	}
+	if sameProgram(pid) {
+		t.Fatal("the stand-in process is read as one of ours, so there is nothing here to reject")
+	}
+
+	path := livenessPath("w1:p2")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strconv.Itoa(pid)+"\nt1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if terminal, live := LiveTerminal("w1:p2"); live {
+		t.Errorf("a mark holding a recycled id reads as a live mirror of terminal %q, "+
+			"so the pane it names is never repaired", terminal)
+	}
+	if IsLive("w1:p2") {
+		t.Error("a mark holding a recycled id reads as live")
 	}
 }
 
