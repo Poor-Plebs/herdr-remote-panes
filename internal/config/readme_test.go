@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -48,10 +49,7 @@ func docsText(t *testing.T) string {
 // worse than none: it is recognisable as something this never says.
 func TestTheREADMEShowsAWarningThisCanProduce(t *testing.T) {
 	readme := []byte(docsText(t))
-	source, err := os.ReadFile("validate.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	produced := shapesProblemsProduce(t)
 
 	shown := regexp.MustCompile("(?s)```\nconfig: (.+?)\n```").FindAllStringSubmatch(string(readme), -1)
 	if len(shown) == 0 {
@@ -102,9 +100,18 @@ func TestTheREADMEShowsAWarningThisCanProduce(t *testing.T) {
 			}
 			// The quoted value is whatever somebody typed; the wording around
 			// it is what this produces.
+			//
+			// Checked against warnings this really renders rather than against
+			// the source of validate.go. Searching the source for the literal
+			// held the example to how the message is WRITTEN, not to what it
+			// says: a complaint that builds part of its wording -- the list of
+			// values a setting takes is built from the list itself now -- says
+			// exactly what it always said and has no such literal to find.
 			shape := regexp.MustCompile(`"[^"]*"`).ReplaceAllString(example, "%q")
-			if !strings.Contains(string(source), shape) {
-				t.Errorf("the README shows a warning this does not produce:\n  %s", example)
+			if !slices.Contains(produced, shape) {
+				t.Errorf("the README shows a warning this does not produce:\n  %s\n"+
+					"if it comes from a complaint the fixtures in shapesProblemsProduce "+
+					"do not trip, add one there", example)
 			}
 		}
 	}
@@ -377,4 +384,44 @@ func TestEveryConfigExampleInEveryPageIsOneThisCanRead(t *testing.T) {
 	if found < 3 {
 		t.Fatalf("found %d config examples across the docs, which is fewer than there are", found)
 	}
+}
+
+// shapesProblemsProduce is every warning the fixtures below render, with the
+// quoted values replaced by %q so that only the wording is compared.
+//
+// The point is to compare an example in the documentation against what the
+// code SAYS rather than against how the message happens to be written.
+func shapesProblemsProduce(t *testing.T) []string {
+	t.Helper()
+
+	broken := []func(*Config){
+		func(c *Config) { c.Mode = "shh" },
+		func(c *Config) { c.Placement = "tabb" },
+		func(c *Config) { c.Scope = "sharedd" },
+		func(c *Config) { c.LabelFormat = "{host}" },
+		func(c *Config) { c.WorkspaceFormat = "everything" },
+		func(c *Config) { c.WorkspaceFormatDown = "everything" },
+		func(c *Config) { c.Hosts = []Host{{Target: "bot", Mode: "attatch"}} },
+		func(c *Config) { c.Hosts = []Host{{Target: "bot", Placement: "splitt"}} },
+		func(c *Config) { c.Hosts = []Host{{Target: "bot"}, {Target: "bot"}} },
+		func(c *Config) { c.Hosts = []Host{{Target: "web"}, {Target: "db", Label: "web"}} },
+	}
+
+	quoted := regexp.MustCompile(`"[^"]*"`)
+	var shapes []string
+	for _, breakOne := range broken {
+		cfg := Defaults()
+		breakOne(&cfg)
+		for _, problem := range cfg.Problems() {
+			shapes = append(shapes, quoted.ReplaceAllString(problem, "%q"))
+		}
+	}
+
+	// Self-verifying: a fixture list that stopped producing warnings would
+	// make every check above pass by having nothing to disagree with.
+	if len(shapes) < len(broken) {
+		t.Fatalf("%d fixtures produced only %d warnings between them, so this is "+
+			"holding almost nothing: %v", len(broken), len(shapes), shapes)
+	}
+	return shapes
 }

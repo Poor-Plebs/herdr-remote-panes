@@ -615,3 +615,34 @@ func TestTheWarningAboutAPerHostPlacementSaysTheTopLevelOneWillNotSaveIt(t *test
 			quiet.Target, other.Placement)
 	}
 }
+
+// TestEveryPlacementTheConfigAcceptsIsOneThisPackageHandles ties the list of
+// valid placements to the switch that acts on them.
+//
+// The config builds its complaints from that list now, so adding a value there
+// updates every sentence by itself -- which makes adding one look safer than
+// it is. Nothing taught this package about it: an unhandled placement falls to
+// the default and opens a tab, exactly as a misspelling does. So the config
+// would accept the value, say nothing, and quietly ignore it.
+func TestEveryPlacementTheConfigAcceptsIsOneThisPackageHandles(t *testing.T) {
+	// What a value this package does not know gives. A pane to sit beside is
+	// passed so that the split branches have somewhere to go and are told
+	// apart from the fallback.
+	fallback := planPaneTarget("nonesuch", "w1", "w1:p2")
+
+	for _, placement := range config.Placements() {
+		got := planPaneTarget(placement, "w1", "w1:p2")
+		if placement == placementTab {
+			// A tab is what the fallback already is, so this one cannot be
+			// told apart from an unhandled value and does not need to be.
+			if got != fallback {
+				t.Errorf("placement %q should be the same as the fallback, and gave %+v", placement, got)
+			}
+			continue
+		}
+		if got == fallback {
+			t.Errorf("the config accepts placement %q and this package has no case for it, "+
+				"so it opens a tab like a misspelling would: %+v", placement, got)
+		}
+	}
+}

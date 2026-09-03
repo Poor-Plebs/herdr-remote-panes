@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -21,15 +22,17 @@ func (c Config) Problems() []string {
 
 	if !knownMode(c.Mode) {
 		problems = append(problems, fmt.Sprintf(
-			"mode %q is not one of ssh, attach or observe; machines default to a plain SSH terminal", c.Mode))
+			"mode %q is not one of %s; machines default to a plain SSH terminal",
+			c.Mode, orList(modes)))
 	}
 	if !knownPlacement(c.Placement) {
 		problems = append(problems, fmt.Sprintf(
-			"placement %q is not one of follow, split, tab, zoomed or overlay; terminals will open as tabs", c.Placement))
+			"placement %q is not one of %s; terminals will open as tabs",
+			c.Placement, orList(placements)))
 	}
-	if c.Scope != ScopeShared && c.Scope != ScopeAll {
+	if !knownScope(c.Scope) {
 		problems = append(problems, fmt.Sprintf(
-			"scope %q is not shared or all; only the shared space is mirrored", c.Scope))
+			"scope %q is not %s; only the shared space is mirrored", c.Scope, orList(scopes)))
 	}
 	// {pane} tells them apart as well as {name} does: it is the terminal's own
 	// id and no two share one, so a format built on it is not the fault this
@@ -231,35 +234,65 @@ func (c Config) Problems() []string {
 		// nothing above them to fall back to.
 		if host.Mode != "" && !knownMode(host.Mode) {
 			problems = append(problems, fmt.Sprintf(
-				"host %q has mode %q, which is not one of ssh, attach or observe; it opens "+
-					"a plain SSH terminal, and a mode set for the rest does not reach it",
-				host.Target, host.Mode))
+				"host %q has mode %q, which is not one of %s; it opens a plain SSH "+
+					"terminal, and a mode set for the rest does not reach it",
+				host.Target, host.Mode, orList(modes)))
 		}
 		if host.Placement != "" && !knownPlacement(host.Placement) {
 			problems = append(problems, fmt.Sprintf(
-				"host %q has placement %q, which is not one of follow, split, tab, zoomed "+
-					"or overlay; its terminals open as tabs, and a placement set for the "+
-					"rest does not reach it",
-				host.Target, host.Placement))
+				"host %q has placement %q, which is not one of %s; its terminals open as "+
+					"tabs, and a placement set for the rest does not reach it",
+				host.Target, host.Placement, orList(placements)))
 		}
 	}
 	return problems
 }
 
-func knownMode(mode Mode) bool {
-	switch mode {
-	case ModeSSH, ModeAttach, ModeObserve:
-		return true
+// The values each of these settings takes, in the order its complaint lists
+// them. Every complaint below is BUILT from one of these rather than writing
+// the values out again, because a hand-written list goes stale in silence: at
+// d23f616 a sixth value added to knownPlacement passed the whole suite, and so
+// did dropping a value from either per-host sentence. Only the top-level
+// placement sentence was held, and only because a test matched it whole.
+var (
+	modes      = []Mode{ModeSSH, ModeAttach, ModeObserve}
+	placements = []string{"follow", "split", "tab", "zoomed", "overlay"}
+	scopes     = []string{ScopeShared, ScopeAll}
+)
+
+// orList writes a list the way these complaints read it: "shared or all",
+// "ssh, attach or observe", "follow, split, tab, zoomed or overlay".
+func orList[T ~string](values []T) string {
+	if len(values) == 0 {
+		return ""
 	}
-	return false
+	all := make([]string, len(values))
+	for i, v := range values {
+		all[i] = string(v)
+	}
+	if len(all) == 1 {
+		return all[0]
+	}
+	return strings.Join(all[:len(all)-1], ", ") + " or " + all[len(all)-1]
+}
+
+func knownMode(mode Mode) bool {
+	return slices.Contains(modes, mode)
+}
+
+// Placements lists the values the placement setting takes, for the package
+// that acts on them: internal/syncd holds every one of these to a case of its
+// own, so a value added here cannot quietly start opening tabs.
+func Placements() []string {
+	return slices.Clone(placements)
 }
 
 func knownPlacement(placement string) bool {
-	switch placement {
-	case "follow", "split", "tab", "zoomed", "overlay":
-		return true
-	}
-	return false
+	return slices.Contains(placements, placement)
+}
+
+func knownScope(scope string) bool {
+	return slices.Contains(scopes, scope)
 }
 
 // ValidTarget reports why a target is unsafe to hand ssh, or nil.

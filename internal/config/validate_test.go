@@ -1750,3 +1750,86 @@ func TestTheWarningAboutAPerHostModeSaysTheTopLevelOneWillNotSaveIt(t *testing.T
 		t.Errorf("the machine that said nothing should mirror, since the top level is attach")
 	}
 }
+
+// TestEveryValueASettingTakesIsNamedInTheComplaintAboutIt is the guard that
+// makes the generated lists worth generating.
+//
+// Each of these complaints used to write its values out as prose, and nothing
+// held the prose to the predicate. Measured at d23f616: a sixth value added to
+// knownPlacement passed every test in config, syncd and picker, and so did
+// dropping a value from either per-host sentence -- only the top-level
+// placement sentence was held, and only because a test happened to match it
+// whole. So a value added to one of these settings left up to four sentences
+// telling somebody it was invalid.
+//
+// Building the sentence from the list makes that impossible rather than
+// merely tested, and this fails if anybody writes one out by hand again.
+func TestEveryValueASettingTakesIsNamedInTheComplaintAboutIt(t *testing.T) {
+	settings := []struct {
+		name   string
+		values []string
+		bad    func(*Config, string)
+	}{
+		{"mode", asStrings(modes), func(c *Config, v string) { c.Mode = Mode(v) }},
+		{"placement", placements, func(c *Config, v string) { c.Placement = v }},
+		{"scope", scopes, func(c *Config, v string) { c.Scope = v }},
+		{"host mode", asStrings(modes), func(c *Config, v string) {
+			c.Hosts = []Host{{Target: "bot", Mode: Mode(v)}}
+		}},
+		{"host placement", placements, func(c *Config, v string) {
+			c.Hosts = []Host{{Target: "bot", Placement: v}}
+		}},
+	}
+
+	for _, s := range settings {
+		cfg := Defaults()
+		s.bad(&cfg, "nonesuch")
+		problems := cfg.Problems()
+		if len(problems) != 1 {
+			t.Fatalf("%s: one bad value reported %d problems: %v", s.name, len(problems), problems)
+		}
+		for _, value := range s.values {
+			if !strings.Contains(problems[0], value) {
+				t.Errorf("%s takes %q, and the complaint about a bad one does not name it: %q",
+					s.name, value, problems[0])
+			}
+		}
+
+		// The other half: every value named really is accepted. Without this,
+		// a sentence listing values nothing takes would pass the loop above.
+		for _, value := range s.values {
+			ok := Defaults()
+			s.bad(&ok, value)
+			if problems := ok.Problems(); len(problems) != 0 {
+				t.Errorf("%s: %q is named as a value it takes, and setting it reported %v",
+					s.name, value, problems)
+			}
+		}
+	}
+}
+
+func asStrings(modes []Mode) []string {
+	out := make([]string, len(modes))
+	for i, m := range modes {
+		out[i] = string(m)
+	}
+	return out
+}
+
+// TestTheValuesAreListedTheWayASentenceReadsThem holds the joiner itself,
+// since every complaint above is built with it.
+func TestTheValuesAreListedTheWayASentenceReadsThem(t *testing.T) {
+	for _, c := range []struct {
+		values []string
+		want   string
+	}{
+		{nil, ""},
+		{[]string{"one"}, "one"},
+		{[]string{"shared", "all"}, "shared or all"},
+		{[]string{"ssh", "attach", "observe"}, "ssh, attach or observe"},
+	} {
+		if got := orList(c.values); got != c.want {
+			t.Errorf("orList(%v) = %q, want %q", c.values, got, c.want)
+		}
+	}
+}
