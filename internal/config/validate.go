@@ -185,9 +185,17 @@ func (c Config) Problems() []string {
 		// same kind of name -- a target is the address a machine is reached
 		// at, a label is what it is called here -- so this is not the
 		// collision above, and the machines are shown under different names.
-		// What it costs is that the name means one machine when typed and
-		// another when read: asking for it reaches the machine targeted that
-		// way, while the menu shows this one under it.
+		//
+		// What it costs is the label itself. A label reaches its machine when
+		// nothing else answers to that name; here the targeted machine answers
+		// first, so the one wearing the label cannot be reached by it at all.
+		//
+		// This used to say the menu showed this machine under the name, and
+		// that is not what the menu does. It draws "web (prod)" and gives the
+		// bare name to the machine targeted that way, which is the one you
+		// would reach by typing it -- and where two names would come out the
+		// same, namesWithin puts one back to its full form for exactly this
+		// reason. The menu is the half that gets this right.
 		if host.Label != "" {
 			for _, other := range c.Hosts {
 				if other.Disabled || other.Target != host.Label || other.Target == host.Target {
@@ -195,7 +203,8 @@ func (c Config) Problems() []string {
 				}
 				problems = append(problems, fmt.Sprintf(
 					"host %q is labelled %q, which is the target of another machine; "+
-						"asking for %q reaches that one, and the menu shows this one under it",
+						"asking for %q reaches that one, so this machine cannot be "+
+						"reached by the name it is labelled with",
 					host.Target, host.Label, host.Label))
 			}
 		}

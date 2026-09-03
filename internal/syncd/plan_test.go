@@ -4953,6 +4953,35 @@ func TestAMachineIsFoundByItsTargetBeforeAnothersLabel(t *testing.T) {
 	if got, err := swapped.hostConfig("prod"); err != nil || got.Target != "prod" {
 		t.Errorf("with the machines the other way round, prod gave %q (%v)", got.Target, err)
 	}
+
+	// What the complaint now says this costs, and what it used to say instead.
+	//
+	// It promised "the menu shows this one under it", and the menu does no such
+	// thing: it draws "web (prod)" and gives the bare name to the machine
+	// targeted that way, which is the one you reach by typing it. namesWithin
+	// puts a name back to its full form wherever two would come out alike, so
+	// the menu is the half that gets this right and there was nothing to warn
+	// about there.
+	//
+	// The cost is the label. A label reaches its machine when nothing else
+	// answers to that name; here the targeted machine answers first, so the
+	// machine wearing the label cannot be reached by it at all -- which is the
+	// whole of what a label is for.
+	if !strings.Contains(problems[0], "cannot be reached by the name it is labelled with") {
+		t.Fatalf("the complaint no longer says what the clash costs: %q", problems[0])
+	}
+
+	// The control, and it is what makes the line above mean anything: with
+	// nothing else targeted that way, the same label reaches the same machine.
+	alone := config.Defaults()
+	alone.Hosts = []config.Host{{Target: "web", Label: "prod"}}
+	if problems := alone.Problems(); len(problems) != 0 {
+		t.Fatalf("a label nothing else is targeted by was reported: %v", problems)
+	}
+	if got, err := New(alone).hostConfig("prod"); err != nil || got.Target != "web" {
+		t.Errorf("with nothing else targeted prod, the label should reach web, and gave "+
+			"%q (%v)", got.Target, err)
+	}
 }
 
 func TestASpaceBelongsToTheMachineWhoseNameItCarries(t *testing.T) {
