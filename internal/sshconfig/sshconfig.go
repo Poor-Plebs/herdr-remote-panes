@@ -282,6 +282,16 @@ func hostsRead(path string, depth int, read *reading) []string {
 			}
 		case "include":
 			for _, included := range fields[1:] {
+				// The same empty field the Host branch above skips, and it
+				// costs more here. An empty pattern is not an absolute path,
+				// so it is joined onto the directory the config sits in and
+				// matches ~/.ssh itself -- a directory, and so "not a regular
+				// file, so it is not read". That is the menu's one line for
+				// saying something is wrong, spent on a path nobody wrote,
+				// while every machine it lists is present and fine.
+				if included == "" {
+					continue
+				}
 				for _, match := range expand(included, read) {
 					for _, host := range hostsRead(match, depth+1, read) {
 						if !seen[host] {

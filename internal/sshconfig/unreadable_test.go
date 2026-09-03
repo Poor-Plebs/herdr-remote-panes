@@ -20,6 +20,34 @@ func TestNoSSHConfigIsNotAProblem(t *testing.T) {
 	}
 }
 
+func TestAnIncludeNamingNoFileDoesNotComplainAboutTheDirectory(t *testing.T) {
+	// `Include ""` is a line naming no file -- the same shape as the `Host ""`
+	// the Host branch calls ordinary, and it arrives the same way, through the
+	// rule that lets a name hold a space. An empty pattern is not absolute, so
+	// it was joined onto the directory the config sits in, matched ~/.ssh
+	// itself, and a directory is not a regular file. The menu has one line for
+	// saying something is wrong and it read "~/.ssh: not a regular file, so it
+	// is not read", about a path nobody had written, with every machine in the
+	// config present and correct underneath it.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := "Include \"\"\nHost bot\n"
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if why := Unreadable(); why != "" {
+		t.Errorf("an include naming no file complained: %q", why)
+	}
+	// And the line is skipped rather than the file abandoned at it.
+	if got := Hosts(); len(got) != 1 || got[0] != "bot" {
+		t.Errorf("aliases = %v, want [bot]", got)
+	}
+}
+
 func TestAnSSHConfigThatCannotBeReadIsSaidOutLoud(t *testing.T) {
 	// Hosts returns nothing when the file cannot be read, which is also what it
 	// returns when there is none -- so a file that is there and unreadable

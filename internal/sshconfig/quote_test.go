@@ -60,7 +60,18 @@ func TestSplitDirectiveKeepsWhatItAlwaysDid(t *testing.T) {
 		"":                          nil,
 		"   ":                       nil,
 		`Host "spaced name"`:        {"Host", "spaced name"},
-		`Include ~/.ssh/conf.d/*`:   {"Include", "~/.ssh/conf.d/*"},
+		// An empty pair of quotes is still a value. `Host ""` is a legal line
+		// naming nothing, and the branch reading Host lines skips the empty
+		// alias on purpose -- drop the field instead and that skip stands over
+		// nothing. Both halves of the rule, the one that opens a field and the
+		// one that closes it, could be deleted with every other test passing.
+		`Host ""`: {"Host", ""},
+		// And a quoted value ends where its quotes do: the second space must
+		// not flush an empty field between the two real ones. On an Include
+		// line that field is a path, and it names the directory the config is
+		// in rather than any file somebody wrote.
+		`Host "a"  b`:             {"Host", "a", "b"},
+		`Include ~/.ssh/conf.d/*`: {"Include", "~/.ssh/conf.d/*"},
 	}
 	for line, want := range cases {
 		got := splitDirective(line)
