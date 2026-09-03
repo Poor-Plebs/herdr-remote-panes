@@ -45,6 +45,16 @@ type Entry struct {
 	// because otherwise it is indistinguishable from an attach machine right
 	// up until somebody tries to type.
 	ReadOnly bool
+	// ReadOnlyByDefault says the machine's own entry does not choose a mode, so
+	// what made it read-only is the mode above the hosts list, which covers
+	// every machine that says nothing.
+	//
+	// Told apart because the two need different advice and only one of them can
+	// be acted on where the message used to point: a machine known only to
+	// ~/.ssh/config is not in the plugin's config at all, so "its mode is set to
+	// observe in your config" sent somebody to look up an entry that is not
+	// there.
+	ReadOnlyByDefault bool
 	// GaveUp marks a machine that could not be reached and is no longer being
 	// retried until it is connected to again.
 	GaveUp bool
@@ -158,8 +168,7 @@ func Run(do Actions) error {
 				// Two presses turned a machine chosen to be read-only into one
 				// that can be typed into, silently.
 				notice(text.Sanitize(entry.Target)+" is read-only",
-					"Its mode is set to observe in your config, and m does not change that.",
-					"Edit the config to change it. Press any key.")
+					readOnlyReason(entry), "Press any key.")
 				readKey()
 				break
 			}
@@ -437,6 +446,7 @@ func collect() ([]Entry, string) {
 		entry.Label = host.DisplayLabel()
 		entry.Mirroring = cfg.Mirrors(host)
 		entry.ReadOnly = cfg.EffectiveMode(host) == config.ModeObserve
+		entry.ReadOnlyByDefault = host.Mode == ""
 	}
 	for _, host := range sshconfig.Hosts() {
 		// An alias ssh would read as an option never arrives here: the
@@ -463,6 +473,7 @@ func collect() ([]Entry, string) {
 		// observe as well, and m must refuse it for the same reason.
 		if !entry.Configured {
 			entry.ReadOnly = cfg.EffectiveMode(config.Host{Target: host}) == config.ModeObserve
+			entry.ReadOnlyByDefault = true
 		}
 	}
 
@@ -510,6 +521,7 @@ func collect() ([]Entry, string) {
 			// what m would do to it is the top-level default, and observe
 			// refuses m for the reason it refuses it anywhere.
 			entry.ReadOnly = cfg.EffectiveMode(config.Host{Target: info.Target}) == config.ModeObserve
+			entry.ReadOnlyByDefault = true
 		}
 		entry.Connected = info.Connected
 		entry.Mirrors = info.Mirrors
@@ -1134,6 +1146,25 @@ func renderNotice(cols int, heading string, body ...string) string {
 		}
 	}
 	return b.String()
+}
+
+// readOnlyReason says what made a machine read-only, which decides where to go
+// and change it.
+//
+// A machine's own entry setting observe is the case the sentence was written
+// for. The other one is the mode above the hosts list, which covers every
+// machine that chooses none -- including one the plugin's config has never
+// heard of, picked out of ~/.ssh/config. Telling that reader their mode "is set
+// to observe in your config" sends them to look for an entry that is not there,
+// and telling them to edit it does not say which of the two things to edit.
+func readOnlyReason(entry Entry) string {
+	if entry.ReadOnlyByDefault {
+		return "Everything is set to observe by the mode above the hosts list " +
+			"in your config, and m does not change that. Change that setting, " +
+			"or give this machine a mode of its own."
+	}
+	return "Its mode is set to observe in your config, and m does not change " +
+		"that. Edit the machine's entry to change it."
 }
 
 // notice draws renderNotice at the popup's current size.

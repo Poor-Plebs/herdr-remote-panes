@@ -472,6 +472,72 @@ func TestTheToggleWillNotQuietlyMakeAReadOnlyMachineWritable(t *testing.T) {
 	}
 }
 
+// TestARefusedToggleSaysWhichSettingMadeItReadOnly holds where the refusal
+// sends somebody, which is not the same for the two ways a machine gets there.
+//
+// A machine whose own entry says observe can be edited where the message
+// pointed. A machine that says nothing is read-only because of the mode above
+// the hosts list, which covers every machine that chooses none -- and one known
+// only to ~/.ssh/config is not in the plugin's config at all, so "its mode is
+// set to observe in your config" sent that reader to look up an entry that does
+// not exist, and "edit the config to change it" did not say which of the two
+// things to edit.
+//
+// Measured before the fix: with `{"mode":"observe"}` and no hosts, a machine
+// out of ~/.ssh/config comes back ReadOnly with Configured false.
+//
+// The test above already presses m in both configurations and checks the mode
+// is not changed; what it checks of the words is "read-only", "observe" and
+// "config", which both sentences contain. So it holds that something is said
+// and not which.
+func TestARefusedToggleSaysWhichSettingMadeItReadOnly(t *testing.T) {
+	for _, tt := range []struct {
+		what    string
+		config  string
+		want    string
+		notWant string
+	}{
+		{
+			what:    "the machine's own entry says observe",
+			config:  `{"hosts":[{"target":"alpha","mode":"observe"}]}`,
+			want:    "Edit the machine's entry",
+			notWant: "above the hosts list",
+		},
+		{
+			what:    "the mode above the hosts list makes everything observe",
+			config:  `{"mode":"observe"}`,
+			want:    "above the hosts list",
+			notWant: "Edit the machine's entry",
+		},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			// m, then a key to dismiss what it says.
+			got := runMenuConfigured(t, threeMachines, tt.config, "m ")
+			if len(got.modes) != 0 {
+				t.Fatalf("pressing m asked for %v, want no change at all -- this is "+
+					"not the refusal this is about", got.modes)
+			}
+			// The words, not where the popup breaks them: the notice is wrapped
+			// to the terminal, and the first draft of this looked for a phrase
+			// the wrap had split down the middle.
+			said := strings.Join(strings.Fields(visible(got.drawn)), " ")
+			if !strings.Contains(said, "read-only") {
+				t.Fatalf("nothing refused the toggle, so there is no sentence to "+
+					"check:\n%s", said)
+			}
+			if !strings.Contains(said, tt.want) {
+				t.Errorf("the refusal does not say %q, so it does not say where to "+
+					"go and change it:\n%s", tt.want, said)
+			}
+			// And not the other one, which points somewhere that will not help.
+			if strings.Contains(said, tt.notWant) {
+				t.Errorf("the refusal says %q, which is the other case:\n%s",
+					tt.notWant, said)
+			}
+		})
+	}
+}
+
 func TestAReadOnlyMachineSaysSoBeforeAnybodyTriesToType(t *testing.T) {
 	// Observe mirrors a machine's terminals and does not let you type into
 	// them. The line said "mirrored" for both it and attach, so the two were
