@@ -1435,9 +1435,16 @@ func (d *Daemon) connect(host config.Host) error {
 				// Named the remedy, because there usually is one: herdr is
 				// commonly installed somewhere the PATH an SSH session gets
 				// does not reach, and herdr_bin is how to say where.
-				log.Printf("%s: no herdr on the machine's PATH, so plain ssh terminals; "+
-					"if it is installed elsewhere there, set herdr_bin for this machine",
-					host.Target)
+				//
+				// Which remedy, though, depends on how the binary was chosen.
+				// ErrNoHerdr covers both "the PATH an ssh session gets has no
+				// herdr" and "the herdr_bin you set did not run" -- Bin()
+				// returns a configured path verbatim without probing at all,
+				// so for that machine the PATH was never consulted. Saying
+				// "no herdr on the machine's PATH ... set herdr_bin" there was
+				// wrong twice over, and told somebody to set the very setting
+				// that was already set and was the fault.
+				log.Printf("%s", noHerdrAdvice(host.Target, d.config().BinFor(host)))
 				sshOnly = true
 				noHerdr = true
 			} else {
@@ -1524,6 +1531,28 @@ func restoreFromSnapshot(state *hostSync, saved hostSnapshot) {
 	}
 	state.restoreShells = saved.Shells
 	state.restoreShellsAs = append([]string(nil), saved.ShellPlacements...)
+}
+
+// noHerdrAdvice is what to say when a machine has no working Herdr, which
+// depends on how the binary was chosen.
+//
+// ErrNoHerdr covers two different situations: the PATH an ssh session gets has
+// no herdr on it, and the herdr_bin somebody set did not run. remote.Bin()
+// returns a configured path verbatim without probing, so for that machine the
+// PATH was never consulted. One sentence covered both and was wrong twice over
+// for the second -- it named a PATH that was never looked at, and told
+// somebody to set the very setting that was already set and was the fault.
+//
+// The path is named, because it is the thing to go and check and the caller
+// already has it.
+func noHerdrAdvice(target, bin string) string {
+	if bin == "" {
+		return fmt.Sprintf("%s: no herdr on the machine's PATH, so plain ssh terminals; "+
+			"if it is installed elsewhere there, set herdr_bin for this machine", target)
+	}
+	return fmt.Sprintf("%s: herdr_bin is %s and it did not run there, so plain ssh "+
+		"terminals; check that path on the machine, or unset herdr_bin to look on "+
+		"its PATH", target, bin)
 }
 
 // prepareRemote makes sure the host has a Herdr session answering, starting one

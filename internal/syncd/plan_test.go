@@ -5235,3 +5235,85 @@ func TestEveryLineNamingTheMachineStripsItFromTheCause(t *testing.T) {
 		t.Fatal("no call to summarizeError was examined, so this holds nothing")
 	}
 }
+
+// TestTheAdviceForAMachineWithNoHerdrDependsOnHowItWasLookedFor holds a
+// message whose condition was wider than its claim.
+//
+// remote.ErrNoHerdr covers two situations, and the daemon said the same
+// sentence for both: "no herdr on the machine's PATH ... set herdr_bin for
+// this machine". Measured against internal/remote: with herdr_bin unset the
+// error is "bot: no herdr on the remote host"; with herdr_bin set to a path
+// that does not run it is "bot: /opt/nowhere/herdr did not run: no herdr on
+// the remote host" -- and remote.Bin() returns a configured path verbatim
+// without probing, so the PATH was never consulted at all. The sentence was
+// wrong twice over there, and its advice was to set the setting that was
+// already set and was the fault.
+func TestTheAdviceForAMachineWithNoHerdrDependsOnHowItWasLookedFor(t *testing.T) {
+	const target = "bot"
+
+	looked := noHerdrAdvice(target, "")
+	if !strings.Contains(looked, "PATH") {
+		t.Errorf("with no herdr_bin the PATH really is what was searched, and the "+
+			"advice does not say so: %q", looked)
+	}
+	if !strings.Contains(looked, "set herdr_bin") {
+		t.Errorf("with no herdr_bin, setting one is the remedy and is not offered: %q", looked)
+	}
+
+	const bin = "/opt/nowhere/herdr"
+	configured := noHerdrAdvice(target, bin)
+	if strings.Contains(configured, "PATH, so plain ssh") {
+		t.Errorf("a configured herdr_bin is used without probing, so the PATH was not "+
+			"searched and the advice should not say it was: %q", configured)
+	}
+	if !strings.Contains(configured, bin) {
+		t.Errorf("the path that did not run is the thing to go and check, and is not "+
+			"named: %q", configured)
+	}
+	// The remedy has to differ too, or naming the path is decoration: telling
+	// somebody to set herdr_bin when it is set is the fault being reported.
+	if strings.Contains(configured, "set herdr_bin for this machine") {
+		t.Errorf("herdr_bin is already set here, and the advice is to set it: %q", configured)
+	}
+	if !strings.Contains(configured, "unset herdr_bin") {
+		t.Errorf("the way back to the PATH search is not offered: %q", configured)
+	}
+
+	// Both name the machine, since this goes into a log beside other machines.
+	for _, line := range []string{looked, configured} {
+		if !strings.HasPrefix(line, target+":") {
+			t.Errorf("the line does not say which machine it is about: %q", line)
+		}
+	}
+	// And they are genuinely different sentences, which is the whole point.
+	if looked == configured {
+		t.Errorf("both cases say the same thing: %q", looked)
+	}
+}
+
+// TestTheNoHerdrBranchUsesTheAdviceHelper holds the CALL SITE, because the
+// helper's own test does not: replacing the log line with a hardcoded sentence
+// left every assertion above passing.
+//
+// The same gap as summarizeErrorFor, one iteration later, which is why this is
+// checked rather than reasoned about.
+func TestTheNoHerdrBranchUsesTheAdviceHelper(t *testing.T) {
+	source, err := os.ReadFile("daemon.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const anchor = "errors.Is(err, remote.ErrNoHerdr) {"
+	at := strings.Index(string(source), anchor)
+	if at < 0 {
+		t.Fatalf("the branch this is about is not in daemon.go any more, so this "+
+			"holds nothing: looked for %q", anchor)
+	}
+	// The branch, not the whole file: a call anywhere else would satisfy a
+	// plain Contains.
+	branch := string(source)[at : at+900]
+	if !strings.Contains(branch, "noHerdrAdvice(") {
+		t.Errorf("the no-herdr branch says something of its own instead of asking "+
+			"noHerdrAdvice, so the advice no longer depends on how the binary was "+
+			"looked for:\n%s", branch)
+	}
+}
