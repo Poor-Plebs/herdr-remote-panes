@@ -111,6 +111,7 @@ func (c Config) Problems() []string {
 	}
 
 	problems = append(problems, c.ignored...)
+	problems = append(problems, c.repeated...)
 	for _, name := range c.unknown {
 		problems = append(problems, fmt.Sprintf(
 			"%q is not a setting and is being ignored", name))

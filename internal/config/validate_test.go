@@ -1975,6 +1975,118 @@ func TestAHostKeyTheDecoderAppliesIsNotReportedAsIgnored(t *testing.T) {
 	}
 }
 
+// repeatComplaint returns the complaint about a setting written twice, if the
+// config made one.
+func repeatComplaint(c Config) string {
+	for _, p := range c.Problems() {
+		if strings.Contains(p, "is written") && strings.Contains(p, "times") {
+			return p
+		}
+	}
+	return ""
+}
+
+// TestASettingWrittenTwiceIsSaidOutLoud holds a silence somebody could lose
+// work to.
+//
+// The decoder takes an exact key match if there is one and folds otherwise, so
+// a file naming both "mode" and "Mode" has written one setting twice and only
+// one of them runs. Every check this package has stayed quiet: the keys are
+// both known, so unknownKeys says nothing; both values are usable, so
+// ignoredValues says nothing; and Describe prints mode once, at the value that
+// won, which is exactly what the file looks like it says. So somebody edits the
+// line they can see, nothing changes, and there is nothing anywhere to read.
+func TestASettingWrittenTwiceIsSaidOutLoud(t *testing.T) {
+	cfg := loadConfigFrom(t, `{"mode":"ssh","Mode":"attach","hosts":[]}`)
+	said := repeatComplaint(cfg)
+	if said == "" {
+		t.Fatalf("a file naming mode twice complained about nothing: %v", cfg.Problems())
+	}
+	// It names the setting AND both spellings, because the whole difficulty is
+	// that the file looks right: without the spellings there is nothing to go
+	// and delete.
+	for _, want := range []string{"mode", `"Mode"`, `"mode"`} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the complaint does not name %s: %q", want, said)
+		}
+	}
+
+	// The zero-edge control. Without it, a check that complained about every
+	// setting the file names would pass everything above.
+	only := loadConfigFrom(t, `{"mode":"ssh","hosts":[]}`)
+	if said := repeatComplaint(only); said != "" {
+		t.Errorf("a file naming mode once was reported as naming it twice: %q", said)
+	}
+	// And a key that is no setting at all under either spelling is unknownKeys'
+	// to report, not this one's -- or the two checks say the same thing twice.
+	junk := loadConfigFrom(t, `{"Nonsense":1,"nonsense":2,"hosts":[]}`)
+	if said := repeatComplaint(junk); said != "" {
+		t.Errorf("a repeated NON-setting was reported as a repeated setting: %q", said)
+	}
+	if len(junk.Problems()) == 0 {
+		t.Error("a key that names no setting should still be reported as unknown")
+	}
+}
+
+// TestASettingWrittenTwiceIsStillReportedAfterAToggle holds the complaint on
+// the other path that builds a configuration.
+//
+// The same hole TestUnknownSettingsSurviveAToggle above was written for:
+// pressing m hands the daemon a configuration built from the file directly
+// rather than through Load, so a complaint wired into one and not the other
+// disappears from the menu on a keypress, with the file unchanged and still
+// naming the setting twice. Reverting just that one line passes every other
+// test in this package, which is how the sibling came to be missing before.
+func TestASettingWrittenTwiceIsStillReportedAfterAToggle(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	raw := `{"mode":"ssh","Mode":"attach","hosts":[{"target":"bot"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeatComplaint(loaded) == "" {
+		t.Fatalf("Load did not report the setting written twice: %v", loaded.Problems())
+	}
+
+	toggled, err := SetHostMode("bot", ModeAttach)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeatComplaint(toggled) == "" {
+		t.Errorf("after a toggle the setting written twice is no longer reported: %v",
+			toggled.Problems())
+	}
+}
+
+// TestTheSpellingThatRunsIsTheLastOneInTheFile holds the claim the complaint
+// makes about which of them wins.
+//
+// The sentence tells somebody the last one runs, which is a claim about the
+// decoder rather than about this package: encoding/json assigns each key of an
+// object in the order it is written, so the final assignment is the one left
+// standing, and it does not matter which spelling is the exact one. Held both
+// ways round, because with one order the two answers agree by accident.
+//
+// Nothing in this package can break this test. That is the point of it: if a
+// future Go decoded objects some other way, the complaint would be telling
+// people to look at the wrong line, and this is what would say so.
+func TestTheSpellingThatRunsIsTheLastOneInTheFile(t *testing.T) {
+	exactLast := loadConfigFrom(t, `{"Mode":"attach","mode":"ssh","hosts":[]}`)
+	if exactLast.Mode != ModeSSH {
+		t.Errorf("mode = %q, want the later key's value (ssh)", exactLast.Mode)
+	}
+	foldedLast := loadConfigFrom(t, `{"mode":"ssh","Mode":"attach","hosts":[]}`)
+	if foldedLast.Mode != ModeAttach {
+		t.Errorf("mode = %q, want the later key's value (attach) -- the exact "+
+			"spelling does not win by being exact", foldedLast.Mode)
+	}
+}
+
 // loadConfigFrom writes a config file and loads it, which is the only way to
 // reach the checks about what the file names: they read the raw bytes.
 func loadConfigFrom(t *testing.T, content string) Config {

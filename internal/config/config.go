@@ -98,6 +98,11 @@ type Config struct {
 	// first run writes nothing down that is most of them. Kept so that a value
 	// somebody chose can be told from one that came with the version.
 	written []string
+	// repeated holds the settings the file names more than once under
+	// spellings that differ only in case. Kept for the same reason as ignored
+	// above: one of them is running and the rest are dead text, and the file
+	// gives a reader no way to tell which.
+	repeated []string
 	// unknown holds settings read from the file that mean nothing here. Not a
 	// setting itself, so it is neither read from nor written back to JSON.
 	unknown []string
@@ -256,6 +261,7 @@ func Load() (Config, error) {
 	cfg = cfg.normalized()
 	cfg.unknown = unknownKeys(raw)
 	cfg.ignored = ignoredValues(raw)
+	cfg.repeated = repeatedSettings(raw)
 	cfg.written = writtenKeys(raw)
 	return cfg, nil
 }
@@ -451,6 +457,64 @@ func ignoredValues(raw []byte) []string {
 	return []string{fmt.Sprintf(
 		"max_mirrors is %d, which is not a cap on anything; mirroring stays capped at %d",
 		cap, Defaults().MaxMirrors)}
+}
+
+// repeatedSettings lists settings the file names more than once.
+//
+// Two keys are one setting when they differ only in case, because the decoder
+// takes an exact match if there is one and folds otherwise -- so a file saying
+// both "mode" and "Mode" has written one setting twice, and only one of them
+// can be in force. Which one is decided by the order they appear in the file:
+// measured both ways round, the later wins, and it wins whether or not it is
+// the exact spelling.
+//
+// Nothing said anything about it. unknownKeys is quiet because both spellings
+// ARE known, ignoredValues because both values are usable, and Describe prints
+// the setting once with the value that won -- so the line that lost looks, to
+// somebody reading their own file, exactly like the line that is running.
+//
+// Only spellings that DIFFER can be seen from here. A key written twice
+// byte-for-byte collapses in the map this parse produces, and finding that
+// would mean reading the document as a stream of tokens rather than a map.
+// Only the top level, too: a machine entry can name the same setting twice and
+// the reasoning is the same, but the complaint would have to say which machine,
+// which is a different sentence rather than a longer one.
+func repeatedSettings(raw []byte) []string {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return nil
+	}
+	known := jsonNames(reflect.TypeOf(Config{}))
+	spellings := map[string][]string{}
+	for name := range top {
+		field, ok := fieldFor(known, name)
+		if !ok {
+			// Not a setting at all, which unknownKeys is the one to say.
+			continue
+		}
+		spellings[field] = append(spellings[field], name)
+	}
+
+	var out []string
+	for field, names := range spellings {
+		if len(names) < 2 {
+			continue
+		}
+		// Sorted so the sentence reads the same twice running: these come out
+		// of a map, and the file's own order is not what this can see.
+		sort.Strings(names)
+		quoted := make([]string, len(names))
+		for i, name := range names {
+			quoted[i] = fmt.Sprintf("%q", name)
+		}
+		out = append(out, fmt.Sprintf(
+			"%s is written %d times, as %s and %s; those are one setting here, so the "+
+				"last of them in the file is what runs and the others do nothing",
+			field, len(names),
+			strings.Join(quoted[:len(quoted)-1], ", "), quoted[len(quoted)-1]))
+	}
+	sort.Strings(out)
+	return out
 }
 
 // writtenKeys is the settings the file names that this version knows about.
@@ -788,6 +852,7 @@ func loadRaw() (Config, error) {
 	// file unchanged and still wrong.
 	cfg.unknown = unknownKeys(raw)
 	cfg.ignored = ignoredValues(raw)
+	cfg.repeated = repeatedSettings(raw)
 	cfg.written = writtenKeys(raw)
 	return cfg, nil
 }
