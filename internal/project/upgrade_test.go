@@ -77,6 +77,26 @@ func TestAnUpgradeHandsTheSocketOver(t *testing.T) {
 		return false
 	}
 
+	// The same wait, for what was said rather than for what answers. The
+	// daemon writes this line before it serves, so a socket that answers means
+	// it has been written -- but it travels through a pipe and into the buffer
+	// on another goroutine, and that has no reason to have happened yet. Read
+	// once, this failed under a loaded `make check` with the daemon perfectly
+	// healthy, which teaches whoever sees it to run the gate again rather than
+	// read it.
+	saidSoon := func(said *saidWhat, want string, within time.Duration) bool {
+		deadline := time.Now().Add(within)
+		for {
+			if strings.Contains(said.String(), want) {
+				return true
+			}
+			if !time.Now().Before(deadline) {
+				return false
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+
 	old, oldSaid := daemon()
 	defer func() { _ = old.Process.Kill() }()
 	if !answering(10 * time.Second) {
@@ -86,7 +106,7 @@ func TestAnUpgradeHandsTheSocketOver(t *testing.T) {
 	// with "starting" and nothing after it reads the same whether it came up
 	// or the coming up is what failed. This is the line that tells them apart,
 	// and it is the first thing to look for in a report of no daemon.
-	if !strings.Contains(oldSaid.String(), "listening on") {
+	if !saidSoon(oldSaid, "listening on", 10*time.Second) {
 		t.Errorf("the daemon never said where it was listening:\n%s", oldSaid)
 	}
 
