@@ -66,52 +66,75 @@ func main() {
 		fmt.Printf("%-24s ok\n", name)
 	}
 
-	// The pages send a reader to Herdr commands this plugin never runs, so
-	// they are not in Dependencies and nothing above has looked at them. Only
-	// the commands: a flag the documentation passes is not checked here, and
-	// that gap is worth knowing about rather than being papered over by a
-	// summary line that says everything was looked at.
+	// Two more sources of commands, neither of them in Dependencies. The pages
+	// send a reader to Herdr directly, and so do the plugin's own messages --
+	// what to run when a machine's session is not up, where to look when the
+	// daemon cannot be reached. The plugin runs none of those; it prints them
+	// for somebody else to type, which is exactly why nothing was watching.
 	docs, err := docCommands(".")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(2)
 	}
+	said, err := messageCommands(".")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(2)
+	}
+
 	fmt.Println()
-	for _, doc := range docs {
-		name := strings.Join(doc.command, " ")
-		help, ok := helpFor(bin, doc.command)
+	problems += askAbout(bin, docs, "the pages give it at")
+	fmt.Println()
+	problems += askAbout(bin, said, "a message gives it at")
+
+	fmt.Println()
+	total := len(herdrcli.Dependencies) + len(docs) + len(said)
+	if problems > 0 {
+		fmt.Printf("%d of %d commands are not what this plugin, its pages and its messages expect\n",
+			problems, total)
+		os.Exit(1)
+	}
+	fmt.Printf("all %d commands take what this plugin sends, and all %d it tells somebody "+
+		"to run exist and take the %d flags given with them\n",
+		len(herdrcli.Dependencies), len(docs)+len(said), passedFlags(docs)+passedFlags(said))
+}
+
+// askAbout asks Herdr about every command something tells somebody to run, and
+// returns how many of them it no longer has or no longer takes.
+func askAbout(bin string, told []toldCommand, gives string) int {
+	problems := 0
+	for _, one := range told {
+		name := strings.Join(one.command, " ")
+		help, ok := helpFor(bin, one.command)
 		if !ok {
 			problems++
 			fmt.Printf("%-24s no such command in this Herdr, and %s sends somebody to it\n",
-				name, strings.Join(doc.where, ", "))
+				name, strings.Join(one.where, ", "))
 			continue
 		}
 		gone := []string{}
-		for _, flag := range sortedFlags(doc.flags) {
+		for _, flag := range sortedFlags(one.flags) {
 			if !hasFlag(help, flag) {
-				gone = append(gone, fmt.Sprintf("%s (%s)", flag, strings.Join(doc.flags[flag], ", ")))
+				gone = append(gone, fmt.Sprintf("%s (%s)", flag, strings.Join(one.flags[flag], ", ")))
 			}
 		}
 		if len(gone) > 0 {
 			problems++
-			fmt.Printf("%-24s no longer takes what the pages pass it: %s\n", name, strings.Join(gone, ", "))
+			fmt.Printf("%-24s no longer takes what it is given: %s\n", name, strings.Join(gone, ", "))
 			continue
 		}
-		fmt.Printf("%-24s ok, given in %s\n", name, strings.Join(doc.where, ", "))
+		fmt.Printf("%-24s ok, %s %s\n", name, gives, strings.Join(one.where, ", "))
 	}
+	return problems
+}
 
-	fmt.Println()
-	if problems > 0 {
-		fmt.Printf("%d of %d commands are not what this plugin and its pages expect\n",
-			problems, len(herdrcli.Dependencies)+len(docs))
-		os.Exit(1)
+// passedFlags counts the flags given with these commands.
+func passedFlags(told []toldCommand) int {
+	n := 0
+	for _, one := range told {
+		n += len(one.flags)
 	}
-	passed := 0
-	for _, doc := range docs {
-		passed += len(doc.flags)
-	}
-	fmt.Printf("all %d commands take what this plugin sends, and all %d the pages give exist "+
-		"and take the %d flags passed with them\n", len(herdrcli.Dependencies), len(docs), passed)
+	return n
 }
 
 // sortedFlags names the flags an invocation passes, in a fixed order so two

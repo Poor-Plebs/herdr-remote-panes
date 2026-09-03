@@ -278,6 +278,26 @@ the pages give a dozen, so an empty answer means this ran outside the tree, or
 that they stopped being written the way it reads them. Both otherwise print the
 same reassuring line as a run that looked and was satisfied.
 
+It reads the plugin's own messages as well. A machine whose session is not up
+is listed as "run `herdr session attach` there"; the menu says to check
+`herdr plugin log list` when it cannot reach the daemon; the advice under a
+failed connection tells somebody to invoke an action by hand. The plugin runs
+none of those -- it prints them for somebody else to type -- so they are not in
+`Dependencies` either, and they drift where it costs most, because every one of
+them is shown to somebody who already has a problem.
+
+Where a command starts there is not the rule the pages use. In a page a line
+beginning with the word is a command, since an indented block is how a page
+shows one. A message begins with the word and means nothing by it -- a
+machine's row reads `· herdr not found` -- so only what sits inside backticks
+counts, which is how every instruction in them is already written. A message is
+also wrapped where the line runs out rather than where the command ends, so the
+pieces of a concatenation are joined before being read: apart, the two halves
+of that advice read as `plugin action` and lose the word saying which action,
+which is the word a rename would take. What is computed rather than written
+becomes a character no command is made of, so a message building its own verb
+ends the command there instead of inventing one out of what follows.
+
 `make vuln` is not part of `make check`, and deliberately: it needs the network
 and asks a database that changes without the code changing, so it can start
 failing on a machine that has been left alone overnight — which is how a check

@@ -8,10 +8,12 @@ import (
 	"strings"
 )
 
-// docCommand is a `herdr ...` invocation the documentation tells somebody to
-// run, every place it is given, and the flags the pages pass with it against
-// the places that pass them.
-type docCommand struct {
+// toldCommand is a `herdr ...` invocation something in this repository tells
+// somebody to run, every place it is given, and the flags passed with it
+// against the places that pass them. The pages give some of these and the
+// plugin's own messages give the rest; both are read the same way, because
+// both are somebody being told to type a command.
+type toldCommand struct {
 	command []string
 	where   []string
 	flags   map[string][]string
@@ -35,7 +37,7 @@ type docInvocation struct {
 // these leaves every check green and leaves the page sending somebody to a
 // command that does not exist -- which is worse than no instruction, because
 // they will believe the page and doubt their machine.
-func docCommands(root string) ([]docCommand, error) {
+func docCommands(root string) ([]toldCommand, error) {
 	pages := []string{filepath.Join(root, "README.md")}
 	found, err := filepath.Glob(filepath.Join(root, "docs", "*.md"))
 	if err != nil {
@@ -79,9 +81,9 @@ func docCommands(root string) ([]docCommand, error) {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	out := make([]docCommand, 0, len(names))
+	out := make([]toldCommand, 0, len(names))
 	for _, name := range names {
-		out = append(out, docCommand{command: strings.Fields(name), where: at[name], flags: flags[name]})
+		out = append(out, toldCommand{command: strings.Fields(name), where: at[name], flags: flags[name]})
 	}
 	return out, nil
 }
@@ -96,10 +98,30 @@ func docCommands(root string) ([]docCommand, error) {
 // `herdr found on the machine` reports drift that is not there, and a checker
 // that cries about its own error messages is one whose output gets skimmed.
 func commandsIn(line string) []docInvocation {
+	return invocationsIn(line, startsHere)
+}
+
+// commandsInMessage pulls the herdr invocations out of a message this plugin
+// prints, where a command is written in backticks and nothing else is.
+//
+// The rule the pages use does not carry over. There, a line beginning with the
+// word is a command, because an indented block is how a page shows one. In a
+// message the beginning of the string is where the sentence starts, and this
+// plugin's sentences begin with the word: "herdr not found on the machine" is
+// what a machine's row says, and reading it as a command asks Herdr whether it
+// still has `not found on the machine`. Every instruction in these messages
+// puts the command in backticks -- run `herdr session attach`, check `herdr
+// plugin log list` -- because that is how a reader is shown where to stop
+// typing, and it is the difference between the two.
+func commandsInMessage(text string) []docInvocation {
+	return invocationsIn(text, quotedHere)
+}
+
+func invocationsIn(line string, canStart func(before string) bool) []docInvocation {
 	var out []docInvocation
 	for i := range line {
 		rest, ok := strings.CutPrefix(line[i:], "herdr")
-		if !ok || !startsHere(line[:i]) {
+		if !ok || !canStart(line[:i]) {
 			continue
 		}
 		// The word has to be herdr and not merely begin with it:
@@ -116,6 +138,13 @@ func commandsIn(line string) []docInvocation {
 		}
 	}
 	return out
+}
+
+// quotedHere reports whether a command begins here in a message: only just
+// inside a backtick.
+func quotedHere(before string) bool {
+	before = strings.TrimRight(before, " \t")
+	return strings.HasSuffix(before, "`")
 }
 
 // startsHere reports whether a command could begin after this much of a line.
