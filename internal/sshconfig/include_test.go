@@ -227,6 +227,81 @@ func TestFilesThatIncludeEachOtherAreReadOnce(t *testing.T) {
 	}
 }
 
+// TestOneFileSpelledSeveralWaysIsStillReadOnce holds the normalising the
+// read-once record depends on.
+//
+// The test above holds the record itself, and its fixture cannot see this: it
+// includes a directory as `<dir>/*`, and every path a glob of that shape hands
+// back is already tidy, so the record recognises the repeat whether or not
+// anything normalises the key. A path that arrives untidy is one written out
+// in full -- `Include /home/me/.ssh/conf.d/./frag` -- because an absolute
+// pattern is passed to the glob as it was typed, while a relative one is
+// joined onto the config's directory and cleaned on the way.
+//
+// What that costs is not one extra reading. The reasons a walk collects are
+// bounded at a handful, and the menu has room for the first of them, so the
+// same file arriving under nine spellings fills the record with nine copies of
+// one complaint and the file that is genuinely unreadable is never mentioned
+// at all. So the second file here is the point rather than the padding: it is
+// a different problem, and it has to survive the repeats.
+func TestOneFileSpelledSeveralWaysIsStillReadOnce(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Under ~/.ssh, so that the walk this drives by hand and the Hosts() below
+	// are reading the same file.
+	dir := filepath.Join(home, ".ssh", "conf.d")
+	// Directories, so that reading either one records a reason and neither is
+	// a file whose contents could account for the difference.
+	for _, name := range []string{"frag", "other"} {
+		if err := os.MkdirAll(filepath.Join(dir, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// One file, written more ways than the record keeps reasons. Built by hand
+	// rather than with filepath.Join, which cleans what it returns and would
+	// leave every line here spelled identically -- a fixture where both
+	// answers agree.
+	var lines []string
+	for i := 0; i <= maxReasonsKept; i++ {
+		lines = append(lines, "Include "+dir+"/"+strings.Repeat("./", i)+"frag")
+	}
+	lines = append(lines, "Include "+dir+"/other", "Host bot", "")
+	path := filepath.Join(home, ".ssh", "config")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) < maxReasonsKept {
+		t.Fatalf("the fixture spells the file %d ways and the record keeps %d "+
+			"reasons; it cannot crowd anything out", len(lines), maxReasonsKept)
+	}
+
+	read := newReading(path)
+	hostsRead(path, 0, read)
+
+	frag, other := 0, 0
+	for _, why := range read.why {
+		if strings.Contains(why, "frag") {
+			frag++
+		}
+		if strings.Contains(why, "other") {
+			other++
+		}
+	}
+	if frag != 1 {
+		t.Errorf("one file spelled %d ways was read %d times: %v",
+			maxReasonsKept+1, frag, read.why)
+	}
+	if other != 1 {
+		t.Errorf("the unreadable file nobody spelled twice went unreported, "+
+			"crowded out by repeats of the other one: %v", read.why)
+	}
+	// And the machines are still there, since none of this changes the answer.
+	if got := Hosts(); len(got) != 1 || got[0] != "bot" {
+		t.Errorf("aliases = %v, want [bot]", got)
+	}
+}
+
 // TestAnIncludeThatMatchesEverythingIsRefused bounds the work one line can ask
 // for.
 //
