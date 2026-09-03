@@ -1220,6 +1220,77 @@ func TestTheWarningAboutTwoMachinesSharingANameReachesYou(t *testing.T) {
 	}
 }
 
+// TestTwoMachinesSharingANameReallyWouldCollide holds what that warning
+// PROMISES, which the check above it does not.
+//
+// The one above holds that the complaint reaches somebody: it comes back with
+// status, so the menu can draw it. What the complaint says is a different
+// question -- "they would share one space and close each other's terminals" --
+// and both halves are decided here rather than in config, which is why neither
+// was held. The sentence could have gone on describing a collision that no
+// longer happened, and the advice to give one machine its own label would then
+// be a cure for nothing.
+//
+// Both halves follow from the label being the only name in play: the space is
+// named from it, and so is the suffix a pass matches its own panes by.
+func TestTwoMachinesSharingANameReallyWouldCollide(t *testing.T) {
+	cfg := config.Defaults()
+	bot := config.Host{Target: "bot", Label: "build"}
+	ci := config.Host{Target: "ci", Label: "build"}
+	cfg.Hosts = []config.Host{bot, ci}
+
+	// The complaint is made, and says both things this holds.
+	said := ""
+	for _, p := range cfg.Problems() {
+		if strings.Contains(p, "both called") {
+			said = p
+		}
+	}
+	if said == "" {
+		t.Fatalf("two machines under one name are not reported: %v", cfg.Problems())
+	}
+	for _, want := range []string{"share one space", "close each other's terminals"} {
+		if !strings.Contains(said, want) {
+			t.Fatalf("the complaint no longer promises %q, so there is nothing here to "+
+				"hold: %q", want, said)
+		}
+	}
+
+	// One space. The name is built from the label and nothing else, so two
+	// machines wearing one label are one space as far as Herdr is concerned.
+	if a, b := cfg.WorkspaceLabelFor(bot, true), cfg.WorkspaceLabelFor(ci, true); a != b {
+		t.Errorf("the complaint says they share a space, and they are named %q and %q", a, b)
+	}
+
+	// And each other's terminals. A pass matches its own panes by the suffix
+	// built from the label, so a pane opened for one machine ends with the
+	// other's suffix too: untracked, with no mirror of its own running in it,
+	// it is exactly what the other machine closes as a stray.
+	botPane := "shell@" + bot.DisplayLabel()
+	ciSuffix := "@" + ci.DisplayLabel()
+	if !planOrphanedPane(botPane, ciSuffix, false, false) {
+		t.Errorf("the complaint says they close each other's terminals, and %q is left "+
+			"alone by a machine whose suffix is %q", botPane, ciSuffix)
+	}
+
+	// The control, without which the two checks above would pass on code that
+	// closed everything and named every space alike. Given their own names,
+	// neither happens.
+	own := config.Defaults()
+	own.Hosts = []config.Host{{Target: "bot"}, {Target: "ci"}}
+	if a, b := own.WorkspaceLabelFor(own.Hosts[0], true), own.WorkspaceLabelFor(own.Hosts[1], true); a == b {
+		t.Errorf("machines with names of their own share the space %q", a)
+	}
+	if planOrphanedPane("shell@bot", "@ci", false, false) {
+		t.Error("a machine closes another's pane even when their names differ")
+	}
+	for _, p := range own.Problems() {
+		if strings.Contains(p, "both called") {
+			t.Errorf("machines with names of their own are reported as colliding: %q", p)
+		}
+	}
+}
+
 func TestPollingAndCommandsAtTheSameTimeIsSafe(t *testing.T) {
 	// This is the shape the daemon actually runs in: a poll every couple of
 	// seconds, and commands from the menu arriving whenever somebody presses
