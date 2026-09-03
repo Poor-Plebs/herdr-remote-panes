@@ -1885,39 +1885,52 @@ func TestTheMenuStaysDrawableWithAVeryLongSSHConfig(t *testing.T) {
 		return entries
 	}
 
-	// The BEST of several attempts, not the mean of one.
+	// ONE TIMING, FOUR OF THEM CLOSE TOGETHER, AND THE SMALLEST QUOTIENT.
 	//
-	// Noise on a shared machine only ever adds time, so the fastest run is the
-	// closest estimate of what the work costs and the only one that does not
-	// depend on what else the runner was doing. The mean of a single attempt
-	// made this fail on CI at 8.1 when the same code measured 3.4 to 4.8 here:
-	// the small size came out at 28ms, in line with this machine, and the large
-	// one at 231ms against 76-93ms -- one sample stolen, and the ratio is a
-	// division, so noise in either direction moves it twice. It is not enough
-	// by itself, for the reason given above, but it is still the right way to
-	// read a clock and both passes below are read the same way.
-	fastest := func(work func()) time.Duration {
-		const attempts, runs = 3, 5
-		best := time.Duration(0)
-		for a := 0; a < attempts; a++ {
-			start := time.Now()
-			for i := 0; i < runs; i++ {
-				work()
-			}
-			if took := time.Since(start) / runs; best == 0 || took < best {
-				best = took
-			}
+	// Noise only ever adds time, so the smallest reading is the closest
+	// estimate of the work. The first attempt at that took the best of several
+	// readings of each of the four measurements separately, and it made this
+	// fail here about one full `make check` in six -- which the single-package
+	// runs it was checked against could never show, because `go test ./...`
+	// runs the package binaries in PARALLEL and the picker draws its menus
+	// while the daemon's suite has the machine.
+	//
+	// The failure says what is wrong with that: render grew 4.7 times, which
+	// is healthy, while the reference grew 1.5, because the reference's SMALL
+	// reading came out at 38ms against the 11 to 13 it costs -- inflated for
+	// the whole of its window, all attempts included, so taking the best of
+	// them recovered nothing. Dividing by a corrupted expectation is what
+	// produced 3.1.
+	//
+	// A busy moment lands on one factor of four when the four are measured in
+	// blocks, and it lands on the whole quotient when they are measured
+	// together. So each round reads all four in one go and computes its own
+	// quotient, and the answer is the SMALLEST of them: one clean round is
+	// enough, where before one dirty measurement was enough to fail. Measured
+	// under the whole suite running beside it, twenty-four rounds: single
+	// rounds range 0.60 to 1.40, and every four-round minimum lands between
+	// 0.60 and 0.96.
+	//
+	// The machines are built once and reused, so that allocating them is not
+	// inside a window being timed.
+	small, large := machines(2000), machines(8000)
+	widthSmall, widthLarge := nameColumn(small, 100), nameColumn(large, 100)
+
+	timed := func(work func()) time.Duration {
+		const runs = 5
+		start := time.Now()
+		for i := 0; i < runs; i++ {
+			work()
 		}
-		return best
+		return time.Since(start) / runs
 	}
 
-	drawn := func(n int) time.Duration {
-		entries := machines(n)
-		at := 0
-		return fastest(func() {
+	at := 0
+	drawn := func(entries []Entry) time.Duration {
+		return timed(func() {
 			// A different position each time, as scrolling gives: ten redraws
 			// of one screenful would not exercise a window computed once.
-			_ = render(entries, at*n/5, 100, 40, "")
+			_ = render(entries, at*len(entries)/5, 100, 40, "")
 			at++
 		})
 	}
@@ -1930,10 +1943,8 @@ func TestTheMenuStaysDrawableWithAVeryLongSSHConfig(t *testing.T) {
 	// The width comes from nameColumn once, the way namesWithin is given it:
 	// nameWidth calls widestStatus, which builds and measures an eighteen-row
 	// table, and calling that per machine costs twenty times the pass itself.
-	linear := func(n int) time.Duration {
-		entries := machines(n)
-		width := nameColumn(entries, 100)
-		return fastest(func() {
+	linear := func(entries []Entry, width int) time.Duration {
+		return timed(func() {
 			seen := make(map[string]int, len(entries))
 			for _, entry := range entries {
 				seen[nameWithin(entry, width)]++
@@ -1941,25 +1952,32 @@ func TestTheMenuStaysDrawableWithAVeryLongSSHConfig(t *testing.T) {
 		})
 	}
 
-	// Neither is an absurd config. A host block per machine in a fleet, or a
-	// generated one, reaches the first easily; sshconfig will read a megabyte
-	// of such a file, which is some twenty thousand of them.
-	small, large := drawn(2000), drawn(8000)
-	refSmall, refLarge := linear(2000), linear(8000)
-	if small <= 0 || refSmall <= 0 {
-		t.Skip("the clock here cannot measure a redraw, so there is nothing to compare")
+	shape, grew, expected := 0.0, 0.0, 0.0
+	var cheapest, dearest, refCheap, refDear time.Duration
+	const rounds = 4
+	for r := 0; r < rounds; r++ {
+		drewSmall, drewLarge := drawn(small), drawn(large)
+		refSmall, refLarge := linear(small, widthSmall), linear(large, widthLarge)
+		if drewSmall <= 0 || refSmall <= 0 {
+			t.Skip("the clock here cannot measure a redraw, so there is nothing to compare")
+		}
+		round := float64(drewLarge) / float64(drewSmall)
+		// What four times the machines costs a pass that is linear by
+		// construction, on this machine, in this same moment.
+		against := float64(refLarge) / float64(refSmall)
+		if q := round / against; shape == 0 || q < shape {
+			shape, grew, expected = q, round, against
+			cheapest, dearest, refCheap, refDear = drewSmall, drewLarge, refSmall, refLarge
+		}
 	}
 
-	grew := float64(large) / float64(small)
-	// What four times the machines costs a pass that is linear by
-	// construction, on this machine, right now.
-	expected := float64(refLarge) / float64(refSmall)
-	if shape := grew / expected; shape > 2 {
+	if shape > 2 {
 		t.Errorf("four times the machines costs %.1f times the redraw (%s to %s) where a "+
 			"pass over the same machines costs %.1f times (%s to %s) -- %.1f times as much "+
-			"growth, which is not this machine being slow at the larger size but a "+
-			"different shape of work: something now looks at every machine once per machine",
-			grew, small, large, expected, refSmall, refLarge, shape)
+			"growth, in the cleanest of %d rounds, which is not this machine being slow at "+
+			"the larger size but a different shape of work: something now looks at every "+
+			"machine once per machine",
+			grew, cheapest, dearest, expected, refCheap, refDear, shape, rounds)
 	}
 }
 
