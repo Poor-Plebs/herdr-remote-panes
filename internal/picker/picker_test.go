@@ -32,9 +32,15 @@ func TestCollectListsSSHConfigMachines(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", t.TempDir())
 
 	entries, warning := collect()
-	// No daemon answers in a test, and the menu now says so. Anything else
-	// would be a warning about the config, which is what this cares about.
-	if warning != "" && !strings.Contains(warning, "daemon is not running") {
+	// No daemon answers in a test, and the menu says so. Anything else would
+	// be a warning about the config, which is what this cares about.
+	//
+	// Compared against what the menu would say for this failure rather than
+	// against a phrase from it. Matching "daemon is not running" pinned this
+	// to one wording, and it broke the moment that sentence was split into the
+	// three cases syncd.Ask really has.
+	_, askErr := syncd.Ask(syncd.Command{Cmd: "status"})
+	if warning != "" && warning != daemonTrouble(askErr) {
 		t.Errorf("unexpected warning: %s", warning)
 	}
 	found := map[string]bool{}
@@ -1570,5 +1576,81 @@ func TestAMachineListedTwiceIsDrawnFromTheLastEntry(t *testing.T) {
 	if !strings.Contains(warning, "shown in the menu from the last") {
 		t.Errorf("the complaint no longer says which entry the menu draws, so there is "+
 			"nothing here to hold: %q", warning)
+	}
+}
+
+// TestTheMenuTellsNoDaemonApartFromOneThatDidNotAnswer holds a message whose
+// condition was wider than its claim.
+//
+// syncd.Ask fails in four ways and the menu called all four "the daemon is not
+// running". Three of them mean something accepted the connection, and the
+// worst is the two-minute answer timeout: Ask's own message for it says the
+// daemon "may still be working through a slow machine", and the menu said the
+// opposite over the top of it. The remedies are opposite too — start one, or
+// wait for the one that is running.
+func TestTheMenuTellsNoDaemonApartFromOneThatDidNotAnswer(t *testing.T) {
+	// The real thing, not a stand-in for it: with no socket to dial, Ask must
+	// come back carrying the sentinel, or the branch below is never taken in
+	// the one case it is written for.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	_, err := syncd.Ask(syncd.Command{Cmd: "status"})
+	if err == nil {
+		t.Fatal("asking with no daemon anywhere should fail")
+	}
+	if !errors.Is(err, syncd.ErrNoDaemon) {
+		t.Fatalf("a dial that found nothing does not carry ErrNoDaemon, so the menu "+
+			"cannot tell it apart: %v", err)
+	}
+
+	missing := daemonTrouble(err)
+	if !strings.Contains(missing, "not running") {
+		t.Errorf("nothing was listening and the menu does not say so: %q", missing)
+	}
+
+	// Anything else: something answered. The control is the point of the test —
+	// without it, "always say not running" passes everything above.
+	answered := daemonTrouble(errors.New("the daemon did not answer status within 2m0s; " +
+		"it may still be working through a slow machine"))
+	if strings.Contains(answered, "not running") {
+		t.Errorf("a daemon that accepted the connection is reported as not running: %q", answered)
+	}
+	if !strings.Contains(answered, "still be working") {
+		t.Errorf("the reason to wait rather than restart is not given: %q", answered)
+	}
+	if missing == answered {
+		t.Errorf("both cases say the same thing, which is what this is about: %q", missing)
+	}
+
+	// Both point at the log, since that is where the cause is either way.
+	for _, said := range []string{missing, answered} {
+		if !strings.Contains(said, "plugin log list") {
+			t.Errorf("the menu does not say where to look: %q", said)
+		}
+	}
+
+	// The third case, and the reason the first version of this was wrong: with
+	// no state directory Ask returns before it dials anything, so the daemon
+	// was never asked and may be up and mirroring somewhere this process
+	// cannot see. TestCollectListsSSHConfigMachines runs exactly there and
+	// failed the moment a two-way split called it a daemon that did not
+	// answer.
+	unset := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", "")
+	_ = unset
+	_, outside := syncd.Ask(syncd.Command{Cmd: "status"})
+	if !errors.Is(outside, syncd.ErrNoStateDir) {
+		t.Fatalf("running outside Herdr should say so through ErrNoStateDir: %v", outside)
+	}
+	elsewhere := daemonTrouble(outside)
+	// The two claims it must not make, matched whole: "not running under
+	// Herdr" contains "not running", and a looser check failed on the right
+	// sentence.
+	if strings.Contains(elsewhere, "The daemon is not running") ||
+		strings.Contains(elsewhere, "The daemon did not answer") {
+		t.Errorf("nothing was asked, so neither answer is available: %q", elsewhere)
+	}
+	if !strings.Contains(elsewhere, "through Herdr") {
+		t.Errorf("the way to ask the question at all is not given: %q", elsewhere)
 	}
 }

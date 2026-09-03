@@ -23,6 +23,17 @@ var sendTimeout = 10 * time.Second
 // slow.
 var answerTimeout = 2 * time.Minute
 
+// ErrNoDaemon is returned when nothing is listening on the control socket, as
+// opposed to a daemon that answered the connection and then did not finish.
+//
+// Told apart because the two want opposite things from whoever is reading. No
+// daemon means start one; a daemon that has not answered yet may be part way
+// through connecting a slow machine, and the useful thing is to wait. Callers
+// had only the message to go on, and the menu turned every failure into "the
+// daemon is not running" -- which is the opposite of true for a daemon that is
+// two ssh calls into a connect.
+var ErrNoDaemon = errors.New("no running daemon")
+
 // Ask sends one command to the running daemon and returns its reply.
 func Ask(cmd Command) (Reply, error) {
 	socket, err := ControlSocket()
@@ -31,9 +42,12 @@ func Ask(cmd Command) (Reply, error) {
 	}
 	conn, err := net.DialTimeout("unix", socket, 3*time.Second)
 	if err != nil {
+		// Both wrapped: the sentinel for callers that need to tell this apart,
+		// and the dial error because it says which socket and why. The text is
+		// what it always was.
 		return Reply{}, fmt.Errorf(
-			"no running daemon (is the plugin enabled? check `herdr plugin log list --plugin %s`): %w",
-			PluginID, err)
+			"%w (is the plugin enabled? check `herdr plugin log list --plugin %s`): %w",
+			ErrNoDaemon, PluginID, err)
 	}
 	defer conn.Close()
 

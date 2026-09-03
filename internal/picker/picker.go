@@ -550,6 +550,35 @@ func configuredFirst(a, b Entry) bool {
 	return a.Configured && !b.Configured
 }
 
+// daemonTrouble is what the menu says when the daemon did not answer.
+//
+// Not one sentence for every failure. Ask fails in four ways and only the
+// first is the daemon not running: the dial can fail, the command can fail to
+// send, the answer can time out at two minutes, and the connection can break
+// mid-reply. The last three all mean something accepted the connection.
+//
+// The timeout is the one that made this worth telling apart. Ask's own message
+// for it says the daemon "may still be working through a slow machine", which
+// is exactly right and the opposite of what the menu said over the top of it --
+// and the remedy differs: start a daemon, or wait for the one that is running.
+func daemonTrouble(err error) string {
+	const hint = " Check `herdr plugin log list --plugin " + syncd.PluginID + "`."
+	// Asked before anything was dialled. Not "did not answer": nothing was
+	// asked, and the daemon may be up and mirroring in a session this process
+	// cannot see. Found by a test that already ran the menu outside Herdr and
+	// failed the moment the two-way split above called that a daemon that had
+	// not answered.
+	if errors.Is(err, syncd.ErrNoStateDir) {
+		return "This is not running under Herdr, so the daemon cannot be reached " +
+			"from here — open the menu through Herdr."
+	}
+	if errors.Is(err, syncd.ErrNoDaemon) {
+		return "The daemon is not running, so nothing here can be connected to." + hint
+	}
+	return "The daemon did not answer, so what is connected is not shown; it may " +
+		"still be working through a slow machine." + hint
+}
+
 // status asks the daemon what it is currently mirroring. A daemon that is not
 // running is not an error here: every machine simply shows as unconnected.
 // status reports the machines the daemon is tracking, and anything about the
@@ -561,8 +590,7 @@ func status() ([]syncd.HostInfo, string) {
 		// nothing answering, every machine reads "not connected", which is
 		// exactly what a working daemon shows before anything is connected --
 		// so the menu looked ready and nothing in it would work.
-		return nil, "The daemon is not running, so nothing here can be connected to. " +
-			"Check `herdr plugin log list --plugin " + syncd.PluginID + "`."
+		return nil, daemonTrouble(err)
 	}
 	// reply.Warning is deliberately dropped. It says a config that could not be
 	// read and settings that read fine and mean nothing, and collect works

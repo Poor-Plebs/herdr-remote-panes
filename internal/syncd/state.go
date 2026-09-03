@@ -13,11 +13,22 @@ import (
 	"strings"
 )
 
+// ErrNoStateDir is returned when this is not running under Herdr at all, so
+// there is nowhere to look for a daemon.
+//
+// Apart from ErrNoDaemon because the two are different answers: no daemon
+// means start one, no state directory means the question could not be put from
+// here and the daemon may be up and mirroring. Ask hands this back before it
+// dials anything.
+var ErrNoStateDir = errors.New("HERDR_PLUGIN_STATE_DIR is not set")
+
 // StateDir is where Herdr lets a plugin keep runtime state.
 func StateDir() (string, error) {
 	dir := os.Getenv("HERDR_PLUGIN_STATE_DIR")
 	if dir == "" {
-		return "", fmt.Errorf("HERDR_PLUGIN_STATE_DIR is not set; run this through Herdr")
+		// The text is what it always was; the sentinel is for callers that
+		// have to tell this apart from a daemon that is simply not running.
+		return "", fmt.Errorf("%w; run this through Herdr", ErrNoStateDir)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
