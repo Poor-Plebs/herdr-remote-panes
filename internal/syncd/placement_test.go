@@ -1,6 +1,7 @@
 package syncd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
@@ -370,5 +371,47 @@ func TestAPlacementSomebodyAskedForIsWrittenDownForNextTime(t *testing.T) {
 			t.Errorf("terminal %s was asked for as a tab and written down as %q",
 				terminalID, where)
 		}
+	}
+}
+
+// TestTheWarningAboutAPlacementSaysWhatActuallyHappens holds a message in one
+// package to the behaviour in another.
+//
+// A placement this does not know is not replaced by the default: only an empty
+// one takes that, so a misspelling is kept as written and carried all the way
+// here. What happens then is planPaneTarget's `default`, and the config's
+// complaint tells somebody in advance what that will be -- "terminals will open
+// as tabs". Nothing held the two together, so the sentence could go on saying
+// tabs while the fallback became a split, and the only way to find out would be
+// to misspell a placement and watch.
+//
+// It is checked here rather than in config because config cannot see
+// planPaneTarget: syncd imports config, not the other way about.
+func TestTheWarningAboutAPlacementSaysWhatActuallyHappens(t *testing.T) {
+	const misspelled = "tabb"
+
+	cfg := config.Defaults()
+	cfg.Placement = misspelled
+	problems := cfg.Problems()
+	if len(problems) != 1 {
+		t.Fatalf("a good config with one misspelled placement reported %d problems: %v",
+			len(problems), problems)
+	}
+	if !strings.Contains(problems[0], "open as tabs") {
+		t.Fatalf("the complaint no longer says what will happen instead, so there is "+
+			"nothing here to hold: %q", problems[0])
+	}
+
+	// What actually happens to it. A pane to sit beside is given, so a fallback
+	// that split rather than opening a tab would have somewhere to go -- with
+	// none, the split branches open a tab anyway and this would pass whatever
+	// the default did.
+	got := planPaneTarget(misspelled, "w1", "w1:p2")
+	if got.Placement != placementTab {
+		t.Errorf("the config says a misspelled placement opens terminals as tabs, and "+
+			"this one is placed as %q", got.Placement)
+	}
+	if got.Workspace != "w1" {
+		t.Errorf("a tab is opened in the machine's space, and this one names %q", got.Workspace)
 	}
 }

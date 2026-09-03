@@ -40,6 +40,63 @@ func TestProblemsCatchesAMisspelledMode(t *testing.T) {
 	}
 }
 
+func TestProblemsCatchesAMisspelledPlacement(t *testing.T) {
+	// The per-host placement below is checked; this is the one that applies to
+	// every machine, and no test had ever misspelled it. Its three siblings --
+	// mode, scope and label_format -- were all reached.
+	cfg := Defaults()
+	cfg.Placement = "tabb"
+
+	problems := cfg.Problems()
+	// Only this one is wrong, so anything else reported means the fixture broke
+	// something other than what this is about.
+	if len(problems) != 1 {
+		t.Fatalf("a good config with one misspelled placement reported %d problems: %v",
+			len(problems), problems)
+	}
+	if !strings.Contains(problems[0], "tabb") {
+		t.Errorf("problem %q should name the value", problems[0])
+	}
+
+	// And the values it offers instead are values this actually takes. A list
+	// written out in a message is a second copy of what knownPlacement decides,
+	// and the two can part company: adding a placement without touching the
+	// message leaves it advertising four of five, and renaming one leaves it
+	// naming something that will be refused.
+	listed := placementsNamedIn(t, problems[0])
+	if len(listed) < 5 {
+		t.Fatalf("read %d placements out of %q, which is fewer than it names -- "+
+			"the message is no longer written the way this reads it", len(listed), problems[0])
+	}
+	for _, name := range listed {
+		if !knownPlacement(name) {
+			t.Errorf("the message offers %q and knownPlacement refuses it", name)
+		}
+	}
+}
+
+// placementsNamedIn pulls the values a placement complaint offers out of it.
+func placementsNamedIn(t *testing.T, problem string) []string {
+	t.Helper()
+	_, rest, ok := strings.Cut(problem, "is not one of ")
+	if !ok {
+		t.Fatalf("no list of values in %q", problem)
+	}
+	list, _, ok := strings.Cut(rest, ";")
+	if !ok {
+		t.Fatalf("the list in %q does not end where this expects", problem)
+	}
+	var out []string
+	for _, part := range strings.Split(list, ",") {
+		for _, name := range strings.Split(part, " or ") {
+			if name = strings.TrimSpace(name); name != "" {
+				out = append(out, name)
+			}
+		}
+	}
+	return out
+}
+
 func TestProblemsCatchesPerHostMistakes(t *testing.T) {
 	cfg := Defaults()
 	cfg.Hosts = []Host{
