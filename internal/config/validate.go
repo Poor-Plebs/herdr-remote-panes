@@ -156,8 +156,17 @@ func (c Config) Problems() []string {
 			name := host.DisplayLabel()
 			// A label is made safe to draw before it is used anywhere, and one
 			// made only of things that cannot be drawn is left with nothing at
-			// all -- so the machine's space and every terminal in it end up
-			// named after nothing, and the file says otherwise.
+			// all -- so wherever the formats ask for this machine's name, there
+			// is nothing to put.
+			//
+			// It used to promise "its space and its terminals would be named
+			// after nothing", which is true of the defaults and of nothing
+			// else. A space named outright is called what it was called; a
+			// workspace_format or label_format built without {host} never asks
+			// for the machine at all, and comes out exactly as intended. The
+			// condition is still right -- the machine has no name of its own,
+			// and putting {host} back would show that -- so it is the sentence
+			// that says what depends on it.
 			if name == "" {
 				// Either half can be the cause. A target of nothing but spaces
 				// is a valid destination -- ssh reaches `Host "my server"` --
@@ -167,8 +176,8 @@ func (c Config) Problems() []string {
 					cause = "target, which is nothing but spaces,"
 				}
 				problems = append(problems, fmt.Sprintf(
-					"host %q has a %s that is empty once it is made safe to draw; "+
-						"its space and its terminals would be named after nothing",
+					"host %q has a %s that is empty once it is made safe to draw, "+
+						"so wherever the formats ask for its name there is nothing to put",
 					host.Target, cause))
 			}
 			if first, taken := labelledBy[name]; taken && first != host.Target {

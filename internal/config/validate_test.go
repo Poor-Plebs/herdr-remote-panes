@@ -1201,14 +1201,19 @@ func TestProblemsCatchesTwoMachinesAnsweringToOneName(t *testing.T) {
 
 func TestProblemsCatchesALabelThatCannotBeDrawn(t *testing.T) {
 	// A label is made safe to draw before it is used, and one made only of
-	// things that cannot be drawn is left with nothing. The machine's space
-	// then has no name in it and its terminals are called "shell@" -- while the
-	// file says otherwise, and nothing anywhere connects the two.
+	// things that cannot be drawn is left with nothing, so wherever a format
+	// asks for the machine's name there is nothing to put -- with the defaults,
+	// a space with no name in it and terminals called "shell@".
+	//
+	// Matched on the clause that identifies the complaint rather than on the
+	// consequence it names. The consequence depends on the formats, which is
+	// what the sentence used to get wrong, and a test pinned to that wording
+	// would have to be rewritten every time it is made more accurate.
 	for _, label := range []string{"\x01\x02", "   ", "\n\t", "\x7f"} {
 		cfg := Defaults()
 		cfg.Hosts = []Host{{Target: "bot", Label: label}}
 		problems := strings.Join(cfg.Problems(), "\n")
-		if !strings.Contains(problems, "named after nothing") {
+		if !strings.Contains(problems, "empty once it is made safe to draw") {
 			t.Errorf("label %q should be reported as unusable, got %q", label, problems)
 		}
 		// And it says which half is at fault. Told to look at the target when
@@ -1259,7 +1264,7 @@ func TestProblemsCatchesALabelThatCannotBeDrawn(t *testing.T) {
 	cfg = Defaults()
 	cfg.Hosts = []Host{{Target: "   "}}
 	problems := strings.Join(cfg.Problems(), "\n")
-	if !strings.Contains(problems, "named after nothing") {
+	if !strings.Contains(problems, "empty once it is made safe to draw") {
 		t.Errorf("a target of nothing but spaces should be reported, got %q", problems)
 	}
 	// The other way round: this one has no label, so blaming one sends

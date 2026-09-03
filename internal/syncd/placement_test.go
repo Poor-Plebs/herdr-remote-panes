@@ -472,3 +472,96 @@ func reportsAbout(cfg config.Config, setting string) bool {
 	}
 	return false
 }
+
+// TestTheWarningAboutAnUnusableLabelSaysWhatDependsOnTheFormats holds the
+// fourth of these config complaints against what actually happens.
+//
+// A label made only of things that cannot be drawn is left with nothing once
+// it is made safe, and the complaint used to promise that "its space and its
+// terminals would be named after nothing". That is true of the defaults and of
+// nothing else, and both counter-examples are ordinary configurations: a space
+// named outright is called what it was called, and a format built without
+// {host} never asks for the machine at all.
+//
+// Which of them applies is decided here and in config's formats, not by the
+// check that reports it -- so this is where the sentence can be held.
+func TestTheWarningAboutAnUnusableLabelSaysWhatDependsOnTheFormats(t *testing.T) {
+	// Non-empty, and empty once it is made safe to draw.
+	host := config.Host{Target: "bot", Label: "\a"}
+	if host.DisplayLabel() != "" {
+		t.Fatalf("the fixture label survives being made safe as %q, so there is nothing "+
+			"here to be about", host.DisplayLabel())
+	}
+
+	named := func(cfg config.Config) (string, string) {
+		t.Helper()
+		cfg.Hosts = []config.Host{host}
+		d := withConfig(&Daemon{}, cfg)
+		return cfg.WorkspaceLabelFor(host, true),
+			d.label(host, herdrcli.Pane{PaneID: "w9:p1"}, "shell")
+	}
+
+	// It is reported, and no longer promises more than it can.
+	reported := config.Defaults()
+	reported.Hosts = []config.Host{host}
+	said := ""
+	for _, p := range reported.Problems() {
+		if strings.Contains(p, "made safe to draw") {
+			said = p
+		}
+	}
+	if said == "" {
+		t.Fatalf("an unusable label is not reported: %v", reported.Problems())
+	}
+	if strings.Contains(said, "named after nothing") {
+		t.Errorf("the complaint promises both the space and the terminals, which depends "+
+			"on the formats: %q", said)
+	}
+
+	// With the defaults, which do ask for the machine, nothing is what appears.
+	space, terminal := named(config.Defaults())
+	if strings.TrimSpace(space) != "☁" {
+		t.Errorf("with the default format the space should be left with only its marker, "+
+			"and is %q", space)
+	}
+	if terminal != "shell@" {
+		t.Errorf("with the default format the terminal loses its machine and is %q", terminal)
+	}
+
+	// A space named outright is called what it was called: the format is never
+	// consulted, so the empty label costs it nothing.
+	outright := config.Defaults()
+	outright.Workspace = "everything"
+	if space, _ := named(outright); space != "everything" {
+		t.Errorf("a space named outright should keep its name and is %q", space)
+	}
+
+	// And formats that never ask for the machine come out exactly as written.
+	plain := config.Defaults()
+	plain.WorkspaceFormat = "machines"
+	plain.LabelFormat = "{name}"
+	space, terminal = named(plain)
+	if space != "machines" || terminal != "shell" {
+		t.Errorf("formats that do not ask for the machine should be unaffected, and gave "+
+			"space %q terminal %q", space, terminal)
+	}
+
+	// The control, and it is what makes "loses its machine" above mean
+	// anything: with a label that survives, the same formats put it where the
+	// empty one left a gap. Without this, a build that stopped substituting the
+	// machine at all would pass every check above, because the fixture's own
+	// name is empty either way.
+	usable := config.Host{Target: "bot", Label: "build"}
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{usable}
+	d := withConfig(&Daemon{}, cfg)
+	if got := d.label(usable, herdrcli.Pane{PaneID: "w9:p1"}, "shell"); got != "shell@build" {
+		t.Errorf("a label that survives should name the terminal, and gave %q", got)
+	}
+	if got := cfg.WorkspaceLabelFor(usable, true); !strings.Contains(got, "build") {
+		t.Errorf("a label that survives should name the space, and gave %q", got)
+	}
+	if problems := cfg.Problems(); len(problems) != 0 {
+		t.Errorf("a usable label was reported: %v", problems)
+	}
+}
