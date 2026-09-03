@@ -318,3 +318,57 @@ func TestForgettingOnePaneForgetsOnlyItsPlacement(t *testing.T) {
 		t.Errorf("the remaining placements are out of order: %v", left)
 	}
 }
+
+// TestAPlacementSomebodyAskedForIsWrittenDownForNextTime holds the kept half of
+// that note.
+//
+// Asking for a terminal as a tab writes the placement down twice: once to be
+// spent by the pass that opens the mirror, and once to be kept. The spent one
+// carries every visible thing that happens in this session, which is why the
+// tests either side of this -- terminals asked for as tabs coming back as tabs
+// after a restart -- pass without the kept one. Removing it fails none of them.
+//
+// The kept one is what reaches the snapshot, and the snapshot is the only thing
+// that survives the daemon. Without it a restart has nothing to place a mirror
+// by, so it falls back to the machine's ordinary setting, which defaults to
+// split -- and a tab somebody asked for comes back inside another tab.
+func TestAPlacementSomebodyAskedForIsWrittenDownForNextTime(t *testing.T) {
+	withFakeHerdr(t)
+	withRemoteHerdrRunning(t, true)
+	cfg := config.Defaults()
+	cfg.Hosts = []config.Host{{Target: "bot", Mode: "attach"}}
+
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	if reply := d.dispatch(Command{Cmd: "open", Host: "bot", Placement: "tab"}); !reply.OK {
+		t.Fatalf("open-tab: %s", reply.Message)
+	}
+	for i := 0; i < 4; i++ {
+		d.reconcileAll()
+	}
+	d.persist()
+
+	saved := loadSnapshot()
+	host, ok := saved.Hosts["bot"]
+	if !ok {
+		t.Fatalf("the snapshot has nothing about the machine at all: %+v", saved)
+	}
+	// A mirror was made, or there is no placement for anything to be recorded
+	// against and what follows would be about an empty pass.
+	if len(host.Mirrors) == 0 {
+		t.Fatalf("no mirror was made, so nothing was placed: %+v", host)
+	}
+	if len(host.Placement) == 0 {
+		t.Fatalf("the snapshot remembers %d mirror(s) and no placement for any of "+
+			"them: the next daemon has nothing to place them by, so a tab comes "+
+			"back a split", len(host.Mirrors))
+	}
+	for terminalID, where := range host.Placement {
+		if where != "tab" {
+			t.Errorf("terminal %s was asked for as a tab and written down as %q",
+				terminalID, where)
+		}
+	}
+}
