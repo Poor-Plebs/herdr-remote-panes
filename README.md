@@ -42,7 +42,7 @@ need nothing but an SSH server you can already reach.
 That takes the latest commit. To pin a release instead:
 
 ```bash
-herdr plugin install Poor-Plebs/herdr-remote-panes --ref v0.4.13
+herdr plugin install Poor-Plebs/herdr-remote-panes --ref v0.4.14
 ```
 
 Updating is the same command again — there is no separate update. Herdr shows
