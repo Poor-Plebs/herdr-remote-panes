@@ -1513,3 +1513,62 @@ func TestTheMenuAsksTheTerminalItIsDrawnOn(t *testing.T) {
 			cols, rows)
 	}
 }
+
+// TestAMachineListedTwiceIsDrawnFromTheLastEntry holds the menu's half of a
+// promise the config makes about it.
+//
+// The complaint about a machine listed twice says it "is reached using the
+// first entry and shown in the menu from the last". Nothing merges the two
+// entries, so each reader picks one for itself, and the two halves live in
+// different packages: the daemon's hostConfig takes the first, which
+// daemon_test.go holds and even checks the wording of, and this takes the last
+// because add() hands back the row it already has and the loop then writes
+// over it. That half was held by nothing, so the sentence could have gone on
+// saying "the last" while the menu drew the first -- and the advice it gives,
+// which entry to delete, would then have been backwards.
+func TestAMachineListedTwiceIsDrawnFromTheLastEntry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+
+	// The two entries disagree about everything the menu draws from them, so
+	// whichever one wins is visible rather than inferred.
+	body := `{"hosts":[
+		{"target":"bot","label":"first","mode":"attach"},
+		{"target":"bot","label":"second","mode":"ssh"}
+	]}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, warning := collect()
+
+	var rows []Entry
+	for _, e := range entries {
+		if e.Target == "bot" {
+			rows = append(rows, e)
+		}
+	}
+	// One machine, one row: two would be a different fault from the one the
+	// complaint describes, and the advice to remove an entry would not fix it.
+	if len(rows) != 1 {
+		t.Fatalf("a machine listed twice drew %d rows, want one: %+v", len(rows), rows)
+	}
+	if rows[0].Label != "second" {
+		t.Errorf("the menu is labelled %q, and the config says it is drawn from the last "+
+			"entry, which is %q", rows[0].Label, "second")
+	}
+	if rows[0].Mirroring {
+		t.Errorf("the last entry is a plain ssh terminal and the menu shows it mirroring")
+	}
+
+	// And the complaint is made, in the words this holds.
+	if !strings.Contains(warning, "listed more than once") {
+		t.Errorf("a machine listed twice is not reported: %q", warning)
+	}
+	if !strings.Contains(warning, "shown in the menu from the last") {
+		t.Errorf("the complaint no longer says which entry the menu draws, so there is "+
+			"nothing here to hold: %q", warning)
+	}
+}
