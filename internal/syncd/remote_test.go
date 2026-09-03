@@ -5387,3 +5387,76 @@ func TestAStaleTerminalHerdrWouldNotCloseIsTriedAgain(t *testing.T) {
 			"refusal was logged and forgotten, and nothing left knows about it")
 	}
 }
+
+// TestAMirrorHerdrWouldNotCloseWhenItsTerminalWentIsTriedAgain holds the
+// refusal on the most ordinary close there is.
+//
+// A terminal closed on the machine leaves a mirror here with nothing behind it,
+// and the pass closes it. That close can be refused, and the branch that writes
+// the refusal down ran zero times against the whole suite -- the other tests
+// that close a mirror all let Herdr agree to it.
+//
+// Unrecorded, nothing revisits it. The pane is struck from this pass's listing
+// on the line below, and the machine's bookkeeping for that terminal is gone,
+// so what is left is a dead mirror wearing a live machine's name in its space
+// for as long as the daemon runs. That is the state the whole file calls a husk.
+func TestAMirrorHerdrWouldNotCloseWhenItsTerminalWentIsTriedAgain(t *testing.T) {
+	here := withFakeHerdr(t)
+	there, remoteState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	mirrors := d.hosts["bot"].mirrors
+	if len(mirrors) != 1 {
+		t.Fatalf("the machine has %d mirrors, want the one this is about: %v",
+			len(mirrors), mirrors)
+	}
+	var mirrored string
+	for _, paneID := range mirrors {
+		mirrored = paneID
+	}
+
+	// The terminal is closed on the machine, so its mirror here has nothing
+	// left to show.
+	raw, err := json.Marshal(fakeHerdr{
+		Panes:      map[string]map[string]any{},
+		Workspaces: map[string]map[string]any{},
+		Next:       9,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remoteState, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// And Herdr here will not close it.
+	statePath := os.Getenv(fakeHerdrState)
+	refuseOnMachine(t, statePath, "plugin pane close,pane close")
+	for i := 0; i < 3; i++ {
+		d.reconcileAll()
+	}
+
+	// Refused, or what follows is about a mirror that closed the first time.
+	if _, ok := here().Panes[mirrored]; !ok {
+		t.Fatalf("the mirror %s went while Herdr was refusing to close anything", mirrored)
+	}
+
+	// Herdr stops refusing, and the mirror has to go on the next pass.
+	if err := os.Remove(statePath + ".refuse"); err != nil {
+		t.Fatal(err)
+	}
+	d.reconcileAll()
+
+	if _, ok := here().Panes[mirrored]; ok {
+		t.Errorf("the mirror %s is still here once Herdr would close it: its "+
+			"terminal is gone on the machine, so what is left is a dead pane "+
+			"wearing a live machine's name", mirrored)
+	}
+}
