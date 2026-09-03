@@ -11,6 +11,7 @@ package project
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,6 +29,12 @@ func Root() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Kept before the walk begins, because dir is reassigned all the way to
+	// the filesystem root before the search gives up: naming it down there
+	// would say "/", the one directory the answer is certainly not in. The
+	// comment below has asked for the starting point since this was written
+	// and did not get it, for exactly that reason.
+	start := dir
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir, nil
@@ -36,8 +43,8 @@ func Root() (string, error) {
 		if parent == dir {
 			// The filesystem root, with no go.mod anywhere above. Worth saying
 			// where it started: a test failing here is not about what it tests.
-			return "", errors.New("no go.mod above the working directory, so the " +
-				"top of the repository could not be found")
+			return "", fmt.Errorf("no go.mod above %s, so the top of the "+
+				"repository could not be found", start)
 		}
 		dir = parent
 	}

@@ -100,6 +100,45 @@ func cacheDependsOnTheTree(t *testing.T, root string, wanted func(name string) b
 // goSource is every Go file, which is what a build of the daemon depends on.
 func goSource(name string) bool { return strings.HasSuffix(name, ".go") }
 
+// TestRootSaysWhereItLookedFrom holds the thing that function's own comment
+// asks for and did not get.
+//
+// The comment beside the failure says "Worth saying where it started: a test
+// failing here is not about what it tests" -- and the message said "above the
+// working directory", naming nothing. The reason is visible in the loop: dir
+// is walked up to the filesystem root before the search gives up, so by the
+// time there is something to say, the only value to hand is "/", which is the
+// one directory the answer is certainly not in.
+//
+// Held from a directory with no go.mod anywhere above it, which is the only
+// way this branch is reached at all.
+func TestRootSaysWhereItLookedFrom(t *testing.T) {
+	start := t.TempDir()
+	t.Chdir(start)
+
+	_, err := Root()
+	if err == nil {
+		t.Fatal("a directory with no go.mod above it should not find a root")
+	}
+	said := err.Error()
+
+	if !strings.Contains(said, start) {
+		t.Errorf("the failure does not say where it looked from, which is the whole "+
+			"point of saying anything: looked from %s, said %q", start, said)
+	}
+	// And not the filesystem root, which is where the walk ends up and what
+	// naming the loop variable would have printed.
+	if strings.Contains(said, "above /,") || strings.Contains(said, "above / ") {
+		t.Errorf("the failure names the filesystem root rather than the starting "+
+			"directory: %q", said)
+	}
+	// It still says what could not be done, or naming the directory has
+	// replaced the point rather than added to it.
+	if !strings.Contains(said, "top of the") {
+		t.Errorf("the failure no longer says what it failed to find: %q", said)
+	}
+}
+
 // TestTheDocumentationIsEveryPageAndTheREADMEFirst holds what DocPages names.
 //
 // Five packages read the documentation through this to check that a phrase in
