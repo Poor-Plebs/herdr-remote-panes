@@ -128,6 +128,34 @@ func describeCommand(argv []string) string {
 // the message on it can be read. A variable so a test need not wait it out.
 var holdOpen = 5 * time.Second
 
+// unrecordedFailure says what failing to record a failure costs, which depends
+// on what the attempt left behind.
+//
+// MarkFailed fails two ways and they leave opposite states. When nothing was
+// written -- the directory the marks live in could not be made -- the daemon
+// finds no mark, and a pane that went with no mark beside it is the description
+// of a terminal somebody shut; with close_propagates on, that closes the
+// terminal on the machine. When something is at the path and could not be
+// replaced -- a stale mark that cannot be written over, or a disk that took the
+// file and then would not take its contents, since os.WriteFile creates before
+// it writes and leaves what it made behind -- the daemon finds a mark after
+// all. It then reads a failure without the reason, which sends it by the count
+// of dropped terminals rather than by what went wrong.
+//
+// Measured, because the two are a stat apart: with the marks directory blocked,
+// Failed is false; with a directory or an unwritable file at the mark's own
+// path, MarkFailed fails and Failed is true. Asking Failed here asks exactly
+// what the daemon will ask.
+func unrecordedFailure(paneID string, err error) string {
+	detail := text.Truncate(text.Sanitize(err.Error()), maxSaidWidth)
+	if Failed(paneID) {
+		return fmt.Sprintf("and the reason could not be recorded for the daemon: "+
+			"%s -- it will see that this pane failed but not why", detail)
+	}
+	return fmt.Sprintf("and the failure could not be recorded for the daemon: "+
+		"%s -- it will read this pane as one you closed", detail)
+}
+
 // reportFailure leaves a trace a user can actually find.
 func reportFailure(err error) {
 
@@ -164,13 +192,11 @@ func reportFailure(err error) {
 	// both of the same problems.
 	if err := MarkFailed(os.Getenv("HERDR_PANE_ID"), detail); err != nil {
 		// Said in the same file the failure itself goes to, since the mark is
-		// how the daemon tells this from a terminal somebody shut -- and with
-		// close_propagates on, the wrong answer closes the terminal on the
-		// machine. Whoever reads the log afterwards has the failure and the
-		// reason the plugin could not record it, one after the other.
-		message += fmt.Sprintf(" (and the failure could not be recorded for the "+
-			"daemon: %s -- it will read this pane as one you closed)",
-			text.Truncate(text.Sanitize(err.Error()), maxSaidWidth))
+		// how the daemon tells this from a terminal somebody shut. Whoever
+		// reads the log afterwards has the failure and the reason the plugin
+		// could not record it, one after the other.
+		message += fmt.Sprintf(" (%s)",
+			unrecordedFailure(os.Getenv("HERDR_PANE_ID"), err))
 	}
 
 	if dir := os.Getenv("HERDR_PLUGIN_STATE_DIR"); dir != "" {

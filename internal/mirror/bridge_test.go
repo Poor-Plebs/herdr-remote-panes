@@ -659,6 +659,98 @@ func TestThePaneSaysWhenTheDaemonWillNotLearnItFailed(t *testing.T) {
 	}
 }
 
+// TestThePaneSaysWhichWayTheMarkFailed holds the half of that the fixture above
+// cannot reach.
+//
+// MarkFailed fails two ways and they leave opposite states behind, a stat
+// apart. The test above blocks the DIRECTORY the marks live in, so nothing is
+// written and the daemon really does find a pane that went without a mark --
+// which is what "read this pane as one you closed" describes. Block the mark's
+// own PATH instead and the file is there: os.WriteFile creates before it
+// writes and leaves what it made behind, so a disk that takes the file and
+// then refuses its contents ends the same way, and that is the case the
+// comment beside this has always been about. Failed only asks whether the file
+// is there, so the daemon then reads a failure after all -- the opposite of
+// what the one sentence used to promise for both.
+func TestThePaneSaysWhichWayTheMarkFailed(t *testing.T) {
+	const pane = "w1:p2"
+	for _, tt := range []struct {
+		what     string
+		inTheWay func(t *testing.T, mark string)
+		want     string
+		notWant  string
+	}{
+		{
+			what: "nothing was written",
+			inTheWay: func(t *testing.T, mark string) {
+				marks := filepath.Dir(mark)
+				if err := os.MkdirAll(filepath.Dir(marks), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(marks, []byte("in the way"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want:    "read this pane as one you closed",
+			notWant: "failed but not why",
+		},
+		{
+			what: "a mark is there and could not be replaced",
+			inTheWay: func(t *testing.T, mark string) {
+				if err := os.MkdirAll(filepath.Dir(mark), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(mark, []byte("stale"), 0o400); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want:    "failed but not why",
+			notWant: "read this pane as one you closed",
+		},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			// The pane is held open so the message can be read, which is five
+			// seconds this is not about.
+			held := holdOpen
+			t.Cleanup(func() { holdOpen = held })
+			holdOpen = time.Millisecond
+
+			dir := t.TempDir()
+			t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+			t.Setenv("HERDR_SESSION", "hub")
+			t.Setenv("HERDR_PANE_ID", pane)
+			t.Setenv(EnvTarget, "bot")
+			tt.inTheWay(t, failurePath(pane))
+
+			// The fixture has to actually stop the mark being written, or both
+			// sentences are wrong and neither assertion means anything.
+			if err := MarkFailed(pane, "probe"); err == nil {
+				t.Fatal("the mark was written, so this is not the case it is named for")
+			}
+
+			reportFailure(errors.New("the machine went away"))
+
+			raw, err := os.ReadFile(filepath.Join(dir, "mirror.log"))
+			if err != nil {
+				t.Fatalf("nothing was written to mirror.log at all: %v", err)
+			}
+			said := string(raw)
+			if !strings.Contains(said, "the machine went away") {
+				t.Errorf("the log does not say what went wrong:\n%s", said)
+			}
+			if !strings.Contains(said, tt.want) {
+				t.Errorf("the log does not say %q, which is what the daemon will do:\n%s",
+					tt.want, said)
+			}
+			// And not the other one, which is the mistake: one sentence said
+			// for both cases is wrong for whichever it is not about.
+			if strings.Contains(said, tt.notWant) {
+				t.Errorf("the log says %q, which is the other case:\n%s", tt.notWant, said)
+			}
+		})
+	}
+}
+
 // streamingSSH puts an ssh on PATH that sends observe frames and then keeps
 // the connection open, the way a machine with a live terminal does.
 func streamingSSH(t *testing.T, frames int) {
