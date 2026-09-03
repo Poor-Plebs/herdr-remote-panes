@@ -15,6 +15,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -22,6 +23,12 @@ import (
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 )
+
+// asker says what a command's help prints, and whether this Herdr has it at
+// all. A seam: the real one runs Herdr, and the tests stand in for it, because
+// what has to be held below is the counting and the exit status rather than
+// the asking.
+type asker func(command []string) (help string, ok bool)
 
 func main() {
 	bin := herdrcli.Bin()
@@ -32,14 +39,45 @@ func main() {
 	}
 	fmt.Printf("asking %s\n\n", strings.TrimSpace(string(version)))
 
+	// Two more sources of commands, neither of them in Dependencies. The pages
+	// send a reader to Herdr directly, and so do the plugin's own messages --
+	// what to run when a machine's session is not up, where to look when the
+	// daemon cannot be reached. The plugin runs none of those; it prints them
+	// for somebody else to type, which is exactly why nothing was watching.
+	docs, err := docCommands(".")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(2)
+	}
+	said, err := messageCommands(".")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(2)
+	}
+
+	ask := func(command []string) (string, bool) { return helpFor(bin, command) }
+	os.Exit(report(os.Stdout, ask, herdrcli.Dependencies, docs, said))
+}
+
+// report asks about everything and says what it found, returning what this
+// should exit with.
+//
+// Away from where Herdr is actually run, so `make check` can hold the counting
+// and the exit status on a machine with no Herdr on it -- and they were held by
+// nothing at all. A statement-deletion sweep of this package removed the
+// `os.Exit(1)` and every test still passed: a checker that lists what is wrong
+// and then tells make everything is fine, which is `gofmt -l` exiting nought
+// while printing the files it objects to. Removing either line that adds the
+// pages' and the messages' problems to the count passed just as quietly.
+func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []toldCommand) int {
 	problems := 0
-	for _, dep := range herdrcli.Dependencies {
+	for _, dep := range deps {
 		name := strings.Join(dep.Command, " ")
 
-		text, ok := helpFor(bin, dep.Command)
+		text, ok := ask(dep.Command)
 		if !ok {
 			problems++
-			fmt.Printf("%-24s no such command in this Herdr\n", name)
+			fmt.Fprintf(w, "%-24s no such command in this Herdr\n", name)
 			continue
 		}
 
@@ -60,55 +98,40 @@ func main() {
 		}
 		if len(missing) > 0 {
 			problems++
-			fmt.Printf("%-24s no longer takes: %s\n", name, strings.Join(missing, ", "))
+			fmt.Fprintf(w, "%-24s no longer takes: %s\n", name, strings.Join(missing, ", "))
 			continue
 		}
-		fmt.Printf("%-24s ok\n", name)
+		fmt.Fprintf(w, "%-24s ok\n", name)
 	}
 
-	// Two more sources of commands, neither of them in Dependencies. The pages
-	// send a reader to Herdr directly, and so do the plugin's own messages --
-	// what to run when a machine's session is not up, where to look when the
-	// daemon cannot be reached. The plugin runs none of those; it prints them
-	// for somebody else to type, which is exactly why nothing was watching.
-	docs, err := docCommands(".")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(2)
-	}
-	said, err := messageCommands(".")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(2)
-	}
+	fmt.Fprintln(w)
+	problems += askAbout(w, ask, docs, "the pages give it at")
+	fmt.Fprintln(w)
+	problems += askAbout(w, ask, said, "a message gives it at")
 
-	fmt.Println()
-	problems += askAbout(bin, docs, "the pages give it at")
-	fmt.Println()
-	problems += askAbout(bin, said, "a message gives it at")
-
-	fmt.Println()
-	total := len(herdrcli.Dependencies) + len(docs) + len(said)
+	fmt.Fprintln(w)
+	total := len(deps) + len(docs) + len(said)
 	if problems > 0 {
-		fmt.Printf("%d of %d commands are not what this plugin, its pages and its messages expect\n",
+		fmt.Fprintf(w, "%d of %d commands are not what this plugin, its pages and its messages expect\n",
 			problems, total)
-		os.Exit(1)
+		return 1
 	}
-	fmt.Printf("all %d commands take what this plugin sends, and all %d it tells somebody "+
+	fmt.Fprintf(w, "all %d commands take what this plugin sends, and all %d it tells somebody "+
 		"to run exist and take the %d flags given with them\n",
-		len(herdrcli.Dependencies), len(docs)+len(said), passedFlags(docs)+passedFlags(said))
+		len(deps), len(docs)+len(said), passedFlags(docs)+passedFlags(said))
+	return 0
 }
 
 // askAbout asks Herdr about every command something tells somebody to run, and
 // returns how many of them it no longer has or no longer takes.
-func askAbout(bin string, told []toldCommand, gives string) int {
+func askAbout(w io.Writer, ask asker, told []toldCommand, gives string) int {
 	problems := 0
 	for _, one := range told {
 		name := strings.Join(one.command, " ")
-		help, ok := helpFor(bin, one.command)
+		help, ok := ask(one.command)
 		if !ok {
 			problems++
-			fmt.Printf("%-24s no such command in this Herdr, and %s sends somebody to it\n",
+			fmt.Fprintf(w, "%-24s no such command in this Herdr, and %s sends somebody to it\n",
 				name, strings.Join(one.where, ", "))
 			continue
 		}
@@ -120,10 +143,10 @@ func askAbout(bin string, told []toldCommand, gives string) int {
 		}
 		if len(gone) > 0 {
 			problems++
-			fmt.Printf("%-24s no longer takes what it is given: %s\n", name, strings.Join(gone, ", "))
+			fmt.Fprintf(w, "%-24s no longer takes what it is given: %s\n", name, strings.Join(gone, ", "))
 			continue
 		}
-		fmt.Printf("%-24s ok, %s %s\n", name, gives, strings.Join(one.where, ", "))
+		fmt.Fprintf(w, "%-24s ok, %s %s\n", name, gives, strings.Join(one.where, ", "))
 	}
 	return problems
 }

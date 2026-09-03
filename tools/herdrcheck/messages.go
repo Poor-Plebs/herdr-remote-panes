@@ -126,6 +126,12 @@ func stringAt(fset *token.FileSet, n ast.Node) (string, int, bool) {
 		if !lok && !rok {
 			return "", 0, false // not a string concatenation at all
 		}
+		// The left one is symmetry rather than something a test can see, and
+		// measured rather than assumed: a computed leftmost operand puts the
+		// placeholder at the very front of the message, where it can neither
+		// create nor destroy the backtick that commandsInMessage looks for.
+		// Read with "$" and with "" it finds the same commands. It stops being
+		// equivalent the moment that rule loosens, which is why it stays.
 		if !lok {
 			left = "$"
 		}
