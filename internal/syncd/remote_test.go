@@ -5306,3 +5306,84 @@ func TestATerminalStillRunningIsAdoptedRatherThanReplaced(t *testing.T) {
 			"live one was not taken back, so nothing here will close it again", was, kept)
 	}
 }
+
+// TestAStaleTerminalHerdrWouldNotCloseIsTriedAgain holds the refusal on the
+// path that clears a space before its terminals are opened again.
+//
+// closeRefused is called from five places and each needs a scenario only it can
+// reach. This one was reached by nothing at all: measured against the whole
+// suite it ran zero times, because the panes it is about survive the sweep just
+// above it. That sweep takes panes wearing this machine's name; what is left
+// for this one is a pane in the machine's space wearing something else.
+//
+// Whatever the daemon decided to close, the refusal has to be written down.
+// Everything after it forgets the pane and drops it from the listing, so a
+// refusal that goes unrecorded is a pane closed by nobody, sitting in the space
+// for as long as the daemon runs -- which is what retryUnclosed exists to
+// prevent.
+func TestAStaleTerminalHerdrWouldNotCloseIsTriedAgain(t *testing.T) {
+	here := withFakeHerdr(t)
+
+	before := New(machineConfig("bot"))
+	if reply := before.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	before.reconcileAll()
+	workspace := before.hosts["bot"].workspaceID
+	if workspace == "" {
+		t.Fatal("the machine has no space, so there is nothing to clear")
+	}
+	before.persist()
+
+	// A pane in that space wearing a name of its own, so the sweep for this
+	// machine's leftovers passes over it and the clearing below is what meets
+	// it. No mirror behind it, so it is not one to keep.
+	statePath := os.Getenv(fakeHerdrState)
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held fakeHerdr
+	if err := json.Unmarshal(raw, &held); err != nil {
+		t.Fatal(err)
+	}
+	held.Panes["w1:pX"] = map[string]any{
+		"pane_id": "w1:pX", "workspace_id": workspace, "label": "someone else's work",
+	}
+	out, err := json.Marshal(held)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The daemon comes back, and Herdr will not close anything.
+	refuseOnMachine(t, statePath, "plugin pane close,pane close")
+
+	after := New(machineConfig("bot"))
+	if reply := after.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("reconnect: %s", reply.Message)
+	}
+	for i := 0; i < 3; i++ {
+		after.reconcileAll()
+	}
+
+	// The close was tried and refused, or what follows is about a pane nothing
+	// ever wanted to close.
+	if _, ok := here().Panes["w1:pX"]; !ok {
+		t.Fatal("the pane went while Herdr was refusing to close anything")
+	}
+
+	// Herdr stops refusing. The pane has to go on the next pass, which it can
+	// only do from what the refusal wrote down.
+	if err := os.Remove(statePath + ".refuse"); err != nil {
+		t.Fatal(err)
+	}
+	after.reconcileAll()
+
+	if _, ok := here().Panes["w1:pX"]; ok {
+		t.Error("the pane Herdr would not close is still there once it would: the " +
+			"refusal was logged and forgotten, and nothing left knows about it")
+	}
+}
