@@ -1846,16 +1846,32 @@ func TestTheMenuStaysDrawableWithAVeryLongSSHConfig(t *testing.T) {
 	// the duplicate check -- comparing every name with every other rather than
 	// counting them in a map -- came in at a tenth of that and passed.
 	//
-	// So it measures the same work at two sizes and compares the two. Machine
-	// speed divides out: whatever the hardware, quadrupling the list costs a
-	// linear pass about four times -- two and a half was measured once and is
-	// optimistic; 3.4 to 4.8 is the spread on a quiet machine, with and
-	// without the race detector -- and a quadratic one twelve to sixteen
-	// depending on where the sizes fall. Both were measured, with and
-	// without the race detector, before the eight between them was chosen --
-	// and the sizes are the smallest that kept the two apart, since this runs
-	// on every push.
-	drawn := func(n int) time.Duration {
+	// So it measures the same work at two sizes and compares the two, which
+	// divides out how fast the machine is. That was not enough on its own, and
+	// this is the second attempt at the difference: a hardcoded "four times the
+	// work should cost about four times" failed CI twice on code that was
+	// linear, at 8.1 and at 9.8 against a threshold of 8. The numbers from the
+	// second one say why. The SMALL size ran at the speed it runs here (24.5ms
+	// against 20-24ms) while the LARGE one cost three times more (240ms against
+	// 78ms): per machine, 12us -> 30us there against 10us -> 9.75us here. The
+	// cost per machine tripled at the larger size on that hardware. That is a
+	// cache effect and genuinely spent time, so taking the fastest of several
+	// attempts -- which was the first attempt at a fix -- cannot help: it is
+	// not noise, and no wall-clock ratio can tell it from a worse algorithm.
+	//
+	// What separates the two is that a cache effect hits any pass over the same
+	// machines equally, and a quadratic one does not. So the growth to compare
+	// against is measured HERE, on the machine running the test, by a pass that
+	// is linear by construction and does the same work per machine that render
+	// does: one name each, into a map of the same size. Whatever the hardware
+	// does to render's growth it does to that too, and what is left is the
+	// shape. Measured: 0.85 to 1.16 for the code as it stands, across sizes
+	// from 8000 machines to 128000 and entries padded to ten times the length
+	// -- a sixty-fourfold span of working set, which moved the absolute times
+	// eightfold and the quotient not at all -- and 3.3 to 3.9 for the quadratic
+	// duplicate check. The two between them is nearer the linear end on
+	// purpose, because that is the side a false failure comes from.
+	machines := func(n int) []Entry {
 		entries := make([]Entry, n)
 		for i := range entries {
 			entries[i] = Entry{
@@ -1866,46 +1882,84 @@ func TestTheMenuStaysDrawableWithAVeryLongSSHConfig(t *testing.T) {
 				Mirrors:    i % 7,
 			}
 		}
-		// The BEST of several attempts, not the mean of one.
-		//
-		// Noise on a shared machine only ever adds time, so the fastest run is
-		// the closest estimate of what the work costs and the only one that
-		// does not depend on what else the runner was doing. The mean of a
-		// single attempt made this fail on CI at 8.1 when the same code
-		// measured 3.4 to 4.8 here: the small size came out at 28ms, in line
-		// with this machine, and the large one at 231ms against 76-93ms --
-		// one sample stolen, and the ratio is a division, so noise in either
-		// direction moves it twice.
-		const attempts = 3
+		return entries
+	}
+
+	// The BEST of several attempts, not the mean of one.
+	//
+	// Noise on a shared machine only ever adds time, so the fastest run is the
+	// closest estimate of what the work costs and the only one that does not
+	// depend on what else the runner was doing. The mean of a single attempt
+	// made this fail on CI at 8.1 when the same code measured 3.4 to 4.8 here:
+	// the small size came out at 28ms, in line with this machine, and the large
+	// one at 231ms against 76-93ms -- one sample stolen, and the ratio is a
+	// division, so noise in either direction moves it twice. It is not enough
+	// by itself, for the reason given above, but it is still the right way to
+	// read a clock and both passes below are read the same way.
+	fastest := func(work func()) time.Duration {
+		const attempts, runs = 3, 5
 		best := time.Duration(0)
 		for a := 0; a < attempts; a++ {
 			start := time.Now()
-			const redraws = 5
-			for i := 0; i < redraws; i++ {
-				// A different position each time, as scrolling gives: ten
-				// redraws of one screenful would not exercise a window
-				// computed once.
-				_ = render(entries, i*n/redraws, 100, 40, "")
+			for i := 0; i < runs; i++ {
+				work()
 			}
-			if took := time.Since(start) / redraws; best == 0 || took < best {
+			if took := time.Since(start) / runs; best == 0 || took < best {
 				best = took
 			}
 		}
 		return best
 	}
 
+	drawn := func(n int) time.Duration {
+		entries := machines(n)
+		at := 0
+		return fastest(func() {
+			// A different position each time, as scrolling gives: ten redraws
+			// of one screenful would not exercise a window computed once.
+			_ = render(entries, at*n/5, 100, 40, "")
+			at++
+		})
+	}
+
+	// The pass that says what growth looks like on this machine when nothing is
+	// wrong. It is namesWithin's first loop and nothing else: a name per
+	// machine into a map of the same size, which is the work render's own
+	// whole-list passes are made of, and linear however the hardware behaves.
+	//
+	// The width comes from nameColumn once, the way namesWithin is given it:
+	// nameWidth calls widestStatus, which builds and measures an eighteen-row
+	// table, and calling that per machine costs twenty times the pass itself.
+	linear := func(n int) time.Duration {
+		entries := machines(n)
+		width := nameColumn(entries, 100)
+		return fastest(func() {
+			seen := make(map[string]int, len(entries))
+			for _, entry := range entries {
+				seen[nameWithin(entry, width)]++
+			}
+		})
+	}
+
 	// Neither is an absurd config. A host block per machine in a fleet, or a
 	// generated one, reaches the first easily; sshconfig will read a megabyte
 	// of such a file, which is some twenty thousand of them.
 	small, large := drawn(2000), drawn(8000)
-	if small <= 0 {
+	refSmall, refLarge := linear(2000), linear(8000)
+	if small <= 0 || refSmall <= 0 {
 		t.Skip("the clock here cannot measure a redraw, so there is nothing to compare")
 	}
-	if grew := float64(large) / float64(small); grew > 8 {
-		t.Errorf("four times the machines costs %.1f times the redraw (%s to %s), "+
-			"which is not a slower machine but a different shape of work: "+
-			"something now looks at every machine once per machine",
-			grew, small, large)
+
+	grew := float64(large) / float64(small)
+	// What four times the machines costs a pass that is linear by
+	// construction, on this machine, right now.
+	expected := float64(refLarge) / float64(refSmall)
+	if shape := grew / expected; shape > 2 {
+		t.Errorf("four times the machines costs %.1f times the redraw (%s to %s) where a "+
+			"pass over the same machines costs %.1f times (%s to %s) -- %.1f times as much "+
+			"growth, which is not this machine being slow at the larger size but a "+
+			"different shape of work: something now looks at every machine once per machine",
+			grew, small, large, expected, refSmall, refLarge, shape)
 	}
 }
 
