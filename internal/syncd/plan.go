@@ -636,6 +636,23 @@ var knownFailures = []knownFailure{
 // machine it belongs to. The recognisable causes get a short phrase; anything
 // else keeps its first line.
 func summarizeError(err error) string {
+	return summarizeErrorFor("", err)
+}
+
+// summarizeErrorFor is summarizeError for a line that already names the
+// machine, and drops the name if the error opens with it too.
+//
+// internal/remote prefixes what it returns with the target, and most callers
+// here name the machine themselves, so the pair said it twice: "connect bot:
+// bot: could not start a remote Herdr session". Only for causes classify does
+// not recognise -- a recognised one replaces the whole message and takes the
+// prefix with it -- so the doubling appeared exactly when the reader had least
+// to go on and the wording was least likely to be looked at.
+//
+// Stripped before the line is shortened rather than after, because the bound
+// is 90 runes and a target may be 320 bytes: spending it on a name the line
+// already carries can leave none for the cause.
+func summarizeErrorFor(target string, err error) string {
 	if err == nil {
 		return ""
 	}
@@ -643,6 +660,10 @@ func summarizeError(err error) string {
 
 	if known, ok := classify(err); ok {
 		return known.summary
+	}
+
+	if target != "" {
+		message = strings.TrimPrefix(message, target+": ")
 	}
 
 	// Otherwise the first line with anything on it, which is where the cause

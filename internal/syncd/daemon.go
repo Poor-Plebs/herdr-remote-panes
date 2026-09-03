@@ -860,7 +860,7 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		opened, err := d.ensureRemotePresence(host)
 		if err != nil {
 			return Reply{Message: fmt.Sprintf("connected to %s, but could not open a terminal: %s",
-				host.Target, summarizeError(err))}
+				host.Target, summarizeErrorFor(host.Target, err))}
 		}
 		d.reconcileAll()
 		d.focusHost(host.Target)
@@ -939,10 +939,10 @@ func (d *Daemon) dispatch(cmd Command) Reply {
 		// otherwise, and put fifteen lines of ssh banner on the screen to
 		// explain it.
 		if err := d.connect(host); err != nil {
-			return Reply{OK: true, Message: changed + ", but it is not reachable: " + summarizeError(err)}
+			return Reply{OK: true, Message: changed + ", but it is not reachable: " + summarizeErrorFor(host.Target, err)}
 		}
 		if _, err := d.ensureRemotePresence(host); err != nil {
-			return Reply{OK: true, Message: changed + ", but no terminal opened: " + summarizeError(err)}
+			return Reply{OK: true, Message: changed + ", but no terminal opened: " + summarizeErrorFor(host.Target, err)}
 		}
 		d.reconcileAll()
 		// No focus here: m keeps you in the menu, so moving the screen
@@ -1068,7 +1068,7 @@ func (d *Daemon) closeRemoteTerminals(state *hostSync, terminalIDs []string, rem
 				// somebody closed, so it is not mirrored again either.
 				log.Printf("%s: could not close terminal %s, so it is still "+
 					"running there while its tab here has gone: %s",
-					state.host.Target, paneID, summarizeError(err))
+					state.host.Target, paneID, summarizeErrorFor(state.host.Target, err))
 				continue
 			}
 		}
@@ -1859,7 +1859,7 @@ func (d *Daemon) connectEach(hosts []config.Host) []error {
 			defer wg.Done()
 			if err := d.connect(host); err != nil {
 				errs[i] = err
-				log.Printf("connect %s: %s", host.Target, summarizeError(err))
+				log.Printf("connect %s: %s", host.Target, summarizeErrorFor(host.Target, err))
 			}
 		}(i, host)
 	}
@@ -1886,7 +1886,7 @@ func (d *Daemon) connectEach(hosts []config.Host) []error {
 			// here are what the caller asked for. Said once, where the rest of
 			// a pass's trouble is said.
 			log.Printf("%s: connected, but no terminal opened there: %s",
-				host.Target, summarizeError(err))
+				host.Target, summarizeErrorFor(host.Target, err))
 		}
 	}
 	return errs
@@ -2368,14 +2368,14 @@ func (d *Daemon) reconcileOnce() {
 				return
 			}
 			if err != nil && (state.lastErr == nil || state.lastErr.Error() != err.Error()) {
-				log.Printf("reconcile %s: %s", state.host.Target, summarizeError(err))
+				log.Printf("reconcile %s: %s", state.host.Target, summarizeErrorFor(state.host.Target, err))
 			}
 			if recordReconcile(state, err) {
 				// Saying "connect again to retry" after a changed host key was
 				// advice that could not work: the next attempt fails the same
 				// way until somebody looks at known_hosts.
 				if settledFailure(err) {
-					log.Printf("%s: not retrying — %s", state.host.Target, summarizeError(err))
+					log.Printf("%s: not retrying — %s", state.host.Target, summarizeErrorFor(state.host.Target, err))
 				} else {
 					log.Printf("%s: giving up after %d attempts; connect again to retry",
 						state.host.Target, state.failCount)
@@ -2741,7 +2741,8 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 					state.gaveUp = true
 					state.lastErr = errors.New(reason)
 					log.Printf("%s: terminal %s went — not reopening: %s",
-						state.host.Target, paneID, summarizeError(state.lastErr))
+						state.host.Target, paneID,
+						summarizeErrorFor(state.host.Target, state.lastErr))
 				case stopForNow:
 					state.gaveUp = true
 					state.lastErr = fmt.Errorf("terminals keep dropping on %s", state.host.Target)

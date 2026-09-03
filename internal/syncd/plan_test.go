@@ -3,6 +3,9 @@ package syncd
 import (
 	"errors"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net"
 	"os"
 	"path/filepath"
@@ -5096,5 +5099,139 @@ func TestAPaneWithNoIdIsNotInTheListing(t *testing.T) {
 	if !index.alive[real.PaneID] || index.labelOf[real.PaneID] != "real" {
 		t.Errorf("the real pane was lost: alive=%v label=%q",
 			index.alive[real.PaneID], index.labelOf[real.PaneID])
+	}
+}
+
+// TestALineThatNamesTheMachineDoesNotSayItTwice holds the half of these
+// messages that internal/remote decides.
+//
+// remote prefixes what it returns with the target, and the lines here name the
+// machine themselves, so the pair said it twice. It showed only for causes
+// classify does not recognise, because a recognised one replaces the whole
+// message and takes the prefix with it -- which is why the sentence somebody
+// reads when nothing is understood was the one that read worst.
+func TestALineThatNamesTheMachineDoesNotSayItTwice(t *testing.T) {
+	const target = "bot"
+
+	// An unrecognised cause, wrapped the way remote wraps it.
+	unknown := fmt.Errorf("%s: could not start a remote Herdr session: %w",
+		target, errors.New("exit status 1"))
+	if _, ok := classify(unknown); ok {
+		t.Fatalf("this fixture has to be a cause classify does not know, or it holds nothing")
+	}
+
+	// The control first: without a machine named, nothing is stripped.
+	if got := summarizeError(unknown); !strings.HasPrefix(got, target+": ") {
+		t.Fatalf("the error itself should still open with the machine: %q", got)
+	}
+
+	got := summarizeErrorFor(target, unknown)
+	if strings.HasPrefix(got, target+": ") {
+		t.Errorf("a line that names %q should not have it again: %q", target, got)
+	}
+	if !strings.Contains(got, "could not start a remote Herdr session") {
+		t.Errorf("stripping the machine took the cause with it: %q", got)
+	}
+
+	// A recognised cause is replaced whole, so there is nothing to strip and
+	// nothing to break.
+	known := fmt.Errorf("%s: %w", target, remote.ErrNoHerdr)
+	if got := summarizeErrorFor(target, known); got != "herdr not found on the machine" {
+		t.Errorf("a recognised cause should read as it always did: %q", got)
+	}
+
+	// A machine whose name is not what the error opens with keeps its message
+	// intact -- the strip is a prefix match, not a search.
+	if got := summarizeErrorFor("other", unknown); got != summarizeError(unknown) {
+		t.Errorf("stripping a name the error does not open with changed it: %q", got)
+	}
+
+	// And only the OPENING one goes. A machine's name can appear again in the
+	// cause -- ssh says which host it could not reach -- and taking every
+	// occurrence would leave a sentence with a hole where the machine was.
+	twice := fmt.Errorf("%s: ssh to %s: connection refused", target, target)
+	if _, ok := classify(twice); ok {
+		t.Fatalf("this fixture has to be a cause classify does not know")
+	}
+	if got := summarizeErrorFor(target, twice); got != "ssh to bot: connection refused" {
+		t.Errorf("only the opening name should go, and this reads %q", got)
+	}
+}
+
+// TestTheMachineIsStrippedBeforeTheLineIsShortened holds the order of the two.
+//
+// The bound is 90 runes and a target may be 320 bytes, so spending the bound
+// on a name the line already carries can leave none for the cause.
+func TestTheMachineIsStrippedBeforeTheLineIsShortened(t *testing.T) {
+	long := strings.Repeat("m", 200)
+	err := fmt.Errorf("%s: %s", long, "could not start a remote Herdr session")
+	if _, ok := classify(err); ok {
+		t.Fatalf("this fixture has to be a cause classify does not know")
+	}
+
+	got := summarizeErrorFor(long, err)
+	if !strings.Contains(got, "could not start a remote Herdr session") {
+		t.Errorf("the machine's name used up the whole line and the cause is gone: %q", got)
+	}
+}
+
+// TestEveryLineNamingTheMachineStripsItFromTheCause holds the CALL SITES, not
+// the mechanism.
+//
+// Written because reverting one of them to summarizeError passed the whole
+// package: summarizeErrorFor was held by its own test and by nothing else, so
+// every line in the daemon could have gone back to saying the machine twice
+// without a single failure. A message helper is only as held as its callers.
+func TestEveryLineNamingTheMachineStripsItFromTheCause(t *testing.T) {
+	source, err := os.ReadFile("daemon.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "daemon.go", source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A statement that builds a line naming the machine. ".Target" covers the
+	// log lines and the replies that format it in; "changed" is the set-mode
+	// reply, whose opening half is built from the machine the caller named.
+	names := []string{".Target", "changed +"}
+
+	checked := 0
+	ast.Inspect(file, func(n ast.Node) bool {
+		// The leaf statements only. Taking every ast.Stmt reported the same
+		// call once per enclosing block, and a whole function body counts as
+		// one statement that mentions everything inside it.
+		var stmt ast.Stmt
+		switch s := n.(type) {
+		case *ast.ExprStmt:
+			stmt = s
+		case *ast.ReturnStmt:
+			stmt = s
+		case *ast.AssignStmt:
+			stmt = s
+		default:
+			return true
+		}
+		text := string(source[fset.Position(stmt.Pos()).Offset:fset.Position(stmt.End()).Offset])
+		if !strings.Contains(text, "summarizeError(") {
+			return true
+		}
+		checked++
+		for _, name := range names {
+			if strings.Contains(text, name) {
+				t.Errorf("this line names the machine and does not strip it from the "+
+					"cause, so it says it twice — use summarizeErrorFor:\n%s", text)
+				break
+			}
+		}
+		return true
+	})
+
+	// Self-verifying: if the walk stopped matching statements at all, every
+	// check above would pass by looking at nothing.
+	if checked == 0 {
+		t.Fatal("no call to summarizeError was examined, so this holds nothing")
 	}
 }
