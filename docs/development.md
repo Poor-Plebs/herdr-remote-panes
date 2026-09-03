@@ -269,11 +269,14 @@ another word, and this plugin's own messages are full of it: a machine's line
 in the menu ends `· herdr not found`. Asking Herdr whether it still has a
 command called `found on the machine` would report drift that is not there on
 every run, and a checker that cries about its own error messages is one whose
-output gets skimmed. Only the commands are checked, not the flags the pages
-pass with them. Finding none at all is an error rather than a quiet pass: the
-pages give a dozen, so an empty answer means this ran outside the tree, or that
-they stopped being written the way it reads them. Both otherwise print the same
-reassuring line as a run that looked and was satisfied.
+output gets skimmed. The flags an invocation passes are read from inside it
+and checked against the same help, which is two of them today. A flag named in
+a comment beside a command, or in the sentence after its closing backtick, is
+prose: it is being described rather than typed, and the paragraph describing it
+is not drift. Finding no commands at all is an error rather than a quiet pass:
+the pages give a dozen, so an empty answer means this ran outside the tree, or
+that they stopped being written the way it reads them. Both otherwise print the
+same reassuring line as a run that looked and was satisfied.
 
 `make vuln` is not part of `make check`, and deliberately: it needs the network
 and asks a database that changes without the code changing, so it can start

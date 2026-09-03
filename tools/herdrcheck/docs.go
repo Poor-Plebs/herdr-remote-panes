@@ -9,10 +9,18 @@ import (
 )
 
 // docCommand is a `herdr ...` invocation the documentation tells somebody to
-// run, and every place it is given.
+// run, every place it is given, and the flags the pages pass with it against
+// the places that pass them.
 type docCommand struct {
 	command []string
 	where   []string
+	flags   map[string][]string
+}
+
+// docInvocation is one `herdr ...` as a single line writes it.
+type docInvocation struct {
+	command string
+	flags   []string
 }
 
 // docCommands reads the documentation for the Herdr commands it hands a reader.
@@ -36,6 +44,7 @@ func docCommands(root string) ([]docCommand, error) {
 	pages = append(pages, found...)
 
 	at := map[string][]string{}
+	flags := map[string]map[string][]string{}
 	for _, page := range pages {
 		raw, err := os.ReadFile(page)
 		if err != nil {
@@ -43,8 +52,15 @@ func docCommands(root string) ([]docCommand, error) {
 		}
 		name := filepath.Base(page)
 		for i, line := range strings.Split(string(raw), "\n") {
-			for _, command := range commandsIn(line) {
-				at[command] = append(at[command], fmt.Sprintf("%s:%d", name, i+1))
+			for _, found := range commandsIn(line) {
+				place := fmt.Sprintf("%s:%d", name, i+1)
+				at[found.command] = append(at[found.command], place)
+				for _, flag := range found.flags {
+					if flags[found.command] == nil {
+						flags[found.command] = map[string][]string{}
+					}
+					flags[found.command][flag] = append(flags[found.command][flag], place)
+				}
 			}
 		}
 	}
@@ -65,7 +81,7 @@ func docCommands(root string) ([]docCommand, error) {
 	sort.Strings(names)
 	out := make([]docCommand, 0, len(names))
 	for _, name := range names {
-		out = append(out, docCommand{command: strings.Fields(name), where: at[name]})
+		out = append(out, docCommand{command: strings.Fields(name), where: at[name], flags: flags[name]})
 	}
 	return out, nil
 }
@@ -79,8 +95,8 @@ func docCommands(root string) ([]docCommand, error) {
 // says "no herdr found on the machine". Asking Herdr whether it still has
 // `herdr found on the machine` reports drift that is not there, and a checker
 // that cries about its own error messages is one whose output gets skimmed.
-func commandsIn(line string) []string {
-	var out []string
+func commandsIn(line string) []docInvocation {
+	var out []docInvocation
 	for i := range line {
 		rest, ok := strings.CutPrefix(line[i:], "herdr")
 		if !ok || !startsHere(line[:i]) {
@@ -93,7 +109,10 @@ func commandsIn(line string) []string {
 			continue
 		}
 		if words := subcommandsIn(rest); len(words) > 0 {
-			out = append(out, strings.Join(words, " "))
+			out = append(out, docInvocation{
+				command: strings.Join(words, " "),
+				flags:   flagsIn(rest),
+			})
 		}
 	}
 	return out
@@ -138,6 +157,44 @@ func subcommandsIn(rest string) []string {
 		words = append(words, word)
 	}
 	return words
+}
+
+// flagsIn takes the flags an invocation passes.
+//
+// From inside the invocation and nowhere else. The pages name flags in prose
+// as well -- what `--limit` does, what would happen without `--ref` -- and a
+// flag mentioned in a sentence is not one anybody is being told to type, so
+// asking Herdr about it would report drift against a paragraph. Subcommands
+// never begin with a dash, so the whole of what follows can be scanned: what
+// is a flag and what is a subcommand cannot be confused.
+func flagsIn(rest string) []string {
+	if cut := strings.IndexAny(rest, "'\"`)|;#"); cut >= 0 {
+		rest = rest[:cut]
+	}
+	var out []string
+	for _, word := range strings.Fields(rest) {
+		if name, _, _ := strings.Cut(word, "="); isFlag(name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// isFlag reports whether a word is a long flag: two dashes and then the shape
+// of a name. A bare `--` ends the options rather than being one, and `...`
+// after a placeholder is not a flag either.
+func isFlag(word string) bool {
+	name, ok := strings.CutPrefix(word, "--")
+	if !ok || name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && !(c == '-' && i > 0) {
+			return false
+		}
+	}
+	return true
 }
 
 // isSubcommand reports whether a word has the shape of one: lowercase letters

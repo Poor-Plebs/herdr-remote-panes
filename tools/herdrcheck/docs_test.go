@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -17,11 +18,13 @@ import (
 // fixture written from the same idea as the reader agrees with it by
 // construction.
 const page = "" +
-	"Install it with `herdr plugin install github.com/Poor-Plebs/herdr-remote-panes`.\n" +
+	"Install it with `herdr plugin install Poor-Plebs/herdr-remote-panes --ref v0.4.11`.\n" +
+	"\n" +
+	"`herdr plugin log list` takes `--limit` as well, and reads the newest first.\n" +
 	"\n" +
 	"```bash\n" +
 	"herdr config check\n" +
-	"$ herdr plugin log list --plugin poorplebs.remote-panes\n" +
+	"$ herdr plugin log list --plugin poorplebs.remote-panes  # --limit shortens it\n" +
 	"ssh workbox 'herdr pane list'          # what is still open there\n" +
 	"ssh workbox 'herdr pane close wG:p3'   # close one you are done with\n" +
 	"```\n" +
@@ -88,8 +91,8 @@ func TestProseIsNotReadAsACommand(t *testing.T) {
 		"herdr-remote-panes: 2026/08/27 09:02:41 could not accept",
 		"Set herdr_bin if it is installed elsewhere there.",
 	} {
-		if got := commandsIn(line); len(got) > 0 {
-			t.Errorf("read %q as the command `herdr %s`", line, strings.Join(got, "` `herdr "))
+		for _, got := range commandsIn(line) {
+			t.Errorf("read %q as the command `herdr %s`", line, got.command)
 		}
 	}
 }
@@ -124,6 +127,62 @@ func TestTheRealPagesStillGiveCommands(t *testing.T) {
 	for _, c := range found {
 		if len(c.where) == 0 {
 			t.Errorf("`herdr %s` was found with nowhere to look at", strings.Join(c.command, " "))
+		}
+	}
+}
+
+func TestTheFlagsThePagesPassAreRead(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte(page), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	found, err := docCommands(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string][]string{}
+	for _, c := range found {
+		for flag := range c.flags {
+			got[strings.Join(c.command, " ")] = append(got[strings.Join(c.command, " ")], flag)
+		}
+	}
+
+	// Both shapes the pages use: a flag after the argument, and a flag after
+	// the subcommands with nothing between.
+	for command, flag := range map[string]string{
+		"plugin install":  "--ref",
+		"plugin log list": "--plugin",
+	} {
+		if !slices.Contains(got[command], flag) {
+			t.Errorf("the pages pass %s to `herdr %s` and it was not read", flag, command)
+		}
+	}
+
+	// A flag named beside an invocation is not one it passes. The pages
+	// annotate their commands -- `# what is still open there` -- and a comment
+	// that names a flag is prose sitting on a command line; so is the rest of
+	// a sentence after the invocation's closing backtick. Asking Herdr about
+	// `--limit` from either would report drift against a paragraph that is
+	// right, every run, until the report stops being read.
+	for command, flags := range got {
+		if slices.Contains(flags, "--limit") {
+			t.Errorf("`--limit` is named in prose and was read as passed to `herdr %s`", command)
+		}
+	}
+}
+
+func TestAnArgumentIsNotAFlag(t *testing.T) {
+	// What follows a command in these pages: placeholders, a pane id, a plugin
+	// name, and the `...` that says a placeholder repeats.
+	for _, word := range []string{"<pane-id>", "<key>...", "wG:p3", "poorplebs.remote-panes", "-", "--", "v0.4.11"} {
+		if isFlag(word) {
+			t.Errorf("%q was read as a flag", word)
+		}
+	}
+	for _, word := range []string{"--ref", "--plugin", "--no-focus", "--fuzztime"} {
+		if !isFlag(word) {
+			t.Errorf("%q is a flag and was not read as one", word)
 		}
 	}
 }

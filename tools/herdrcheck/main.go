@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
@@ -78,10 +79,22 @@ func main() {
 	fmt.Println()
 	for _, doc := range docs {
 		name := strings.Join(doc.command, " ")
-		if _, ok := helpFor(bin, doc.command); !ok {
+		help, ok := helpFor(bin, doc.command)
+		if !ok {
 			problems++
 			fmt.Printf("%-24s no such command in this Herdr, and %s sends somebody to it\n",
 				name, strings.Join(doc.where, ", "))
+			continue
+		}
+		gone := []string{}
+		for _, flag := range sortedFlags(doc.flags) {
+			if !hasFlag(help, flag) {
+				gone = append(gone, fmt.Sprintf("%s (%s)", flag, strings.Join(doc.flags[flag], ", ")))
+			}
+		}
+		if len(gone) > 0 {
+			problems++
+			fmt.Printf("%-24s no longer takes what the pages pass it: %s\n", name, strings.Join(gone, ", "))
 			continue
 		}
 		fmt.Printf("%-24s ok, given in %s\n", name, strings.Join(doc.where, ", "))
@@ -93,8 +106,23 @@ func main() {
 			problems, len(herdrcli.Dependencies)+len(docs))
 		os.Exit(1)
 	}
-	fmt.Printf("all %d commands take what this plugin sends, and all %d the pages give exist\n",
-		len(herdrcli.Dependencies), len(docs))
+	passed := 0
+	for _, doc := range docs {
+		passed += len(doc.flags)
+	}
+	fmt.Printf("all %d commands take what this plugin sends, and all %d the pages give exist "+
+		"and take the %d flags passed with them\n", len(herdrcli.Dependencies), len(docs), passed)
+}
+
+// sortedFlags names the flags an invocation passes, in a fixed order so two
+// runs against the same pages report the same thing.
+func sortedFlags(flags map[string][]string) []string {
+	out := make([]string, 0, len(flags))
+	for flag := range flags {
+		out = append(out, flag)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // helpFor asks a command for its own help, and reports whether this Herdr has
