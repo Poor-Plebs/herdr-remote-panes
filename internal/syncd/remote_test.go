@@ -5150,3 +5150,80 @@ func TestAPaneRefusedWhileDisconnectingIsStillTriedAgain(t *testing.T) {
 			"and nothing is left that knows about them", got)
 	}
 }
+
+// TestAMarkingThatKeepsFailingIsSaidOnce holds the flag that turns the marking
+// failure into a notice rather than a stream.
+//
+// The space carries a marker saying whether its machine is reachable, and
+// putting it there is attempted on every pass while it is not settled. When
+// Herdr refuses, the flag records that -- which does two things at once. It
+// tells planWorkspaceMark to try again on the next pass rather than waiting out
+// the repair interval, and it is what the log line checks before saying
+// anything.
+//
+// Without it the failure is announced every pass for as long as it lasts. A
+// pass is a couple of seconds, so a machine whose space cannot be marked writes
+// a line every couple of seconds for the life of the session, and the line that
+// says what happened is buried in the ones repeating it.
+//
+// Three counts, because saying it once is not the whole of it: said when the
+// refusals start, not repeated while they continue, and said again when they
+// happen afresh after a success.
+func TestAMarkingThatKeepsFailingIsSaidOnce(t *testing.T) {
+	// The mark settles after a success and is not attempted again until this
+	// has passed, so the refusals below would otherwise never be reached.
+	was := workspaceRepairInterval
+	workspaceRepairInterval = time.Millisecond
+	t.Cleanup(func() { workspaceRepairInterval = was })
+
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	var logged strings.Builder
+	saved := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(saved) })
+	said := func() int { return strings.Count(logged.String(), "mark space ") }
+
+	refuses := func() {
+		t.Helper()
+		refuseOnMachine(t, os.Getenv(fakeHerdrState), "workspace report-metadata")
+	}
+	passes := func(n int) {
+		t.Helper()
+		for i := 0; i < n; i++ {
+			d.reconcileAll()
+		}
+	}
+
+	refuses()
+	passes(3)
+	if got := said(); got != 1 {
+		t.Fatalf("three passes with the marking refused said it %d times, want once: "+
+			"a line every couple of seconds buries the one that says what happened", got)
+	}
+
+	// It works again, which settles the mark and clears the flag.
+	if err := os.Remove(os.Getenv(fakeHerdrState) + ".refuse"); err != nil {
+		t.Fatal(err)
+	}
+	passes(2)
+	if got := said(); got != 1 {
+		t.Errorf("marking working again was worth another %d lines, want none", got-1)
+	}
+
+	// And it fails afresh, which is a new thing to report.
+	refuses()
+	passes(3)
+	if got := said(); got != 2 {
+		t.Errorf("marking failing again was said %d times in all, want twice: a "+
+			"fresh failure after a success is not the one already reported", got)
+	}
+}
