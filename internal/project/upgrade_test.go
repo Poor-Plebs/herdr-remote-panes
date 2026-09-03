@@ -112,10 +112,11 @@ func TestAnUpgradeHandsTheSocketOver(t *testing.T) {
 
 	// The upgrade: a second one starts while the first is still serving.
 	replacing, replacingSaid := daemon()
+	replacingGone := exits(replacing)
 	defer func() { _ = replacing.Process.Kill() }()
 	time.Sleep(time.Second)
 
-	if replacing.ProcessState != nil && replacing.ProcessState.Exited() {
+	if gone(replacingGone) {
 		t.Fatalf("the replacing daemon exited instead of waiting; Herdr does not "+
 			"start it again, so nothing would be left serving:\n%s", replacingSaid)
 	}
@@ -131,6 +132,29 @@ func TestAnUpgradeHandsTheSocketOver(t *testing.T) {
 	if !answering(15 * time.Second) {
 		t.Errorf("nothing answers after the handover.\nreplacing daemon said:\n%s\nold daemon said:\n%s",
 			replacingSaid, oldSaid)
+	}
+}
+
+// exits reaps a started command and closes the channel when it has gone.
+//
+// exec.Cmd fills ProcessState in from Wait and from nothing else, so a command
+// nobody waits on reads as still running however long ago it exited. Both of
+// the checks in this file are for a daemon that gave up -- the failure the
+// whole file is about -- and put to a command that is never waited on, that
+// question has only one possible answer.
+func exits(cmd *exec.Cmd) <-chan struct{} {
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	return done
+}
+
+// gone reports whether a command watched by exits has finished already.
+func gone(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -332,6 +356,7 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 	}
 
 	replacing, replacingSaid := start(current)
+	replacingGone := exits(replacing)
 	// Asked to stop rather than killed, so it unlinks the socket it bound.
 	// Killed, it leaves the file behind -- and this daemon's state directory
 	// is a t.TempDir(), which is long enough that the socket falls back to a
@@ -346,8 +371,7 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 		if err := replacing.Process.Signal(syscall.SIGTERM); err != nil {
 			_ = replacing.Process.Kill()
 		}
-		done := make(chan struct{})
-		go func() { _ = replacing.Wait(); close(done) }()
+		done := replacingGone
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
@@ -370,7 +394,7 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 		}
 	}()
 	time.Sleep(time.Second)
-	if replacing.ProcessState != nil && replacing.ProcessState.Exited() {
+	if gone(replacingGone) {
 		t.Fatalf("the new daemon exited rather than waiting for the %s one to go; "+
 			"Herdr does not start it again, so nothing would be left serving:\n%s",
 			previous, replacingSaid)
