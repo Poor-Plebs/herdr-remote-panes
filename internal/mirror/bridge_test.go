@@ -626,6 +626,17 @@ func TestThePaneSaysWhenTheDaemonWillNotLearnItFailed(t *testing.T) {
 	//
 	// So the log says both: what went wrong, and that the plugin could not
 	// record it.
+	//
+	// holdOpen is what a failed pane waits so the message can be read, and its
+	// own comment says a test need not wait it out. Every other test that
+	// calls reportFailure shortens it; this one did not, and at five seconds
+	// it was the slowest test in the package by two and a half times. The
+	// sleep happens after the log is written, so it was five seconds of
+	// waiting for something already done.
+	held := holdOpen
+	t.Cleanup(func() { holdOpen = held })
+	holdOpen = time.Millisecond
+
 	dir := t.TempDir()
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
 	t.Setenv("HERDR_SESSION", "hub")
