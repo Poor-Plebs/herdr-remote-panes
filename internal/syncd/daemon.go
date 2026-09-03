@@ -3661,7 +3661,20 @@ func (d *Daemon) markWorkspaceState(state *hostSync, connected bool) {
 				d.forgetWorkspace(state, workspaceID)
 				return
 			}
-			log.Printf("rename space %s: %v", workspaceID, err)
+			// Once per run of failures, as the marking below is. The flag
+			// this sets tells planWorkspaceMark to try again on the very next
+			// pass rather than waiting out the repair interval, so without
+			// this gate the same line is written every couple of seconds for
+			// as long as the rename keeps being refused, and the one that
+			// said what happened is buried in the ones repeating it.
+			//
+			// One flag for both halves, so a rename that starts failing while
+			// the marking is already failing says nothing the first time. That
+			// is paid where somebody has already been told this space is not
+			// being marked.
+			if !d.markedWorkspaces[workspaceID].failed {
+				log.Printf("rename space %s: %v", workspaceID, err)
+			}
 			mark.failed = true
 		}
 	}

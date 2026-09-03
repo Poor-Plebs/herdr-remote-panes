@@ -5246,6 +5246,80 @@ func TestAMarkingThatKeepsFailingIsSaidOnce(t *testing.T) {
 	}
 }
 
+// TestARenameThatKeepsFailingIsSaidOnce holds the other half of the marking.
+//
+// The marker is put in two places: the space's name, by `workspace rename`, and
+// its sidebar tokens, by `workspace report-metadata`. The line beside this one
+// holds the second against being announced every pass. The first was not held
+// and was not gated, and it is the half that repeats hardest -- a refused
+// rename sets the flag that tells planWorkspaceMark to try again on the very
+// next pass, so the failure was reported, retried and reported again a couple
+// of seconds later, for as long as it lasted. Measured: three passes, three
+// identical lines, while the marking beside it said nothing after the first.
+//
+// The two share one flag, so a rename that starts failing while the marking is
+// already failing says nothing the first time. That is the cost of one flag
+// for "the marker did not go on", and it is paid where somebody has already
+// been told that space is not being marked.
+func TestARenameThatKeepsFailingIsSaidOnce(t *testing.T) {
+	// As beside: the mark settles after a success and is not tried again until
+	// this has passed, so the refusals below would never be reached.
+	was := workspaceRepairInterval
+	workspaceRepairInterval = time.Millisecond
+	t.Cleanup(func() { workspaceRepairInterval = was })
+
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 2, there)
+
+	var logged strings.Builder
+	saved := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(saved) })
+	said := func() int { return strings.Count(logged.String(), "rename space ") }
+
+	refuses := func() {
+		t.Helper()
+		refuseOnMachine(t, os.Getenv(fakeHerdrState), "workspace rename")
+	}
+	passes := func(n int) {
+		t.Helper()
+		for i := 0; i < n; i++ {
+			d.reconcileAll()
+		}
+	}
+
+	refuses()
+	passes(3)
+	if got := said(); got != 1 {
+		t.Fatalf("three passes with the rename refused said it %d times, want once: "+
+			"a line every couple of seconds buries the one that says what happened", got)
+	}
+
+	// It works again, which settles the mark and clears the flag.
+	if err := os.Remove(os.Getenv(fakeHerdrState) + ".refuse"); err != nil {
+		t.Fatal(err)
+	}
+	passes(2)
+	if got := said(); got != 1 {
+		t.Errorf("renaming working again was worth another %d lines, want none", got-1)
+	}
+
+	// And it fails afresh, which is a new thing to report.
+	refuses()
+	passes(3)
+	if got := said(); got != 2 {
+		t.Errorf("the rename failing again was said %d times in all, want twice: a "+
+			"fresh failure after a success is not the one already reported", got)
+	}
+}
+
 // TestATerminalStillRunningIsAdoptedRatherThanReplaced holds the one line that
 // tells a live terminal from a husk when the daemon comes back.
 //
