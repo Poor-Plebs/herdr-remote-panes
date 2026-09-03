@@ -5245,3 +5245,64 @@ func TestAMarkingThatKeepsFailingIsSaidOnce(t *testing.T) {
 			"fresh failure after a success is not the one already reported", got)
 	}
 }
+
+// TestATerminalStillRunningIsAdoptedRatherThanReplaced holds the one line that
+// tells a live terminal from a husk when the daemon comes back.
+//
+// Herdr restores a plugin pane as a plain shell without re-running its command,
+// so a space can hold panes wearing this machine's name with nothing behind
+// them. Those are cleared before the terminals are opened again. A pane whose
+// bridge is still running is not one of those, and the line that says so is
+// what keeps it -- and what records it as this machine's, which is the part
+// nothing reached: measured against the whole suite, that line ran zero times.
+//
+// What it costs is not the terminal but a second one beside it. Without it the
+// live pane is left alone and untracked, so the daemon opens another to make
+// up the count: two terminals on screen, the menu saying one, and the one
+// somebody was working in no longer the one the plugin will close.
+func TestATerminalStillRunningIsAdoptedRatherThanReplaced(t *testing.T) {
+	here := withFakeHerdr(t)
+
+	// A plain SSH machine with a terminal open, written down as daemons are
+	// stopped and started.
+	before := New(machineConfig("bot"))
+	if reply := before.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	before.reconcileAll()
+
+	panes := before.hosts["bot"].shellPanes
+	if len(panes) != 1 {
+		t.Fatalf("the machine has %d terminals, want the one this is about: %v",
+			len(panes), panes)
+	}
+	var was string
+	for paneID := range panes {
+		was = paneID
+	}
+	before.persist()
+
+	// The daemon goes and comes back. The pane is still there, and so is the
+	// bridge inside it.
+	mirrorIsRunning(t, was, "t-live")
+	if !mirror.IsLive(was) {
+		t.Fatal("the pane does not read as live, so this is about a husk instead")
+	}
+
+	after := New(machineConfig("bot"))
+	if reply := after.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("reconnect: %s", reply.Message)
+	}
+	for i := 0; i < 3; i++ {
+		after.reconcileAll()
+	}
+
+	if got := panesFor(here(), "bot"); got != 1 {
+		t.Errorf("%d terminals for bot after the daemon came back, want 1: the one "+
+			"that was running was left where it was and another opened beside it", got)
+	}
+	if kept := after.hosts["bot"].shellPanes; !kept[was] {
+		t.Errorf("the terminal that was running is %s and the machine's are %v: the "+
+			"live one was not taken back, so nothing here will close it again", was, kept)
+	}
+}
