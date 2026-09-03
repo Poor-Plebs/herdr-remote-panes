@@ -313,23 +313,34 @@ func ValidTarget(target string) error {
 	if target == "" {
 		return errors.New("no target")
 	}
+	// FIRST, so that it bounds every message below it. Each of those quotes
+	// the target back, and this is the only check that does not -- so with it
+	// anywhere else, whichever refusals come before it are unbounded. It sat
+	// under the dash check, which is the one a selection is most likely to
+	// trip: a diff hunk begins with "-", and dragging over one produced a
+	// refusal as long as the selection. Measured before moving it, a 200 KB
+	// selection beginning with a dash gave a 200 KB message where every other
+	// overlong selection gave 68 bytes.
+	//
+	// Not a machine, whoever offered it. A name reaches here from a file
+	// somebody edited or from whatever text was selected when an action was
+	// invoked, and a selection is a line of somebody else's output as readily
+	// as a name -- a base64 blob or a long URL has no space in it and no dash
+	// at the front, which is everything else this asks about.
+	//
+	// Bounded rather than merely refused later by ssh, because what it costs
+	// is not the failed connection: the target is in the message that failure
+	// is reported with, and that message goes into a log that rolls at a
+	// quarter of a megabyte. One selection could take the history with it.
+	if len(target) > maxTargetBytes {
+		// Bytes rather than characters, which is what this counts and what
+		// maxTargetBytes bounds: 400 emoji are 1600 bytes, and calling that
+		// "1600 characters" overstates the name by four times.
+		return fmt.Errorf("target is %d bytes, which is longer than any machine's name",
+			len(target))
+	}
 	if strings.HasPrefix(target, "-") {
 		return fmt.Errorf("target %q starts with a dash, which ssh reads as an option", target)
-	}
-	if len(target) > maxTargetBytes {
-		// Not a machine, whoever offered it. A name reaches here from a file
-		// somebody edited or from whatever text was selected when an action
-		// was invoked, and a selection is a line of somebody else's output as
-		// readily as a name -- a base64 blob or a long URL has no space in it
-		// and no dash at the front, which is everything else this asks about.
-		//
-		// Bounded rather than merely refused later by ssh, because what it
-		// costs is not the failed connection: the target is in the message
-		// that failure is reported with, and that message goes into a log that
-		// rolls at a quarter of a megabyte. One selection could take the
-		// history with it.
-		return fmt.Errorf("target is %d characters, which is longer than any machine's name",
-			len(target))
 	}
 	for _, r := range target {
 		if unicode.IsControl(r) {

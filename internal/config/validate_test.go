@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1657,6 +1658,75 @@ func TestATargetOfExactlyTheLimitIsStillAMachine(t *testing.T) {
 		// The reason this bound exists: the target goes into the message, and
 		// the message goes into a log.
 		t.Errorf("the refusal quotes the whole overlong target back: %v", err)
+	}
+}
+
+// TestTheOverlongRefusalCountsWhatItBounds holds the number in that message to
+// the thing being measured. It said "characters" and counted bytes, which
+// agree for a name typed in ASCII and disagree by four times for one that is
+// not: 400 emoji are 1600 bytes, and the refusal called them 1600 characters.
+func TestTheOverlongRefusalCountsWhatItBounds(t *testing.T) {
+	// Multibyte, so that a count of runes and a count of bytes cannot both be
+	// right. An ASCII fixture here would hold neither.
+	target := strings.Repeat("\U0001F600", maxTargetBytes)
+	runes := len([]rune(target))
+	bytes := len(target)
+	if runes == bytes {
+		t.Fatalf("the fixture is not multibyte, so this holds nothing")
+	}
+
+	err := ValidTarget(target)
+	if err == nil {
+		t.Fatalf("a target of %d bytes was allowed", bytes)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("%d bytes", bytes)) {
+		t.Errorf("the refusal should report the %d bytes it measures, and says: %v", bytes, err)
+	}
+	if strings.Contains(err.Error(), fmt.Sprintf("%d", runes)) {
+		t.Errorf("the refusal reports the rune count %d, which is not what the bound is on: %v",
+			runes, err)
+	}
+}
+
+// TestNoRefusalQuotesAnOverlongTargetBack holds the bound for every way of
+// being refused rather than for the one that happens to reach it.
+//
+// The test above states the reason the bound exists and then checks it with a
+// target of "aaa...", which trips the length branch and nothing else. Every
+// other refusal quotes the target back with %q, so the bound only held them
+// while it ran first -- and it did not: it sat under the dash check, which is
+// the branch a selection is likeliest to trip, since a diff hunk begins with
+// "-". Measured before the fix, a 200 KB selection beginning with a dash
+// produced a 200 KB message, against 68 bytes for every other overlong one.
+// The log it lands in rolls at a quarter of a megabyte.
+func TestNoRefusalQuotesAnOverlongTargetBack(t *testing.T) {
+	huge := strings.Repeat("x", 64*1024)
+
+	// One per branch that can refuse, each overlong, so that a bound placed
+	// after any of them shows up here.
+	for _, target := range []string{
+		"-" + huge,        // reads as an ssh option
+		"\x01" + huge,     // control character
+		huge + " " + huge, // a space, which PlausibleTarget refuses
+		huge,              // length alone
+	} {
+		for _, check := range []struct {
+			name string
+			fn   func(string) error
+		}{{"ValidTarget", ValidTarget}, {"PlausibleTarget", PlausibleTarget}} {
+			err := check.fn(target)
+			if err == nil {
+				t.Errorf("%s allowed a %d byte target", check.name, len(target))
+				continue
+			}
+			// A refusal naming the whole target is the failure; a generous
+			// bound catches that without pinning the wording.
+			if len(err.Error()) > 2*maxTargetBytes {
+				t.Errorf("%s refused a %d byte target with a %d byte message, so the "+
+					"target is being quoted back into the log: %.120q...",
+					check.name, len(target), len(err.Error()), err.Error())
+			}
+		}
 	}
 }
 
