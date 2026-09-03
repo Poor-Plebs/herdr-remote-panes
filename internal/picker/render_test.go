@@ -886,7 +886,15 @@ func TestTheKeysStaySpelledOutHoweverNarrowItGets(t *testing.T) {
 	// Narrower means shorter hints, never no hints: the menu is the only place
 	// these keys are written down, and one that says nothing is one you have to
 	// already know.
-	for cols := chromeWidth + 8; cols <= 200; cols++ {
+	//
+	// From five columns, not from chromeWidth + 8. The old floor was sixteen,
+	// which is four columns above where hintLines stops choosing between
+	// written pairs and starts cutting one down -- so the narrowest thing it
+	// does was never looked at, and what it did there was drop the way out
+	// while keeping the keys that disconnect a machine. Five is where there
+	// stops being a column to draw in at all: the popup is drawn with two
+	// columns of margin either side, so at four there is no room left.
+	for cols := 5; cols <= 200; cols++ {
 		hints := hintLines(cols)
 		if len(hints) != 2 {
 			t.Fatalf("at %d columns there are %d hint lines, want 2", cols, len(hints))

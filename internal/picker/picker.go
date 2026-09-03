@@ -680,9 +680,19 @@ func hintLines(cols int) []string {
 			return pair
 		}
 	}
+	// Narrower than the shortest written pair, so one of them has to be cut.
+	// Cutting keeps the front of a line, and the front of the second is "d · m
+	// · q" -- so what survived was the key that disconnects a machine and the
+	// one that turns mirroring on and off, while the way out was the part that
+	// went. That is the wrong half to lose: the two that are kept change
+	// something, and the one that is dropped is how somebody who opened this
+	// by accident closes it again.
+	//
+	// The exit is one column wide, so it fits wherever there is a column at
+	// all, and it is named on its own rather than cut out of a list.
 	return []string{
 		text.Truncate(shortest[0], room),
-		text.Truncate(shortest[1], room),
+		text.Truncate("q", room),
 	}
 }
 
