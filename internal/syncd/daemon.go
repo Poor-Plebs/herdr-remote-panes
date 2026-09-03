@@ -1336,7 +1336,21 @@ func (d *Daemon) openShellPane(state *hostSync, placement string, focus bool) er
 // configWarning describes an unreadable configuration, if there was one.
 func (d *Daemon) configWarning() string {
 	if d.configErr != nil {
-		return fmt.Sprintf("the plugin config could not be read, so no machines are configured: %v", d.configErr)
+		// Not "no machines are configured", which is true of the file and
+		// wrong about what can be done. Nothing refuses on configErr:
+		// hostConfig falls back to an ad-hoc host for anything in
+		// ~/.ssh/config -- its own comment says an unconfigured target is
+		// still usable -- so connecting by name works exactly as it did.
+		// Measured with an unreadable config and a machine written down in
+		// ~/.ssh/config: hostConfig("bot") returns it with no error.
+		//
+		// The difference matters because of what somebody does about it. Told
+		// nothing is configured, they stop and go and fix the file; what is
+		// actually lost is the file's settings and the machines it listed, and
+		// the work can carry on meanwhile.
+		return fmt.Sprintf("the plugin config could not be read, so none of its settings "+
+			"or machines are in force; machines in ~/.ssh/config can still be connected "+
+			"by name: %v", d.configErr)
 	}
 	if problems := d.config().Problems(); len(problems) > 0 {
 		// The count first, because this is drawn in a menu that has machines

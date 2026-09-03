@@ -5317,3 +5317,59 @@ func TestTheNoHerdrBranchUsesTheAdviceHelper(t *testing.T) {
 			"looked for:\n%s", branch)
 	}
 }
+
+// TestTheUnreadableConfigWarningSaysWhatIsStillPossible holds the consequence
+// half of that warning against what the daemon actually does.
+//
+// It said "so no machines are configured", which is true of the file and wrong
+// about what can be done: nothing refuses on configErr, and hostConfig falls
+// back to an ad-hoc host for anything in ~/.ssh/config. Told nothing is
+// configured, somebody stops to fix the file; what is actually lost is the
+// file's settings and the machines it listed.
+//
+// The behaviour is measured here as well as the wording, so this cannot pass
+// by the fallback having quietly stopped working — which would make the old
+// sentence right again and this test the only thing saying otherwise.
+func TestTheUnreadableConfigWarningSaysWhatIsStillPossible(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"),
+		[]byte("Host bot\n  HostName 1.2.3.4\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d := NewWithConfigError(config.Config{}, errors.New("unexpected end of JSON input"))
+
+	// What is true: the file gave the daemon nothing.
+	if got := len(d.config().Hosts); got != 0 {
+		t.Fatalf("an unreadable config should leave no configured machines, got %d", got)
+	}
+	// What is also true, and is the point: a machine somebody wrote down in
+	// ~/.ssh/config still resolves.
+	host, err := d.hostConfig("bot")
+	if err != nil || host.Target != "bot" {
+		t.Fatalf("a machine in ~/.ssh/config should still be reachable by name, and "+
+			"hostConfig gave %+v, %v — if that is deliberate the warning needs "+
+			"changing back, not this test adjusting", host, err)
+	}
+
+	warning := d.configWarning()
+	if !strings.Contains(warning, "could not be read") {
+		t.Errorf("the warning no longer identifies itself: %q", warning)
+	}
+	if strings.Contains(warning, "no machines are configured") {
+		t.Errorf("a machine in ~/.ssh/config can still be connected, and the warning "+
+			"says nothing is configured: %q", warning)
+	}
+	if !strings.Contains(warning, "~/.ssh/config") {
+		t.Errorf("the warning does not say what still works: %q", warning)
+	}
+	// And it still says what was lost, or it has swapped one half-truth for
+	// another.
+	if !strings.Contains(warning, "settings") {
+		t.Errorf("the warning does not say what the unreadable file cost: %q", warning)
+	}
+}
