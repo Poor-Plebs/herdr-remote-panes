@@ -35,21 +35,8 @@ func main() {
 	for _, dep := range herdrcli.Dependencies {
 		name := strings.Join(dep.Command, " ")
 
-		// --help rather than running it: this must not change anything, and a
-		// plugin's checker that opened a pane to find out would be worse than
-		// the drift it looks for.
-		help, err := exec.Command(bin, append(append([]string{}, dep.Command...), "--help")...).CombinedOutput()
-		// Two ways Herdr says it has no such command, and neither is an exit
-		// status on its own. An unknown subcommand under a known parent exits
-		// non-zero and prints the parent's list of commands; a command that is
-		// one unknown word prints the top-level help and exits ZERO. What both
-		// have in common is that the output does not name the command, which
-		// is the first thing a command's own help does.
-		//
-		// Herdr itself was proved to run by --version above, so a command that
-		// does not answer here is a command this Herdr does not have.
-		text := string(help)
-		if err != nil || !strings.Contains(text, "herdr "+name) {
+		text, ok := helpFor(bin, dep.Command)
+		if !ok {
 			problems++
 			fmt.Printf("%-24s no such command in this Herdr\n", name)
 			continue
@@ -78,12 +65,59 @@ func main() {
 		fmt.Printf("%-24s ok\n", name)
 	}
 
+	// The pages send a reader to Herdr commands this plugin never runs, so
+	// they are not in Dependencies and nothing above has looked at them. Only
+	// the commands: a flag the documentation passes is not checked here, and
+	// that gap is worth knowing about rather than being papered over by a
+	// summary line that says everything was looked at.
+	docs, err := docCommands(".")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(2)
+	}
+	fmt.Println()
+	for _, doc := range docs {
+		name := strings.Join(doc.command, " ")
+		if _, ok := helpFor(bin, doc.command); !ok {
+			problems++
+			fmt.Printf("%-24s no such command in this Herdr, and %s sends somebody to it\n",
+				name, strings.Join(doc.where, ", "))
+			continue
+		}
+		fmt.Printf("%-24s ok, given in %s\n", name, strings.Join(doc.where, ", "))
+	}
+
 	fmt.Println()
 	if problems > 0 {
-		fmt.Printf("%d of %d commands are not what this plugin expects\n", problems, len(herdrcli.Dependencies))
+		fmt.Printf("%d of %d commands are not what this plugin and its pages expect\n",
+			problems, len(herdrcli.Dependencies)+len(docs))
 		os.Exit(1)
 	}
-	fmt.Printf("all %d commands take what this plugin sends\n", len(herdrcli.Dependencies))
+	fmt.Printf("all %d commands take what this plugin sends, and all %d the pages give exist\n",
+		len(herdrcli.Dependencies), len(docs))
+}
+
+// helpFor asks a command for its own help, and reports whether this Herdr has
+// it at all.
+//
+// --help rather than running it: this must not change anything, and a plugin's
+// checker that opened a pane to find out would be worse than the drift it
+// looks for.
+//
+// Two ways Herdr says it has no such command, and neither is an exit status on
+// its own. An unknown subcommand under a known parent exits non-zero and
+// prints the parent's list of commands; a command that is one unknown word
+// prints the top-level help and exits ZERO. What both have in common is that
+// the output does not name the command, which is the first thing a command's
+// own help does.
+//
+// Herdr itself is proved to run by --version before any of this, so a command
+// that does not answer here is a command this Herdr does not have.
+func helpFor(bin string, command []string) (string, bool) {
+	name := strings.Join(command, " ")
+	out, err := exec.Command(bin, append(append([]string{}, command...), "--help")...).CombinedOutput()
+	text := string(out)
+	return text, err == nil && strings.Contains(text, "herdr "+name)
 }
 
 // hasFlag reports whether the help declares this flag, rather than merely

@@ -252,6 +252,29 @@ the code, so what is asked about cannot fall behind what is sent. It only ever
 asks for `--help`, because a checker that opened a pane to find out would be
 worse than the drift it looks for.
 
+It reads the pages as well. They send a reader to Herdr commands this plugin
+never runs itself — `herdr plugin log list` to find out why a daemon would not
+start, `herdr terminal attach` to watch a stream by hand — so those are not in
+`Dependencies` and nothing looked at them. Nothing else did either: the test
+that holds the commands in the documentation knows about `make` targets and
+test names, both of which are in this tree, and stops there. Herdr renaming one
+of these left every check green and left the page sending somebody to a command
+that does not exist, which is worse than no instruction, because they believe
+the page and doubt their machine.
+
+What is read as a command is only what is written where a command can start —
+the beginning of a line, after a prompt, inside the quotes of `ssh box 'herdr
+pane list'`, in the `$(...)` of a path. In prose the word is preceded by
+another word, and this plugin's own messages are full of it: a machine's line
+in the menu ends `· herdr not found`. Asking Herdr whether it still has a
+command called `found on the machine` would report drift that is not there on
+every run, and a checker that cries about its own error messages is one whose
+output gets skimmed. Only the commands are checked, not the flags the pages
+pass with them. Finding none at all is an error rather than a quiet pass: the
+pages give a dozen, so an empty answer means this ran outside the tree, or that
+they stopped being written the way it reads them. Both otherwise print the same
+reassuring line as a run that looked and was satisfied.
+
 `make vuln` is not part of `make check`, and deliberately: it needs the network
 and asks a database that changes without the code changing, so it can start
 failing on a machine that has been left alone overnight — which is how a check
