@@ -1605,6 +1605,91 @@ func TestAMirroredTabYouCloseStillClosesTheTerminal(t *testing.T) {
 	}
 }
 
+// TestTheLogDoesNotClaimACloseItDidNotMake holds the three things closing a
+// mirrored tab can end in, which used to be said in two sentences.
+//
+// This log is what answers "did the plugin close my work on that machine?" --
+// the question close_propagates exists to raise, since shutting a tab here
+// shuts a terminal there. Measured before the fix: a machine answering
+// pane_not_found, which is Herdr saying the terminal had already gone, was
+// logged as "closed terminal w1:p3 to match". The outcome was right and the
+// agency was not, in the one line somebody investigating would read.
+//
+// The stand-in refuses without removing its pane, so the machine here still
+// lists the terminal afterwards in that case; what the fixture exercises is
+// the branch, which the error code selects exactly as it would from the real
+// Herdr. The terminal count is asserted only where the fixture can honestly
+// speak to it.
+func TestTheLogDoesNotClaimACloseItDidNotMake(t *testing.T) {
+	for _, tt := range []struct {
+		what    string
+		refuse  string
+		want    string
+		notWant []string
+	}{
+		{
+			what:    "the close is made",
+			want:    "closed terminal",
+			notWant: []string{"had already gone there", "could not close terminal"},
+		},
+		{
+			what:    "the terminal had already gone there",
+			refuse:  "pane close:pane_not_found",
+			want:    "had already gone there, so there was nothing to close",
+			notWant: []string{"closed terminal", "could not close terminal"},
+		},
+		{
+			what:    "the machine refuses for some other reason",
+			refuse:  "pane close:internal_error",
+			want:    "could not close terminal",
+			notWant: []string{"closed terminal", "had already gone there"},
+		},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			here := withFakeHerdr(t)
+			there, therePath := withRemoteHerdr(t)
+
+			cfg := machineConfig("bot")
+			cfg.Hosts[0].Mode = "attach"
+			d := New(cfg)
+			if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+				t.Fatalf("connect: %s", reply.Message)
+			}
+			settle(t, d, here, 3, there)
+			if got := len(there().Panes); got != 1 {
+				t.Fatalf("the machine has %d terminals, want 1 to start from", got)
+			}
+
+			if tt.refuse != "" {
+				refuseOnMachine(t, therePath, tt.refuse)
+			}
+			logged := captureLog(t)
+			closePaneByHand(t, onlyPane(t, here()))
+			settle(t, d, here, 4, there)
+
+			said := logged.String()
+			if !strings.Contains(said, tt.want) {
+				t.Errorf("the log does not say %q:\n%s", tt.want, said)
+			}
+			// And says none of the other two, since each of them describes
+			// something that did not happen here.
+			for _, wrong := range tt.notWant {
+				if strings.Contains(said, wrong) {
+					t.Errorf("the log says %q, which is one of the other outcomes:\n%s",
+						wrong, said)
+				}
+			}
+			// Only where the stand-in's answer and the machine's state agree:
+			// a close it made really does leave the terminal gone.
+			if tt.refuse == "" {
+				if got := len(there().Panes); got != 0 {
+					t.Errorf("the machine has %d terminals after a close it reported making", got)
+				}
+			}
+		})
+	}
+}
+
 func TestAMirrorThatKeepsFailingStopsTryingSoOften(t *testing.T) {
 	// A terminal something else is holding cannot be mirrored, and the attach
 	// fails every time. Forgetting the pane and mirroring it again -- which is

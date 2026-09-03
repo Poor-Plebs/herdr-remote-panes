@@ -1058,9 +1058,6 @@ func (d *Daemon) closeRemoteTerminals(state *hostSync, terminalIDs []string, rem
 			continue
 		}
 		if _, err := state.client.Run("pane", "close", paneID); err != nil {
-			// Already gone at the far end is the outcome, not a failure: the
-			// listing this works from is a moment old, and somebody may have
-			// closed it there in between.
 			if !herdrcli.IsNotFound(err) {
 				// Said as what it means rather than as what failed. The tab is
 				// gone from here and the work is still running over there, and
@@ -1071,6 +1068,17 @@ func (d *Daemon) closeRemoteTerminals(state *hostSync, terminalIDs []string, rem
 					state.host.Target, paneID, summarizeErrorFor(state.host.Target, err))
 				continue
 			}
+			// Already gone at the far end is the outcome, not a failure: the
+			// listing this works from is a moment old, and somebody may have
+			// closed it there in between.
+			//
+			// Said separately from the close below, because this log is what
+			// answers "did the plugin close my work on that machine?" -- the
+			// question close_propagates exists to raise -- and it used to
+			// answer yes for a terminal it had not touched.
+			log.Printf("%s: terminal %s had already gone there, so there was "+
+				"nothing to close", state.host.Target, paneID)
+			continue
 		}
 		log.Printf("%s: closed terminal %s to match", state.host.Target, paneID)
 	}
