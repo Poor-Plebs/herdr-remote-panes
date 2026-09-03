@@ -1200,14 +1200,32 @@ func TestAnAgentNameFromAnotherMachineIsMadeSafe(t *testing.T) {
 		"\x1b[31mclaude\x1b[0m\nrest", "working")
 	settle(t, d, here, 3, there)
 
+	reported := 0
 	for _, pane := range here().Panes {
 		agent, _ := pane["agent"].(string)
 		if agent == "" {
 			continue
 		}
+		reported++
 		if strings.ContainsAny(agent, "\n\r") || strings.ContainsRune(agent, 0x1b) {
 			t.Errorf("the agent reads as %q here, which steers the terminal", agent)
 		}
+		// The steering is gone and the name is not: a sanitiser that returned
+		// nothing at all would pass the line above and leave the sidebar naming
+		// no agent for a pane that is running one.
+		if !strings.Contains(agent, "claude") {
+			t.Errorf("the agent reads as %q here, which is not the name the machine "+
+				"gave: it was cleaned away rather than made safe", agent)
+		}
+	}
+
+	// An agent reached the sidebar at all. Every check above skips a pane that
+	// reports none, so a mirror that stopped reporting -- or a machine whose
+	// pane never arrived -- would leave this looking at nothing and saying so
+	// by passing, which is the one answer it must not be able to give.
+	if reported != 1 {
+		t.Fatalf("%d panes here report an agent, want 1: the checks above are "+
+			"about an agent that reached the sidebar, and none did", reported)
 	}
 }
 
