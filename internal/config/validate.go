@@ -41,9 +41,16 @@ func (c Config) Problems() []string {
 			"label_format %q has neither {name} nor {pane}, so every terminal from a "+
 				"machine will be named the same", c.LabelFormat))
 	}
+	// "every machine" was too much: a machine that names its own workspace
+	// never consults the format, so a config where they all do would be told
+	// its machines were about to collide when nothing of the kind could
+	// happen. The condition is still right -- the setting is wrong for any
+	// machine added later that does not name one -- so it is the sentence that
+	// says which machines it means.
 	if c.Workspace == "" && !strings.Contains(c.WorkspaceFormat, "{host}") {
 		problems = append(problems, fmt.Sprintf(
-			"workspace_format %q has no {host}, so every machine will share one space", c.WorkspaceFormat))
+			"workspace_format %q has no {host}, so every machine that does not name its "+
+				"own space shares one with the rest", c.WorkspaceFormat))
 	}
 	// The same fault in the name used while a machine is unreachable, under
 	// the same condition: an explicitly chosen workspace is used as given, so
@@ -53,8 +60,9 @@ func (c Config) Problems() []string {
 	// than anything anybody did to the config that day.
 	if c.Workspace == "" && !strings.Contains(c.WorkspaceFormatDown, "{host}") {
 		problems = append(problems, fmt.Sprintf(
-			"workspace_format_down %q has no {host}, so every machine that cannot be "+
-				"reached will share one space", c.WorkspaceFormatDown))
+			"workspace_format_down %q has no {host}, so every machine that does not name "+
+				"its own space shares one with the rest while it cannot be reached",
+			c.WorkspaceFormatDown))
 	}
 	// remote_workspace_format is deliberately not checked for {hub}. It names
 	// the space made on the machine, so what would collide is two of these

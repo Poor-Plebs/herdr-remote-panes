@@ -159,6 +159,74 @@ func TestAFormatThatNamesTerminalsByTheirIDIsNotAProblem(t *testing.T) {
 	}
 }
 
+func TestTheWarningAboutAWorkspaceFormatSaysWhichMachinesItMeans(t *testing.T) {
+	// The last of the five complaints to be held, and the behaviour it
+	// promises lives here rather than in syncd: WorkspaceLabelFor builds the
+	// name, and the only thing it substitutes is {host}.
+	//
+	// It used to say "every machine will share one space". A machine that
+	// names its own workspace never consults the format -- WorkspaceLabelFor
+	// returns the chosen name as given -- so a config where every machine
+	// named one was told they were about to collide when nothing of the kind
+	// could happen, and the fix it invited (adding {host} to the format)
+	// would have changed nothing at all.
+	plain := []Host{{Target: "bot"}, {Target: "ci"}}
+	own := []Host{{Target: "bot", Workspace: "bot-space"}, {Target: "ci", Workspace: "ci-space"}}
+
+	for _, reachable := range []bool{true, false} {
+		// Machines that leave the format to name them do share one space,
+		// which is the whole of what the complaint is about.
+		shared := Defaults()
+		shared.WorkspaceFormat = "machines"
+		shared.WorkspaceFormatDown = "machines (down)"
+		shared.Hosts = plain
+		if !reportsAboutWorkspaceFormat(shared, reachable) {
+			t.Errorf("reachable=%v: a format with no {host} is not reported", reachable)
+		}
+		a, b := shared.WorkspaceLabelFor(plain[0], reachable), shared.WorkspaceLabelFor(plain[1], reachable)
+		if a != b {
+			t.Errorf("reachable=%v: the complaint says these share a space, and they are "+
+				"%q and %q", reachable, a, b)
+		}
+
+		// Machines that name their own do not, and the complaint no longer
+		// claims otherwise.
+		named := shared
+		named.Hosts = own
+		a, b = named.WorkspaceLabelFor(own[0], reachable), named.WorkspaceLabelFor(own[1], reachable)
+		if a == b {
+			t.Errorf("reachable=%v: machines naming their own space both got %q", reachable, a)
+		}
+		for _, p := range named.Problems() {
+			if strings.HasPrefix(p, "workspace_format") && !strings.Contains(p, "does not name") {
+				t.Errorf("reachable=%v: the complaint claims more than it can: %q", reachable, p)
+			}
+		}
+	}
+
+	// And a format that does name the machine is not reported at all.
+	fine := Defaults()
+	fine.Hosts = plain
+	if reportsAboutWorkspaceFormat(fine, true) {
+		t.Errorf("the default format names the machine and is reported anyway: %v", fine.Problems())
+	}
+}
+
+// reportsAboutWorkspaceFormat says whether the complaint about the format used
+// at the given reachability was made.
+func reportsAboutWorkspaceFormat(cfg Config, reachable bool) bool {
+	want := "workspace_format_down"
+	if reachable {
+		want = "workspace_format "
+	}
+	for _, p := range cfg.Problems() {
+		if strings.HasPrefix(p, want) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestProblemsCatchesFormatsMissingTheirPlaceholder(t *testing.T) {
 	// Without {name} every terminal from a machine gets the same label, and
 	// without {host} every machine shares one space.
