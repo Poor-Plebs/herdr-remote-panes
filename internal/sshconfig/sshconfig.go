@@ -298,6 +298,15 @@ func hostsRead(path string, depth int, read *reading) []string {
 	// has a reason. This used to be discarded on the grounds that Unreadable
 	// asked the same question; it asked it of the top-level file only, and a
 	// line past the bound in an included one ended that file's scan in silence.
+	//
+	// The bound it was written for can no longer be the reason, and that was
+	// measured rather than assumed: maxConfigBytes is the same megabyte as
+	// maxConfigLine and is checked before this file is opened, so a line too
+	// long to scan cannot fit in a file small enough to be read. Asking for
+	// one gives "larger than 1048576 bytes, so it is not read" from the size
+	// check above, and the scan never starts. What is left here is a read that
+	// fails partway -- the file replaced or truncated under us, or the disk
+	// answering with an error -- which is rarer and just as quiet.
 	if err := scanner.Err(); err != nil {
 		read.note(path, err.Error())
 	}
