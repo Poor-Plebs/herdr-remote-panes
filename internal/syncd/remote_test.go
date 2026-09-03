@@ -5460,3 +5460,73 @@ func TestAMirrorHerdrWouldNotCloseWhenItsTerminalWentIsTriedAgain(t *testing.T) 
 			"wearing a live machine's name", mirrored)
 	}
 }
+
+// TestAMirrorHerdrWouldNotCloseWhenMirroringStopsIsTriedAgain holds the last of
+// the refusals that nothing reached.
+//
+// A machine that stops being mirrored has its mirrors closed once, on the first
+// pass after it comes back as plain SSH. The block's own comment says what is
+// at stake if that does not happen: mirrors recorded while it was mirrored
+// cannot be kept up in SSH mode and nothing here would ever revisit them, so
+// they sit in the space as dead panes wearing live names.
+//
+// Every other test of this block lets Herdr agree to the close. The branch that
+// writes a refusal down ran zero times against the whole suite, which is the
+// one case where "closed once" is not closed at all -- and the pane is dropped
+// from the pass's listing and the machine's bookkeeping either way.
+func TestAMirrorHerdrWouldNotCloseWhenMirroringStopsIsTriedAgain(t *testing.T) {
+	here := withFakeHerdr(t)
+	there, _ := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	before := New(cfg)
+	if reply := before.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, before, here, 2, there)
+
+	mirrors := before.hosts["bot"].mirrors
+	if len(mirrors) != 1 {
+		t.Fatalf("the machine has %d mirrors, want the one this is about: %v",
+			len(mirrors), mirrors)
+	}
+	var mirrored string
+	for _, paneID := range mirrors {
+		mirrored = paneID
+	}
+	before.persist()
+
+	// The machine is reached by plain ssh from now on, and Herdr will not close
+	// anything while it changes over.
+	statePath := os.Getenv(fakeHerdrState)
+	refuseOnMachine(t, statePath, "plugin pane close,pane close")
+
+	sshCfg := machineConfig("bot")
+	sshCfg.Hosts[0].Mode = config.ModeSSH
+	after := New(sshCfg)
+	if reply := after.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("reconnect: %s", reply.Message)
+	}
+	for i := 0; i < 3; i++ {
+		after.reconcileAll()
+	}
+
+	// Refused, or what follows is about a mirror that closed the first time.
+	if _, ok := here().Panes[mirrored]; !ok {
+		t.Fatalf("the mirror %s went while Herdr was refusing to close anything", mirrored)
+	}
+
+	// Herdr stops refusing, and the mirror has to go on the next pass: nothing
+	// in SSH mode will ever come back to it otherwise.
+	if err := os.Remove(statePath + ".refuse"); err != nil {
+		t.Fatal(err)
+	}
+	after.reconcileAll()
+
+	if _, ok := here().Panes[mirrored]; ok {
+		t.Errorf("the mirror %s is still here once Herdr would close it: the "+
+			"machine is on plain ssh now, so what is left is a dead pane wearing "+
+			"its name", mirrored)
+	}
+}
