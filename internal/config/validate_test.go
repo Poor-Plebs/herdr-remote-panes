@@ -1903,3 +1903,91 @@ func TestTheValuesAreListedTheWayASentenceReadsThem(t *testing.T) {
 		}
 	}
 }
+
+// TestAKeyTheDecoderAppliesIsNotReportedAsIgnored holds the two complaints
+// about unknown settings to what encoding/json actually does with a key.
+//
+// It prefers an exact match and otherwise takes any field whose name differs
+// only in case, so {"Mode":"attach"} really does turn mirroring on. Matching
+// only exactly made this wrong in both directions at once: the key was
+// reported as "not a setting and is being ignored" while its value was in
+// force, and Describe left the file off the line, so a setting the file chose
+// was indistinguishable from one it never mentioned.
+//
+// The value is checked as well as the wording, so this cannot pass by the key
+// being ignored for real.
+func TestAKeyTheDecoderAppliesIsNotReportedAsIgnored(t *testing.T) {
+	for _, spelling := range []string{"mode", "Mode", "MODE", "mOdE"} {
+		cfg := loadConfigFrom(t, fmt.Sprintf(`{%q:"attach"}`, spelling))
+
+		if cfg.Mode != ModeAttach {
+			t.Errorf("%q did not set the mode, so there is nothing to hold here: got %q",
+				spelling, cfg.Mode)
+			continue
+		}
+		for _, problem := range cfg.Problems() {
+			if strings.Contains(problem, spelling) {
+				t.Errorf("%q sets the mode to %q and is reported as ignored: %s",
+					spelling, cfg.Mode, problem)
+			}
+		}
+		// The other half: the daemon's log has to say the file chose this.
+		var line string
+		for _, l := range cfg.Describe() {
+			if strings.Contains(l, "mode = ") {
+				line = l
+			}
+		}
+		if !strings.Contains(line, "config.json") {
+			t.Errorf("%q was written in the file and the log does not say so: %q", spelling, line)
+		}
+	}
+
+	// The control. A key that names no setting however it is folded still has
+	// to be reported, or the fix above would be "stop complaining at all".
+	cfg := loadConfigFrom(t, `{"modee":"attach"}`)
+	if cfg.Mode != ModeSSH {
+		t.Fatalf("modee is not a setting and should not have changed the mode: %q", cfg.Mode)
+	}
+	if !strings.Contains(strings.Join(cfg.Problems(), "\n"), `"modee" is not a setting`) {
+		t.Errorf("a key that really is unknown should still be reported: %v", cfg.Problems())
+	}
+}
+
+// TestAHostKeyTheDecoderAppliesIsNotReportedAsIgnored is the same for a
+// setting written on one machine, which is read from the same list by the
+// same rule.
+func TestAHostKeyTheDecoderAppliesIsNotReportedAsIgnored(t *testing.T) {
+	cfg := loadConfigFrom(t, `{"hosts":[{"target":"bot","MODE":"attach"}]}`)
+	if len(cfg.Hosts) != 1 || cfg.Hosts[0].Mode != ModeAttach {
+		t.Fatalf("MODE did not set the machine's mode, so there is nothing to hold: %+v", cfg.Hosts)
+	}
+	for _, problem := range cfg.Problems() {
+		if strings.Contains(problem, "MODE") {
+			t.Errorf("MODE sets the machine's mode and is reported as ignored: %s", problem)
+		}
+	}
+
+	// The control, on a machine rather than at the top level.
+	other := loadConfigFrom(t, `{"hosts":[{"target":"bot","modee":"attach"}]}`)
+	if !strings.Contains(strings.Join(other.Problems(), "\n"), "hosts[].modee") {
+		t.Errorf("an unknown key on a machine should still be reported: %v", other.Problems())
+	}
+}
+
+// loadConfigFrom writes a config file and loads it, which is the only way to
+// reach the checks about what the file names: they read the raw bytes.
+func loadConfigFrom(t *testing.T, content string) Config {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	t.Setenv("HOME", dir)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load(%s): %v", content, err)
+	}
+	return cfg
+}

@@ -455,10 +455,16 @@ func writtenKeys(raw []byte) []string {
 	}
 	known := jsonNames(reflect.TypeOf(Config{}))
 	var out []string
+	seen := map[string]bool{}
 	for name := range top {
-		if known[name] {
-			out = append(out, name)
+		// The canonical name, so that a file spelling it "Mode" still marks
+		// mode as chosen: Describe looks these up by the field's own name.
+		field, ok := fieldFor(known, name)
+		if !ok || seen[field] {
+			continue
 		}
+		seen[field] = true
+		out = append(out, field)
 	}
 	sort.Strings(out)
 	return out
@@ -621,7 +627,7 @@ func unknownKeys(raw []byte) []string {
 	var out []string
 	known := jsonNames(reflect.TypeOf(Config{}))
 	for name := range top {
-		if !known[name] {
+		if _, ok := fieldFor(known, name); !ok {
 			out = append(out, name)
 		}
 	}
@@ -633,7 +639,10 @@ func unknownKeys(raw []byte) []string {
 			seen := map[string]bool{}
 			for _, entry := range entries {
 				for name := range entry {
-					if !knownHost[name] && !seen[name] {
+					if _, ok := fieldFor(knownHost, name); ok {
+						continue
+					}
+					if !seen[name] {
 						seen[name] = true
 						out = append(out, "hosts[]."+name)
 					}
@@ -644,6 +653,32 @@ func unknownKeys(raw []byte) []string {
 
 	sort.Strings(out)
 	return out
+}
+
+// fieldFor returns the setting a key from the file names, and whether it names
+// one at all.
+//
+// encoding/json prefers an exact match and otherwise takes any field whose name
+// differs only in case, so "Mode" and "MODE" both set mode. Matching only
+// exactly made this disagree with the decoder in both directions at once: the
+// key was reported as "not a setting and is being ignored" while its value was
+// in force, and Describe left the file off the line, so a setting the file
+// chose looked like one it never mentioned. Measured before the fix:
+// {"Mode":"attach"} loaded as mode=attach, was called ignored, and was logged
+// as `mode = "attach"` with no source.
+//
+// The canonical name comes back rather than the spelling in the file, because
+// that is what the rest of this compares against.
+func fieldFor(known map[string]bool, name string) (string, bool) {
+	if known[name] {
+		return name, true
+	}
+	for candidate := range known {
+		if strings.EqualFold(candidate, name) {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 // jsonNames is the set of field names a struct accepts from JSON.
