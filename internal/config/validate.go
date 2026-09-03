@@ -31,9 +31,15 @@ func (c Config) Problems() []string {
 		problems = append(problems, fmt.Sprintf(
 			"scope %q is not shared or all; only the shared space is mirrored", c.Scope))
 	}
-	if !strings.Contains(c.LabelFormat, "{name}") {
+	// {pane} tells them apart as well as {name} does: it is the terminal's own
+	// id and no two share one, so a format built on it is not the fault this
+	// reports -- and saying it is sends somebody to add a placeholder they had
+	// no use for. {agent} does not count, because a machine's ordinary shells
+	// have no agent and would all be named alike.
+	if !strings.Contains(c.LabelFormat, "{name}") && !strings.Contains(c.LabelFormat, "{pane}") {
 		problems = append(problems, fmt.Sprintf(
-			"label_format %q has no {name}, so every terminal from a machine will be named the same", c.LabelFormat))
+			"label_format %q has neither {name} nor {pane}, so every terminal from a "+
+				"machine will be named the same", c.LabelFormat))
 	}
 	if c.Workspace == "" && !strings.Contains(c.WorkspaceFormat, "{host}") {
 		problems = append(problems, fmt.Sprintf(

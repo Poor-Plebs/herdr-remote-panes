@@ -125,6 +125,40 @@ func TestProblemsCatchesDuplicateAndEmptyHosts(t *testing.T) {
 	}
 }
 
+func TestAFormatThatNamesTerminalsByTheirIDIsNotAProblem(t *testing.T) {
+	// The complaint is that terminals cannot be told apart, and {pane} tells
+	// them apart: it is the terminal's own id and no two share one. Reporting
+	// it anyway sent somebody to add {name} they had no use for, or to distrust
+	// a config that was doing exactly what they asked.
+	//
+	// {agent} is the other way about. It varies between panes that have agents
+	// and is empty for the ones that do not, so a machine's ordinary shells
+	// would all be named alike -- which is the fault this reports.
+	for _, one := range []struct {
+		format string
+		report bool
+	}{
+		{"{name}@{host}", false},
+		{"{pane}@{host}", false},
+		{"{name} {pane}", false},
+		{"{agent}@{host}", true},
+		{"remote", true},
+	} {
+		cfg := Defaults()
+		cfg.LabelFormat = one.format
+
+		reported := false
+		for _, p := range cfg.Problems() {
+			if strings.HasPrefix(p, "label_format") {
+				reported = true
+			}
+		}
+		if reported != one.report {
+			t.Errorf("label_format %q reported = %v, want %v", one.format, reported, one.report)
+		}
+	}
+}
+
 func TestProblemsCatchesFormatsMissingTheirPlaceholder(t *testing.T) {
 	// Without {name} every terminal from a machine gets the same label, and
 	// without {host} every machine shares one space.

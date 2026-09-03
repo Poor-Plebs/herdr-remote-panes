@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 )
 
 func TestATerminalOpenedAsATabComesBackAsATab(t *testing.T) {
@@ -414,4 +415,60 @@ func TestTheWarningAboutAPlacementSaysWhatActuallyHappens(t *testing.T) {
 	if got.Workspace != "w1" {
 		t.Errorf("a tab is opened in the machine's space, and this one names %q", got.Workspace)
 	}
+}
+
+// TestTheWarningAboutALabelFormatSaysWhatActuallyHappens holds the other
+// config complaint that promises something this package decides.
+//
+// It says every terminal from a machine will be named the same. Whether that
+// is true depends on what the format is built out of, and config cannot see
+// the builder: label() lives here. The complaint used to fire on any format
+// without {name}, which included ones built on {pane} -- the terminal's own id,
+// which no two share -- so a config that named terminals perfectly well was
+// told they would all be alike.
+func TestTheWarningAboutALabelFormatSaysWhatActuallyHappens(t *testing.T) {
+	two := func(format string) (string, string) {
+		t.Helper()
+		d := withConfig(&Daemon{}, config.Config{LabelFormat: format})
+		host := config.Host{Target: "bot"}
+		// No names, which is the case the complaint is about: what is left to
+		// tell two terminals apart is whatever else the format is made of.
+		return d.label(host, herdrcli.Pane{PaneID: "w9:p1"}, ""),
+			d.label(host, herdrcli.Pane{PaneID: "w9:p2"}, "")
+	}
+
+	for _, format := range []string{"{agent}@{host}", "remote"} {
+		cfg := config.Defaults()
+		cfg.LabelFormat = format
+		if !reportsAbout(cfg, "label_format") {
+			t.Errorf("format %q names every terminal alike and is not reported", format)
+		}
+		if a, b := two(format); a != b {
+			t.Errorf("the complaint about %q says terminals are named the same, and two "+
+				"came out as %q and %q", format, a, b)
+		}
+	}
+
+	// And where it stays quiet, the terminals really are told apart.
+	for _, format := range []string{"{pane}@{host}", "{name}@{host}"} {
+		cfg := config.Defaults()
+		cfg.LabelFormat = format
+		if reportsAbout(cfg, "label_format") {
+			t.Errorf("format %q tells terminals apart and is reported anyway", format)
+		}
+		if a, b := two(format); a == b {
+			t.Errorf("format %q is not reported, so terminals should differ, and two "+
+				"came out as %q", format, a)
+		}
+	}
+}
+
+// reportsAbout says whether a config is complained about on a given setting.
+func reportsAbout(cfg config.Config, setting string) bool {
+	for _, p := range cfg.Problems() {
+		if strings.HasPrefix(p, setting) {
+			return true
+		}
+	}
+	return false
 }
