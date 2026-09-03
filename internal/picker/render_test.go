@@ -1848,8 +1848,10 @@ func TestTheMenuStaysDrawableWithAVeryLongSSHConfig(t *testing.T) {
 	//
 	// So it measures the same work at two sizes and compares the two. Machine
 	// speed divides out: whatever the hardware, quadrupling the list costs a
-	// linear pass about two and a half times, and a quadratic one twelve to
-	// sixteen depending on where the sizes fall. Both were measured, with and
+	// linear pass about four times -- two and a half was measured once and is
+	// optimistic; 3.4 to 4.8 is the spread on a quiet machine, with and
+	// without the race detector -- and a quadratic one twelve to sixteen
+	// depending on where the sizes fall. Both were measured, with and
 	// without the race detector, before the eight between them was chosen --
 	// and the sizes are the smallest that kept the two apart, since this runs
 	// on every push.
@@ -1864,14 +1866,32 @@ func TestTheMenuStaysDrawableWithAVeryLongSSHConfig(t *testing.T) {
 				Mirrors:    i % 7,
 			}
 		}
-		start := time.Now()
-		const redraws = 5
-		for i := 0; i < redraws; i++ {
-			// A different position each time, as scrolling gives: ten redraws
-			// of one screenful would not exercise a window computed once.
-			_ = render(entries, i*n/redraws, 100, 40, "")
+		// The BEST of several attempts, not the mean of one.
+		//
+		// Noise on a shared machine only ever adds time, so the fastest run is
+		// the closest estimate of what the work costs and the only one that
+		// does not depend on what else the runner was doing. The mean of a
+		// single attempt made this fail on CI at 8.1 when the same code
+		// measured 3.4 to 4.8 here: the small size came out at 28ms, in line
+		// with this machine, and the large one at 231ms against 76-93ms --
+		// one sample stolen, and the ratio is a division, so noise in either
+		// direction moves it twice.
+		const attempts = 3
+		best := time.Duration(0)
+		for a := 0; a < attempts; a++ {
+			start := time.Now()
+			const redraws = 5
+			for i := 0; i < redraws; i++ {
+				// A different position each time, as scrolling gives: ten
+				// redraws of one screenful would not exercise a window
+				// computed once.
+				_ = render(entries, i*n/redraws, 100, 40, "")
+			}
+			if took := time.Since(start) / redraws; best == 0 || took < best {
+				best = took
+			}
 		}
-		return time.Since(start) / redraws
+		return best
 	}
 
 	// Neither is an absurd config. A host block per machine in a fleet, or a
