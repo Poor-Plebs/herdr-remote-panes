@@ -291,7 +291,18 @@ func describeJSONError(raw []byte, err error) string {
 	// a redirect that clobbered it -- and the way out is worth saying, since
 	// the plugin writes a fresh one whenever the file is missing entirely.
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return "the file is empty; delete it and a fresh one will be written with the defaults in it"
+		// Not "with the defaults in it". Load writes `{"hosts": []}` for a
+		// missing file and deliberately not the defaults -- the comment there
+		// explains why at length: a file recording what this version happened
+		// to think pins those values for good. So somebody who followed this
+		// advice deleted the file, opened the fresh one to find the defaults
+		// laid out to edit, and found an empty object instead, which reads
+		// like the write having failed.
+		//
+		// Measured: after deleting, the file holds `{"hosts": []}` while
+		// mode=ssh, placement=follow and max_mirrors=32 are all in force.
+		return "the file is empty; delete it and a fresh one will be written, holding " +
+			"nothing: every setting takes its default until you write one down"
 	}
 
 	var typeErr *json.UnmarshalTypeError

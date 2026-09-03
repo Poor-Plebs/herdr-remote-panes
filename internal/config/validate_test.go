@@ -1991,3 +1991,72 @@ func loadConfigFrom(t *testing.T, content string) Config {
 	}
 	return cfg
 }
+
+// TestTheEmptyFileAdviceDescribesTheFileItGetsYou holds a piece of advice
+// against what following it actually produces.
+//
+// It said "delete it and a fresh one will be written with the defaults in it".
+// Load writes `{"hosts": []}` for a missing file and deliberately not the
+// defaults — the comment there explains that a file recording what this
+// version happened to think would pin those values for good. So the advice
+// promised a file laid out to edit and delivered an empty object, which reads
+// like the write having failed.
+//
+// Both halves are checked here: what the fresh file holds, and that the
+// defaults really are in force without being in it. Nothing held this message
+// at all before — not a test, not the pages.
+func TestTheEmptyFileAdviceDescribesTheFileItGetsYou(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	t.Setenv("HOME", dir)
+	path := filepath.Join(dir, "config.json")
+
+	if err := os.WriteFile(path, []byte("   \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load()
+	if err == nil {
+		t.Fatal("an empty file should not load")
+	}
+	advice := err.Error()
+	if !strings.Contains(advice, "the file is empty") {
+		t.Fatalf("the complaint no longer identifies itself, so there is nothing to "+
+			"hold: %q", advice)
+	}
+
+	// Follow the advice.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load with no file: %v", err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the advice says a fresh file is written, and there is none: %v", err)
+	}
+
+	// What the file does NOT contain. Checked against the values themselves so
+	// this cannot pass by the defaults having changed.
+	for _, def := range []string{string(Defaults().Mode), Defaults().Placement} {
+		if strings.Contains(string(written), def) {
+			t.Errorf("the fresh file contains the default %q, so the old wording was "+
+				"right and this test is what needs changing: %q", def, written)
+		}
+	}
+	if strings.Contains(advice, "with the defaults in it") {
+		t.Errorf("the advice promises a file with the defaults in it, and the file it "+
+			"gets you is %q", written)
+	}
+
+	// And the other half, or correcting the sentence would have swapped one
+	// wrong impression for another: the defaults ARE in force.
+	if cfg.Mode != Defaults().Mode || cfg.Placement != Defaults().Placement {
+		t.Errorf("a fresh install should run on the defaults, and got mode=%q placement=%q",
+			cfg.Mode, cfg.Placement)
+	}
+	if !strings.Contains(advice, "default") {
+		t.Errorf("the advice does not say the settings still take their defaults: %q", advice)
+	}
+}
