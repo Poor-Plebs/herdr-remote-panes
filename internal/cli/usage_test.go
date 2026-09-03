@@ -103,6 +103,75 @@ func TestUsageDoesNotOfferWhatIsNotThere(t *testing.T) {
 	}
 }
 
+// TestTheHelpAndTheCodeAgreeAboutArguments holds the third contract the help
+// carries: which commands read an argument.
+//
+// The help says it in a convention a reader can see -- `connect [ssh-target]`
+// takes one, `status` does not -- and the code says it in takesNoArgument,
+// which decides whether an argument given anyway is called ignored or dropped
+// in silence. The two disagreed about daemon and mirror: the help shows both
+// without an argument, neither reads one, and neither was named -- so
+// `herdr-remote-panes daemon bot` started a daemon and said nothing about
+// "bot", which is the exact mistake the warning exists for.
+//
+// Asked of ignoredArguments rather than of run, because run does the thing it
+// is asked: reaching "picker" this way draws a menu and waits for a key, and
+// "daemon" starts a daemon inside the test binary.
+func TestTheHelpAndTheCodeAgreeAboutArguments(t *testing.T) {
+	var help strings.Builder
+	usage(&help)
+
+	// Two spaces then a word is a command line: a continuation line is
+	// indented much further and the prose around the list is not indented at
+	// all, so neither begins with a word in that column.
+	line := regexp.MustCompile(`^  (\S+)(?:\s+([\[<]\S+))?`)
+	saw := map[string]string{}
+	for _, l := range strings.Split(help.String(), "\n") {
+		m := line.FindStringSubmatch(l)
+		if m == nil {
+			continue
+		}
+		command, placeholder := m[1], m[2]
+		saw[command] = placeholder
+		said := ignoredArguments(command, []string{"bot"})
+		if placeholder == "" && said == "" {
+			t.Errorf("the help shows %q taking no argument, and one given anyway is "+
+				"dropped in silence", command)
+		}
+		if placeholder != "" && said != "" {
+			t.Errorf("the help shows %q taking %s and the code calls that argument "+
+				"ignored: %q", command, placeholder, said)
+		}
+	}
+
+	// Both halves of the list, or a regexp that quietly stopped matching passes
+	// this by reading no help at all -- and one that matched only the commands
+	// with an argument would pass by never asking the interesting question.
+	for _, command := range []string{"connect", "disconnect", "open", "open-tab"} {
+		if saw[command] == "" {
+			t.Fatalf("the help was read as offering %q with no argument, which it does "+
+				"not -- this test is no longer reading the help", command)
+		}
+	}
+	for _, command := range []string{"daemon", "mirror", "menu", "picker", "refresh", "status", "version"} {
+		if _, ok := saw[command]; !ok {
+			t.Fatalf("the help was read without finding %q at all, so this checked "+
+				"less than it looks like it did: found %v", command, saw)
+		}
+	}
+
+	// One argument and several are different sentences, because the join makes
+	// the subject plural: `"bot" and "web" was ignored` reads as a fault in the
+	// warning rather than in the command.
+	if one := ignoredArguments("status", []string{"bot"}); !strings.Contains(one, `"bot" was ignored`) {
+		t.Errorf("one ignored argument reads %q", one)
+	}
+	if several := ignoredArguments("status", []string{"bot", "web"}); !strings.Contains(
+		several, `"bot" and "web" were ignored`) {
+		t.Errorf("several ignored arguments read %q", several)
+	}
+}
+
 func TestUsageDoesNotCallMirroringTheUsualThing(t *testing.T) {
 	raw, err := os.ReadFile("cli.go")
 	if err != nil {

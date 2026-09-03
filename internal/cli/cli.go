@@ -90,15 +90,40 @@ func hostFor(args []string) (host string, named bool) {
 var takesNoArgument = map[string]bool{
 	"status": true, "refresh": true, "version": true, "--version": true,
 	"menu": true, "picker": true,
+	// The two long-running entrypoints. Neither reads argv -- os.Args is read
+	// in one place, at the top of Main, and neither case below is handed what
+	// it found -- and the help shows both without an argument, so an argument
+	// given to either was dropped in the silence this map exists to break.
+	"daemon": true, "mirror": true,
+}
+
+// ignoredArguments reports what to say about arguments a command will not read,
+// and "" when there is nothing to say.
+//
+// Pure, because the help text's own claim about which commands take an argument
+// is worth holding against this and run does the thing it is asked: asking
+// "picker" whether it minds an argument by calling it draws a menu and waits
+// for a key.
+func ignoredArguments(command string, args []string) string {
+	if len(args) == 0 || !takesNoArgument[command] {
+		return ""
+	}
+	// The join makes the subject plural, and a warning whose own grammar is
+	// wrong reads as a fault in the warning rather than in the command.
+	ignored := "was ignored"
+	if len(args) > 1 {
+		ignored = "were ignored"
+	}
+	return fmt.Sprintf("%s takes no arguments, so %s %s",
+		command, strings.Join(quoteEach(args), " and "), ignored)
 }
 
 func run(command string, args []string) error {
 	// "status bot" reads as asking about one machine and reports them all,
 	// which is the shape of mistake this plugin keeps finding in itself:
 	// something quietly not doing what it was asked.
-	if len(args) > 0 && takesNoArgument[command] {
-		log.Printf("%s takes no arguments, so %s was ignored",
-			command, strings.Join(quoteEach(args), " and "))
+	if said := ignoredArguments(command, args); said != "" {
+		log.Print(said)
 	}
 	switch command {
 	case "daemon":
