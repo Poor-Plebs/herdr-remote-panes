@@ -98,6 +98,38 @@ func TestASummaryTooLongToReadNamesWhatIsWrong(t *testing.T) {
 	}
 }
 
+func TestOneMachineIsNotCountedInThePlural(t *testing.T) {
+	// The counted line is what is left when the named one is too wide, and one
+	// machine gets there on its own: a label is whatever somebody wrote in
+	// their config, and nothing bounds its length, so a single machine with a
+	// long enough name overruns the line by itself.
+	//
+	// The fixture says so rather than assuming it. A label that happened to
+	// fit would take the named branch and this would pass while checking
+	// nothing, which is how the boundary above went untested until a sweep
+	// found it.
+	long := strings.Repeat("workbox-", 16)
+	if w := text.Width(long); w <= maxSummary {
+		t.Fatalf("the fixture label is %d columns and fits inside %d, so it never "+
+			"reaches the counted line this is about", w, maxSummary)
+	}
+
+	got := statusSummary([]syncd.HostInfo{{Label: long, Connected: true, Mirrors: 3}})
+	if strings.Contains(got, "1 machines") {
+		t.Errorf("one machine is reported in the plural, in a desktop notification: %q", got)
+	}
+
+	// And the plural is still the plural: a fix that reads the count wrongly
+	// in the other direction is the same defect facing the other way.
+	two := statusSummary([]syncd.HostInfo{
+		{Label: long, Connected: true, Mirrors: 3},
+		{Label: long, Connected: true, Mirrors: 2},
+	})
+	if !strings.Contains(two, "2 machines") {
+		t.Errorf("two machines are not reported in the plural: %q", two)
+	}
+}
+
 func TestTheSummaryIsDecidedAtTheBoundNotPastIt(t *testing.T) {
 	// Three things in this function survived a mutation sweep, all of them
 	// boundaries the tests approached and never landed on.

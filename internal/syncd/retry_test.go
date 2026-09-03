@@ -302,6 +302,39 @@ func TestAMachineGivenUpOnAloneIsNeverRetriedByThePass(t *testing.T) {
 	}
 }
 
+func TestOneMachineDownIsNotReportedAsAllOfThem(t *testing.T) {
+	// The whole-pass retry is planned for one machine too: the planner asks
+	// whether every machine gave up, and where there is one machine, one is
+	// every one. The line it printed then was "all 1 machines went down
+	// together, which is usually this end rather than them" -- ungrammatical,
+	// and drawing an inference it has no grounds for. Several machines failing
+	// at once is what says the fault is at this end; one machine failing says
+	// nothing of the kind, and the machine is the likelier suspect.
+	logged := captureLog(t)
+	d := New(machineConfig("bot"))
+	state := downHost("bot")
+	d.hosts[state.host.Target] = state
+
+	d.scheduleWholePassRetry([]*hostSync{state})
+
+	said := logged.String()
+	if strings.Contains(said, "1 machines") {
+		t.Errorf("one machine is counted in the plural: %q", said)
+	}
+	if strings.Contains(said, "rather than them") {
+		t.Errorf("one machine going down was blamed on this end, which one machine "+
+			"cannot show: %q", said)
+	}
+	// It still has to say the thing it is for: that the machine is coming back
+	// on its own, and when.
+	if !strings.Contains(said, "5s") {
+		t.Errorf("the log does not say when it will try again: %q", said)
+	}
+	if !strings.Contains(said, "bot") {
+		t.Errorf("the log does not say which machine it is about: %q", said)
+	}
+}
+
 func TestTheRetrySaysItIsGoingToHappen(t *testing.T) {
 	// The machines still show as unreachable while they wait, so the log line
 	// is the only thing that distinguishes "coming back on its own in five

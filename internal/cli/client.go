@@ -384,6 +384,13 @@ func statusSummary(hosts []syncd.HostInfo) string {
 		working++
 	}
 	if len(wrong) == 0 {
+		// One machine reaches this by having a name long enough to overrun the
+		// line on its own, which is uncommon and is exactly the moment not to
+		// also be ungrammatical: the notification somebody sees when their one
+		// machine is fine should not read "1 machines connected".
+		if working == 1 {
+			return "1 machine connected"
+		}
 		return fmt.Sprintf("%d machines connected", working)
 	}
 	short := fmt.Sprintf("%d unreachable: %s", len(wrong), strings.Join(wrong, ", "))

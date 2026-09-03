@@ -2156,6 +2156,16 @@ func (d *Daemon) scheduleWholePassRetry(states []*hostSync) {
 	if scheduled == 0 {
 		return
 	}
+	if len(states) == 1 {
+		// One machine is every machine when there is only one, so the pass
+		// gets here -- but the sentence below does not hold. What points at
+		// this end is several machines failing at the same moment; one machine
+		// failing points at that machine if it points anywhere. So this says
+		// what happened and when it will be tried again, names the machine
+		// since there is one to name, and draws no conclusion.
+		log.Printf("%s went down; trying again in %s", states[0].host.Target, soonest)
+		return
+	}
 	// Once for the pass rather than once per machine: every machine is the
 	// case this is about, so a line each is the same sentence n times.
 	log.Printf("all %d machines went down together, which is usually this end "+
