@@ -218,13 +218,28 @@ func (c Config) Problems() []string {
 			}
 		}
 
+		// These two named the valid values and stopped there, which leaves out
+		// the part that is particular to a machine: a setting written on one
+		// REPLACES the top-level setting rather than being checked against it.
+		// ModeFor and PlacementFor return whatever the machine says as soon as
+		// it is not empty, so a misspelling is handed straight on and lands on
+		// the hard default -- ssh, and a tab -- rather than falling back to
+		// what the rest of the machines are using. Somebody who set mode
+		// "attach" once at the top and typed it wrong on one machine has that
+		// machine alone on a plain SSH terminal, and nothing in the file looks
+		// wrong. The top-level twins do not need this sentence: there is
+		// nothing above them to fall back to.
 		if host.Mode != "" && !knownMode(host.Mode) {
 			problems = append(problems, fmt.Sprintf(
-				"host %q has mode %q, which is not one of ssh, attach or observe", host.Target, host.Mode))
+				"host %q has mode %q, which is not one of ssh, attach or observe; it opens "+
+					"a plain SSH terminal, and a mode set for the rest does not reach it",
+				host.Target, host.Mode))
 		}
 		if host.Placement != "" && !knownPlacement(host.Placement) {
 			problems = append(problems, fmt.Sprintf(
-				"host %q has placement %q, which is not one of follow, split, tab, zoomed or overlay",
+				"host %q has placement %q, which is not one of follow, split, tab, zoomed "+
+					"or overlay; its terminals open as tabs, and a placement set for the "+
+					"rest does not reach it",
 				host.Target, host.Placement))
 		}
 	}

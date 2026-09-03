@@ -565,3 +565,53 @@ func TestTheWarningAboutAnUnusableLabelSaysWhatDependsOnTheFormats(t *testing.T)
 		t.Errorf("a usable label was reported: %v", problems)
 	}
 }
+
+// TestTheWarningAboutAPerHostPlacementSaysTheTopLevelOneWillNotSaveIt is the
+// placement twin of the per-host mode test in internal/config, and it lives
+// here because this package is what decides where a terminal opens.
+//
+// TestTheWarningAboutAPlacementSaysWhatActuallyHappens holds the top-level
+// complaint. The per-host one promises the same tab AND one thing more: that
+// the placement set for the rest does not reach this machine. That needs a
+// top-level placement which is not itself a tab, or the two answers agree and
+// nothing is being held.
+func TestTheWarningAboutAPerHostPlacementSaysTheTopLevelOneWillNotSaveIt(t *testing.T) {
+	const misspelled = "splitt"
+
+	cfg := config.Defaults()
+	cfg.Placement = "split"
+	typo := config.Host{Target: "bot", Placement: misspelled}
+	// The control: a machine that says nothing takes the top-level split. It
+	// is what stops this passing against code that opened a tab for everyone.
+	quiet := config.Host{Target: "ci"}
+	cfg.Hosts = []config.Host{typo, quiet}
+
+	problems := cfg.Problems()
+	if len(problems) != 1 {
+		t.Fatalf("one misspelled per-host placement reported %d problems: %v", len(problems), problems)
+	}
+	if !strings.Contains(problems[0], "a placement set for the rest does not reach it") {
+		t.Fatalf("the complaint no longer says the top-level placement will not save it, "+
+			"so there is nothing here to hold: %q", problems[0])
+	}
+	if !strings.Contains(problems[0], "open as tabs") {
+		t.Fatalf("the complaint no longer says where the terminals go: %q", problems[0])
+	}
+
+	// A pane to sit beside is given, so a fallback that split rather than
+	// opening a tab has somewhere to go. With none, the split branches open a
+	// tab anyway and this would pass whatever the default did.
+	got := planPaneTarget(cfg.PlacementFor(typo), "w1", "w1:p2")
+	if got.Placement != placementTab {
+		t.Errorf("the config says this machine's terminals open as tabs, and this one "+
+			"is placed as %q", got.Placement)
+	}
+	if got.Workspace != "w1" {
+		t.Errorf("a tab is opened in the machine's space, and this one names %q", got.Workspace)
+	}
+	if other := planPaneTarget(cfg.PlacementFor(quiet), "w1", "w1:p2"); other.Placement != placementSplit {
+		t.Errorf("the complaint says the placement set for the rest does not reach the "+
+			"misspelled machine, which means it reaches the others: %q is placed as %q",
+			quiet.Target, other.Placement)
+	}
+}

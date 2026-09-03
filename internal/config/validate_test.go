@@ -1699,3 +1699,54 @@ func TestALabelThatIsAnotherMachinesTargetIsReported(t *testing.T) {
 		t.Errorf("a machine that is switched off was treated as a collision: %v", problems)
 	}
 }
+
+// TestTheWarningAboutAPerHostModeSaysTheTopLevelOneWillNotSaveIt holds the
+// half of that complaint that only a machine has: the mode written on it
+// replaces the top-level mode instead of being checked against it, so a
+// misspelling does not fall back to what the rest of the machines use.
+//
+// TestUnknownModeFallsBackToSSH already holds that a misspelling gives ssh,
+// but it runs on Defaults(), whose mode is ssh -- so a build that resolved a
+// machine's mode by ignoring the machine and reading the top level would pass
+// it. The top level here is attach, which is what makes the two answers
+// different.
+func TestTheWarningAboutAPerHostModeSaysTheTopLevelOneWillNotSaveIt(t *testing.T) {
+	const misspelled = "attatch"
+
+	cfg := Defaults()
+	cfg.Mode = ModeAttach
+	typo := Host{Target: "bot", Mode: misspelled}
+	// The control: a machine that says nothing about its mode really does take
+	// the top-level one. Without it, code that answered ssh for every machine
+	// would satisfy everything below.
+	quiet := Host{Target: "ci"}
+	cfg.Hosts = []Host{typo, quiet}
+
+	problems := cfg.Problems()
+	if len(problems) != 1 {
+		t.Fatalf("one misspelled per-host mode reported %d problems: %v", len(problems), problems)
+	}
+	if !strings.Contains(problems[0], "a mode set for the rest does not reach it") {
+		t.Fatalf("the complaint no longer says the top-level mode will not save it, so "+
+			"there is nothing here to hold: %q", problems[0])
+	}
+	if !strings.Contains(problems[0], "plain SSH terminal") {
+		t.Fatalf("the complaint no longer says what the machine opens instead: %q", problems[0])
+	}
+
+	if got := cfg.EffectiveMode(typo); got != ModeSSH {
+		t.Errorf("the complaint says this machine opens a plain SSH terminal, and its "+
+			"mode resolves to %q", got)
+	}
+	if cfg.Mirrors(typo) {
+		t.Errorf("a plain SSH terminal does not mirror, and this one does")
+	}
+	if got := cfg.EffectiveMode(quiet); got != ModeAttach {
+		t.Errorf("the complaint says the mode set for the rest does not reach the "+
+			"misspelled machine, which means it reaches the others: %q takes %q",
+			quiet.Target, got)
+	}
+	if !cfg.Mirrors(quiet) {
+		t.Errorf("the machine that said nothing should mirror, since the top level is attach")
+	}
+}
