@@ -509,6 +509,21 @@ func TestARefusedToggleSaysWhichSettingMadeItReadOnly(t *testing.T) {
 			want:    "above the hosts list",
 			notWant: "Edit the machine's entry",
 		},
+		// The case that decides which sentence is chosen, and the reason the
+		// two above cannot: the first machine says observe itself, so "does
+		// this entry choose a mode" is false whether it is worked out or left
+		// at its zero value; the second names no machines at all, so alpha is
+		// picked out of ~/.ssh/config and marked by a different line. A
+		// machine that is IN the config and says nothing about its mode is
+		// read-only for the second reason while looking like the first, and
+		// sending that reader to an entry whose mode is not written down
+		// leaves them looking for a setting that is not there.
+		{
+			what:    "a configured machine that chooses no mode of its own",
+			config:  `{"mode":"observe","hosts":[{"target":"alpha"}]}`,
+			want:    "above the hosts list",
+			notWant: "Edit the machine's entry",
+		},
 	} {
 		t.Run(tt.what, func(t *testing.T) {
 			// m, then a key to dismiss what it says.
