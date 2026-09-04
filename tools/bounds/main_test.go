@@ -502,6 +502,117 @@ func TestSlow(t *testing.T) {
 }
 `
 
+// probeInTree is how the fixture's file is named in anything the command
+// prints. The walk is given "pkg" and the command runs with the tree as its
+// working directory, so what comes back is relative -- which is the path
+// somebody who ran it can act on, rather than one only this process knows.
+const probeInTree = "pkg/probe.go"
+
+// probeOriginal is the fixture package's source: what the file holds before a
+// bound in it is raised, and what it must hold again once it is put back.
+const probeOriginal = "package probe\n\nconst maxSlow = 4\n\nfunc Slow(n int) bool { return n <= maxSlow }\n"
+
+// raisedRun starts the command over a fixture tree of one bound and comes back
+// once the mutation is actually on disk.
+//
+// That moment is the whole point: signalling before it is there leaves nothing
+// to put back, and a test doing so would pass against a command that never
+// installed a handler at all. It answers with the running command, the path of
+// the file now holding a raised bound, and a reader for everything said so
+// far, and a channel carrying how it ended. The caller sends the signal and
+// decides what to make of it.
+func raisedRun(t *testing.T) (*exec.Cmd, string, func() string, <-chan error) {
+	t.Helper()
+
+	bin := filepath.Join(t.TempDir(), "bounds")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("building the command: %v\n%s", err, out)
+	}
+
+	// The fixture's own test waits, so the mutation is still on disk when the
+	// signal arrives. The wait is never paid: the run is stopped as soon as
+	// the raised file is seen, and what is left sleeping is an orphan nothing
+	// here waits for.
+	work := t.TempDir()
+	if err := os.Mkdir(filepath.Join(work, "pkg"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"go.mod":            "module probe\n\ngo 1.25\n",
+		"pkg/probe.go":      probeOriginal,
+		"pkg/probe_test.go": "package probe\n\n" + probeTestBody,
+	} {
+		if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Its output goes to a file rather than a pipe, so Wait returns when the
+	// command exits rather than when the orphaned test process lets go of the
+	// other end.
+	out := filepath.Join(t.TempDir(), "out")
+	f, err := os.Create(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+
+	run := exec.Command(bin, "pkg")
+	run.Dir, run.Stdout, run.Stderr = work, f, f
+	if err := run.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// Waited for HERE rather than by the caller, so the poll below can tell a
+	// command that is still working from one that has already stopped. The
+	// ending is carried on `done`, which exactly one reader takes; whether it
+	// has ended at all is `stopped`, which is CLOSED and so answers any number
+	// of readers -- the poll, the caller, and the cleanup all ask, and a
+	// single-value channel shared between them deadlocks the second asker.
+	done := make(chan error, 1)
+	stopped := make(chan struct{})
+	go func() {
+		done <- run.Wait()
+		close(stopped)
+	}()
+	t.Cleanup(func() {
+		_ = run.Process.Kill()
+		<-stopped
+	})
+
+	said := func() string {
+		t.Helper()
+		raw, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+
+	// The deadline is generous on purpose: load can only make the command
+	// slower to reach the mutation, and waiting longer costs nothing when it
+	// gets there. What must NOT be waited out is a command that has already
+	// stopped -- there is no bound coming then, and sitting out the deadline
+	// turns a fast failure into a timeout somebody has to diagnose.
+	probe := filepath.Join(work, "pkg", "probe.go")
+	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); {
+		now, err := os.ReadFile(probe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(now), "* 1000") {
+			return run, probe, said, done
+		}
+		select {
+		case <-stopped:
+			t.Fatalf("the command stopped without raising a bound:\n%s", said())
+		default:
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("the bound was never raised, so there was never anything to put back:\n%s", said())
+	return nil, "", nil, nil
+}
+
 // TestAnInterruptedRunPutsTheFileBack holds the one restore that a deferred
 // function cannot do.
 //
@@ -517,72 +628,12 @@ func TestSlow(t *testing.T) {
 // checks the tree it walked is the tree it left. That one passes whether the
 // handler exists or not, because nothing signals it; this is the other half.
 func TestAnInterruptedRunPutsTheFileBack(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "bounds")
-	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
-		t.Fatalf("building the command: %v\n%s", err, out)
-	}
-
-	// One bound, whose test waits long enough that the mutation is still on
-	// disk when the signal arrives. The wait is never paid: the run is stopped
-	// as soon as the raised file is seen, and what is left sleeping is an
-	// orphan nothing here waits for.
-	work := t.TempDir()
-	if err := os.Mkdir(filepath.Join(work, "pkg"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	const original = "package probe\n\nconst maxSlow = 4\n\nfunc Slow(n int) bool { return n <= maxSlow }\n"
-	for name, body := range map[string]string{
-		"go.mod":            "module probe\n\ngo 1.25\n",
-		"pkg/probe.go":      original,
-		"pkg/probe_test.go": "package probe\n\n" + probeTestBody,
-	} {
-		if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	// Its output goes to a file rather than a pipe, so Wait returns when the
-	// command exits rather than when the orphaned test process lets go of the
-	// other end.
-	said, err := os.Create(filepath.Join(t.TempDir(), "out"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer said.Close()
-	run := exec.Command(bin, "pkg")
-	run.Dir, run.Stdout, run.Stderr = work, said, said
-	if err := run.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		_ = run.Process.Kill()
-		_ = run.Wait()
-	}()
-
-	// Wait for the mutation to actually be on disk. Signalling before it is
-	// there would leave nothing to put back, and the test would pass against a
-	// command that never installed a handler at all.
-	probe := filepath.Join(work, "pkg", "probe.go")
-	raised := false
-	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); {
-		now, err := os.ReadFile(probe)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(now), "* 1000") {
-			raised = true
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if !raised {
-		t.Fatal("the bound was never raised, so there was never anything to put back")
-	}
+	run, probe, said, done := raisedRun(t)
 
 	if err := run.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	if err := run.Wait(); err == nil {
+	if err := <-done; err == nil {
 		t.Error("a command killed by a signal exited nought")
 	} else {
 		var exit *exec.ExitError
@@ -600,7 +651,75 @@ func TestAnInterruptedRunPutsTheFileBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(back) != original {
+	if string(back) != probeOriginal {
 		t.Errorf("the interrupted run left the tree mutated:\n%s", back)
+	}
+
+	// And it SAYS which file it put back. Somebody who has just interrupted a
+	// run over their own tree has to know whether anything was left in it, and
+	// this line is the only place that is answered.
+	out := said()
+	if want := "put " + probeInTree + " back before stopping"; !strings.Contains(out, want) {
+		t.Errorf("the interrupted run does not say %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "could not put") {
+		t.Errorf("a restore that worked reported a failure:\n%s", out)
+	}
+}
+
+// TestARestoreThatCannotBeMadeSaysWhichFileIsStillRaised holds the other arm
+// of the same decision, and it is the arm that matters.
+//
+// putBack's own comment says a file that could not be written is not
+// forgotten: "Whoever asked is told which one, and the record still says a
+// mutation is out there, because it is." When the write fails, that sentence
+// is ALL that is left -- the tree keeps a constant multiplied by a thousand,
+// and nothing else anywhere names which file it is in. The test above drives
+// only the arm where the write works, and passed whether either message was
+// printed or not.
+func TestARestoreThatCannotBeMadeSaysWhichFileIsStillRaised(t *testing.T) {
+	// Self-check the fixture before building on it: a user who can write a
+	// read-only file cannot stage a failing restore at all, and the whole test
+	// would then be about nothing.
+	guard := filepath.Join(t.TempDir(), "readonly")
+	if err := os.WriteFile(guard, []byte("x"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(guard, []byte("y"), 0o400); err == nil {
+		t.Skip("this user can write a read-only file, so a restore cannot be made to fail")
+	}
+
+	run, probe, said, done := raisedRun(t)
+
+	// Read-only, so putBack's write fails. The mode goes back afterwards so
+	// what was left behind can be read like any other file.
+	if err := os.Chmod(probe, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(probe, 0o600) })
+
+	if err := run.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+
+	out := said()
+	if want := "could not put " + probeInTree + " back"; !strings.Contains(out, want) {
+		t.Errorf("a failed restore does not say %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "back before stopping") {
+		t.Errorf("a restore that failed reported success:\n%s", out)
+	}
+
+	// The control, and it is about the fixture rather than the code: the write
+	// really did fail, so the tree really does still hold the raised bound.
+	// Without it this passes against a run that put the file back and printed
+	// the failure anyway.
+	still, err := os.ReadFile(probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(still), "* 1000") {
+		t.Errorf("the file was put back after all, so nothing failed:\n%s", still)
 	}
 }
