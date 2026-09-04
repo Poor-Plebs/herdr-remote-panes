@@ -21,23 +21,35 @@ var (
 // records it at build time, so there is no version constant to keep in step.
 func Short() string {
 	once.Do(func() {
-		info, ok := debug.ReadBuildInfo()
-		if !ok {
-			revision = "unknown"
-			return
-		}
-		recorded, modified := "", false
-		for _, setting := range info.Settings {
-			switch setting.Key {
-			case "vcs.revision":
-				recorded = setting.Value
-			case "vcs.modified":
-				modified = setting.Value == "true"
-			}
-		}
-		revision = shortRevision(recorded, modified)
+		revision = buildRevision(debug.ReadBuildInfo())
 	})
 	return revision
+}
+
+// buildRevision names a build from what Go recorded about it, taking what
+// ReadBuildInfo returns exactly as it returns it.
+//
+// Separate from Short for the same reason shortRevision is, one step further
+// out. Inside a test binary ReadBuildInfo answers about the test binary, which
+// carries no vcs settings at all, so WHICH KEYS these are read from was out of
+// reach of a test as much as what is decided from them. A key read wrong makes
+// Short say "unknown" for every real build, and "unknown" is the one answer
+// that silences StaleMessageFor -- so the warning this package exists to give
+// would go quiet everywhere with every test still passing.
+func buildRevision(info *debug.BuildInfo, ok bool) string {
+	if !ok {
+		return "unknown"
+	}
+	recorded, modified := "", false
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			recorded = setting.Value
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	return shortRevision(recorded, modified)
 }
 
 // shortRevision names a build from what Go recorded about it: a short commit,

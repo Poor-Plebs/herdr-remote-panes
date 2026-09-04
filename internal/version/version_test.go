@@ -2,6 +2,7 @@ package version
 
 import (
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -77,6 +78,60 @@ func TestStaleMessage(t *testing.T) {
 
 	if got := StaleMessage(""); !strings.Contains(got, "older build") {
 		t.Errorf("a daemon too old to report a build should still be named: %q", got)
+	}
+}
+
+func TestWhichOfGosBuildSettingsNameTheBuild(t *testing.T) {
+	// shortRevision below is held thoroughly and reads nothing: the pair it
+	// decides from has to be found first, and which keys they come from was held
+	// by nothing at all. It cannot be reached through Short either -- a test
+	// binary is built without a checkout, so ReadBuildInfo answers with no vcs
+	// settings whatever the code does with them, and every existing test here
+	// passes on the "unknown" that falls out.
+	//
+	// What that hides is not small. A key read wrong names every real build
+	// "unknown", and "unknown" is the single input that makes StaleMessageFor say
+	// nothing, so the update warning this package exists for would go quiet on
+	// every machine with the suite still green.
+	info := func(pairs ...string) *debug.BuildInfo {
+		built := &debug.BuildInfo{}
+		for i := 0; i < len(pairs); i += 2 {
+			built.Settings = append(built.Settings,
+				debug.BuildSetting{Key: pairs[i], Value: pairs[i+1]})
+		}
+		return built
+	}
+
+	for _, tt := range []struct {
+		what string
+		info *debug.BuildInfo
+		ok   bool
+		want string
+	}{
+		{"the commit Go stamped in",
+			info("vcs.revision", "9fcc667abc123def456"), true, "9fcc667"},
+		{"and the mark for a tree that was not clean",
+			info("vcs.revision", "9fcc667abc123def456", "vcs.modified", "true"), true,
+			"9fcc667-dirty"},
+		{"a clean tree is not marked",
+			info("vcs.revision", "9fcc667abc123def456", "vcs.modified", "false"), true,
+			"9fcc667"},
+		// The control, and the one that catches a key read from the wrong name:
+		// settings that say plenty and nothing about a checkout. This is what a
+		// test binary itself looks like.
+		{"settings that say nothing about a checkout",
+			info("GOARCH", "amd64", "-race", "true", "vcs", "git"), true, "unknown"},
+		// And the other way a build can be unnameable: Go recorded nothing at
+		// all. Without the guard for it there is no info to read the settings
+		// out of.
+		{"nothing recorded about the build at all", nil, false, "unknown"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			if got := buildRevision(tt.info, tt.ok); got != tt.want {
+				t.Errorf("buildRevision(%v, %v) = %q, want %q",
+					tt.info, tt.ok, got, tt.want)
+			}
+		})
 	}
 }
 
