@@ -858,6 +858,25 @@ func TestStatusPrintsTheAdviceUnderTheTable(t *testing.T) {
 	if !strings.Contains(out, syncd.PluginID+".connect") {
 		t.Errorf("the advice does not name the action that retries everything:\n%s", out)
 	}
+
+	// Under it with a gap. The advice is prose wrapped to the same width the
+	// rows are, so run straight on from the last row it reads as one more row
+	// of the table rather than as a sentence about it.
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	advice := -1
+	for i, line := range lines {
+		if strings.Contains(line, "not tried again") {
+			advice = i
+			break
+		}
+	}
+	if advice <= 0 {
+		t.Fatalf("the advice is not on a line of its own:\n%s", out)
+	}
+	if lines[advice-1] != "" {
+		t.Errorf("nothing separates the advice from the table; the line above it "+
+			"is %q:\n%s", lines[advice-1], out)
+	}
 }
 
 func TestStatusSaysNothingExtraWhenEveryMachineIsFine(t *testing.T) {
@@ -873,6 +892,13 @@ func TestStatusSaysNothingExtraWhenEveryMachineIsFine(t *testing.T) {
 	}
 	if strings.Contains(out, "not tried again") {
 		t.Errorf("every machine is fine and the listing still advised:\n%s", out)
+	}
+
+	// Nor the gap that would have gone above the advice. It is inside the
+	// guard, not before it, so a listing with nothing to say after the table
+	// does not end with a blank line waiting for something that never comes.
+	if strings.HasSuffix(out, "\n\n") {
+		t.Errorf("the listing ends with a blank line and no advice under it: %q", out)
 	}
 }
 
