@@ -628,42 +628,52 @@ func raisedRun(t *testing.T) (*exec.Cmd, string, func() string, <-chan error) {
 // checks the tree it walked is the tree it left. That one passes whether the
 // handler exists or not, because nothing signals it; this is the other half.
 func TestAnInterruptedRunPutsTheFileBack(t *testing.T) {
-	run, probe, said, done := raisedRun(t)
+	// BOTH signals restoreOnSignal registers. Its comment names two of them --
+	// "SIGTERM and ctrl-c" -- and only SIGTERM was held, while ctrl-c is the
+	// one somebody actually types and the one named first. They are answered
+	// by a single path, so what a second row buys is the STATUS: a run stopped
+	// by a signal exits 128 plus that signal, and getting the right number for
+	// each says the handler chose it rather than the runtime taking the
+	// default disposition.
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
+		t.Run(sig.String(), func(t *testing.T) {
+			run, probe, said, done := raisedRun(t)
 
-	if err := run.Process.Signal(syscall.SIGTERM); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-done; err == nil {
-		t.Error("a command killed by a signal exited nought")
-	} else {
-		var exit *exec.ExitError
-		if !errors.As(err, &exit) {
-			t.Fatalf("waiting for the command: %v", err)
-		}
-		// 128 + SIGTERM is what the handler exits with, and it says the
-		// handler ran rather than the runtime taking the default disposition.
-		if want := 128 + int(syscall.SIGTERM); exit.ExitCode() != want {
-			t.Errorf("the interrupted command exited %d, want %d", exit.ExitCode(), want)
-		}
-	}
+			if err := run.Process.Signal(sig); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err == nil {
+				t.Error("a command killed by a signal exited nought")
+			} else {
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) {
+					t.Fatalf("waiting for the command: %v", err)
+				}
+				if want := 128 + int(sig); exit.ExitCode() != want {
+					t.Errorf("the interrupted command exited %d, want %d", exit.ExitCode(), want)
+				}
+			}
 
-	back, err := os.ReadFile(probe)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(back) != probeOriginal {
-		t.Errorf("the interrupted run left the tree mutated:\n%s", back)
-	}
+			back, err := os.ReadFile(probe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(back) != probeOriginal {
+				t.Errorf("the interrupted run left the tree mutated:\n%s", back)
+			}
 
-	// And it SAYS which file it put back. Somebody who has just interrupted a
-	// run over their own tree has to know whether anything was left in it, and
-	// this line is the only place that is answered.
-	out := said()
-	if want := "put " + probeInTree + " back before stopping"; !strings.Contains(out, want) {
-		t.Errorf("the interrupted run does not say %q:\n%s", want, out)
-	}
-	if strings.Contains(out, "could not put") {
-		t.Errorf("a restore that worked reported a failure:\n%s", out)
+			// And it SAYS which file it put back. Somebody who has just
+			// interrupted a run over their own tree has to know whether
+			// anything was left in it, and this line is the only place that is
+			// answered.
+			out := said()
+			if want := "put " + probeInTree + " back before stopping"; !strings.Contains(out, want) {
+				t.Errorf("the interrupted run does not say %q:\n%s", want, out)
+			}
+			if strings.Contains(out, "could not put") {
+				t.Errorf("a restore that worked reported a failure:\n%s", out)
+			}
+		})
 	}
 }
 

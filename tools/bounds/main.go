@@ -84,6 +84,13 @@ func restoreOnSignal() {
 		if sig, ok := s.(syscall.Signal); ok {
 			os.Exit(128 + int(sig))
 		}
+		// Unreachable as things stand, and kept rather than deleted. Every
+		// value os/signal can deliver here is a syscall.Signal, because the two
+		// registered above are os.Interrupt -- which IS syscall.SIGINT -- and
+		// syscall.SIGTERM, so the assertion never turns anything away.
+		// Measured: exiting 99 here instead SURVIVES both rows of
+		// TestAnInterruptedRunPutsTheFileBack, which is what says nothing
+		// arrives to reach it.
 		os.Exit(1)
 	}()
 }
