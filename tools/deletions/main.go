@@ -49,6 +49,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -208,19 +209,12 @@ func main() {
 	}
 	fmt.Printf("%d statements to try in %s\n", len(todo), pkg)
 
-	counts := map[string]int{}
-	var loose, hung []string
+	var f found
 	started, lastReport := time.Now(), time.Now()
 	for i, c := range todo {
 		verdict := sweep(c.path, c.original, c.lines, c.at, *root, pkg, limit)
-		counts[verdict]++
 		where := fmt.Sprintf("%s:%d  %s", c.path, c.at+1, strings.TrimSpace(c.lines[c.at]))
-		switch verdict {
-		case "SURVIVED":
-			loose = append(loose, where)
-		case "hung":
-			hung = append(hung, where)
-		}
+		f.add(verdict, where)
 		// Every 25, or every minute, whichever comes first. A sweep of the
 		// daemon is one build and one test run per statement for three hundred
 		// statements, and silence from something that is working reads exactly
@@ -229,23 +223,65 @@ func main() {
 			lastReport = time.Now()
 			left := time.Duration(float64(time.Since(started)) / float64(n) * float64(len(todo)-n))
 			fmt.Printf("... %d/%d, %d survived, about %s left\n",
-				n, len(todo), counts["SURVIVED"], left.Round(time.Second))
+				n, len(todo), f.counts["SURVIVED"], left.Round(time.Second))
 		}
 	}
 
-	fmt.Printf("\n%s: %d caught, %d survived, %d hung, %d would not build\n",
-		pkg, counts["caught"], counts["SURVIVED"], counts["hung"], counts["would not build"])
-	if len(loose) > 0 {
-		fmt.Print("\nNothing failed when these were removed. Read each one and decide\n" +
-			"which it is: a side effect nothing checks, a line whose absence cannot\n" +
-			"be observed, or logging where a test would fit the message rather than\n" +
+	report(os.Stdout, pkg, f)
+}
+
+// found is what a sweep has turned up: how many statements got each verdict,
+// and where the ones somebody has to adjudicate by hand are.
+//
+// A type rather than four variables in main because this is the tool's whole
+// output, and main is the one function here nothing can call. Every helper in
+// this file has a test and the wiring that assembles them had none -- which is
+// the shape this command's own doc comment says it was written to find.
+type found struct {
+	counts map[string]int
+	loose  []string
+	hung   []string
+}
+
+// add records one statement's verdict, keeping the location of the ones worth
+// reading afterwards.
+//
+// A survivor that is counted and not kept reports "17 survived" above an empty
+// list, which reads as a tool with nothing to say rather than as a tool that
+// lost its findings.
+func (f *found) add(verdict, where string) {
+	if f.counts == nil {
+		f.counts = map[string]int{}
+	}
+	f.counts[verdict]++
+	switch verdict {
+	case "SURVIVED":
+		f.loose = append(f.loose, where)
+	case "hung":
+		f.hung = append(f.hung, where)
+	}
+}
+
+// report writes what the sweep found: the four counts, then the survivors with
+// what to make of them, then anything that hung.
+//
+// The explanation is printed only when there is something under it, so a clean
+// sweep does not end with a paragraph about a list that is not there.
+func report(w io.Writer, pkg string, f found) {
+	fmt.Fprintf(w, "\n%s: %d caught, %d survived, %d hung, %d would not build\n",
+		pkg, f.counts["caught"], f.counts["SURVIVED"], f.counts["hung"],
+		f.counts["would not build"])
+	if len(f.loose) > 0 {
+		fmt.Fprint(w, "\nNothing failed when these were removed. Read each one and decide\n"+
+			"which it is: a side effect nothing checks, a line whose absence cannot\n"+
+			"be observed, or logging where a test would fit the message rather than\n"+
 			"the behaviour.\n\n")
-		for _, one := range loose {
-			fmt.Println("  " + one)
+		for _, one := range f.loose {
+			fmt.Fprintln(w, "  "+one)
 		}
 	}
-	for _, one := range hung {
-		fmt.Println("  hung or killed: " + one)
+	for _, one := range f.hung {
+		fmt.Fprintln(w, "  hung or killed: "+one)
 	}
 }
 

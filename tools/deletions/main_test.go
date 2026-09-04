@@ -211,3 +211,69 @@ func TestTheWorkIsCountedBeforeAnyOfItIsDone(t *testing.T) {
 		t.Errorf("offered %v, want %v", lines, want)
 	}
 }
+
+// TestWhatASweepFoundReachesTheReport holds the wiring this tool exists to
+// find, in this tool.
+//
+// Every helper in main.go has a test of its own -- what is offered, what a
+// verdict is made of, that the file goes back, that both commands run in the
+// swept tree -- and the loop that assembles them lived in main, which nothing
+// can call. So the tally and the report were held by nothing at all: the line
+// keeping a survivor's location could be deleted and the tool would print
+// "17 survived" above an empty list, which is this command's own doc comment
+// describing itself ("a well-tested helper nothing checks the wiring of").
+func TestWhatASweepFoundReachesTheReport(t *testing.T) {
+	var f found
+	f.add("caught", "internal/a/a.go:1  caughtLine()")
+	f.add("SURVIVED", "internal/a/a.go:2  looseLine()")
+	f.add("would not build", "internal/a/a.go:3  brokenLine()")
+	f.add("hung", "internal/a/a.go:4  hungLine()")
+	f.add("SURVIVED", "internal/b/b.go:5  otherLooseLine()")
+
+	var out strings.Builder
+	report(&out, "./internal/a", f)
+	got := out.String()
+
+	if want := "./internal/a: 1 caught, 2 survived, 1 hung, 1 would not build"; !strings.Contains(got, want) {
+		t.Errorf("the summary is not %q:\n%s", want, got)
+	}
+	// Both survivors, by where they are: a report naming one of them is a
+	// report somebody would act on and still miss a line.
+	for _, want := range []string{"looseLine()", "otherLooseLine()"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the report does not name the survivor %q:\n%s", want, got)
+		}
+	}
+	if !strings.Contains(got, "hung or killed: internal/a/a.go:4  hungLine()") {
+		t.Errorf("the report does not say which statement hung:\n%s", got)
+	}
+	// The control. Without it a report that listed every statement it was
+	// handed would satisfy everything above.
+	for _, absent := range []string{"caughtLine()", "brokenLine()"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("the report lists %q, which nobody has to read:\n%s", absent, got)
+		}
+	}
+	if strings.Contains(got, "hung or killed: internal/a/a.go:2") {
+		t.Errorf("a survivor is being reported as hung:\n%s", got)
+	}
+}
+
+// TestACleanSweepDoesNotExplainAListItDoesNotHave holds the guard around the
+// paragraph, which is the half a fixture with survivors in it cannot see.
+func TestACleanSweepDoesNotExplainAListItDoesNotHave(t *testing.T) {
+	var f found
+	f.add("caught", "internal/a/a.go:1  caughtLine()")
+	f.add("would not build", "internal/a/a.go:2  brokenLine()")
+
+	var out strings.Builder
+	report(&out, "./internal/a", f)
+	got := out.String()
+
+	if want := "./internal/a: 1 caught, 0 survived, 0 hung, 1 would not build"; !strings.Contains(got, want) {
+		t.Errorf("the summary is not %q:\n%s", want, got)
+	}
+	if strings.Contains(got, "Read each one and decide") {
+		t.Errorf("a sweep with no survivors still explains how to read them:\n%s", got)
+	}
+}
