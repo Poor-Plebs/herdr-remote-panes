@@ -797,3 +797,98 @@ func TestAMirrorThatCouldNotStartSaysSoWhereItCanBeRead(t *testing.T) {
 		t.Errorf("the entry does not say what went wrong: %q", got)
 	}
 }
+
+// envStopWatch tells a child of the test below which half to run.
+const envStopWatch = "HRP_TEST_STOP_WATCH"
+
+// TestAStopSignalEndsThisProcessAgainOnceTheWatchIsOver holds that watching
+// for a stop is undone when the watch ends.
+//
+// signal.Notify takes SIGTERM away from the runtime: while a channel is
+// registered the signal is delivered there instead of ending the process, and
+// the cleanup has to hand it back. Without signal.Stop the registration
+// outlives the goroutine that was reading it, so a termination signal goes to
+// a channel nobody reads and the process ignores it entirely -- measured, not
+// argued: a child that does the same thing without that line prints its way
+// past a SIGTERM it was sent.
+//
+// The watch is per stream and not per process, which is what makes the gap
+// matter. observe picks a dropped stream up again after one, two, three and
+// four seconds, and stop() has already run in every one of those waits. A pane
+// closed during a reconnect would then not close: the bridge would carry on
+// through the whole retry sequence, and the ssh underneath it with it.
+//
+// It runs in a child because what passing looks like here is the process
+// dying.
+func TestAStopSignalEndsThisProcessAgainOnceTheWatchIsOver(t *testing.T) {
+	switch os.Getenv(envStopWatch) {
+	case "after the watch":
+		stop := watchForStop(nil)
+		stop()
+		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+		time.Sleep(2 * time.Second)
+		fmt.Println("still here")
+		os.Exit(0)
+	case "during the watch":
+		stop := watchForStop(nil)
+		defer stop()
+		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+		deadline := time.Now().Add(10 * time.Second)
+		for !stopped.Load() {
+			if time.Now().After(deadline) {
+				fmt.Println("nothing recorded it")
+				os.Exit(1)
+			}
+			time.Sleep(time.Millisecond)
+		}
+		fmt.Println("recorded")
+		os.Exit(0)
+	}
+
+	tests := []struct {
+		name       string
+		half       string
+		wantKilled bool
+		wantSaid   string
+	}{
+		{
+			name:       "the signal ends the process once the watch has gone",
+			half:       "after the watch",
+			wantKilled: true,
+		},
+		{
+			// The control. Without it a build that registered nothing at all
+			// would pass the case above, since a SIGTERM nobody has asked for
+			// ends the process too -- so the case above says nothing on its
+			// own about the watch ever having been in place.
+			name:     "and it does not while the watch is up",
+			half:     "during the watch",
+			wantSaid: "recorded",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			child := exec.Command(os.Args[0],
+				"-test.run=^TestAStopSignalEndsThisProcessAgainOnceTheWatchIsOver$")
+			child.Env = append(os.Environ(), envStopWatch+"="+tt.half)
+			said, err := child.CombinedOutput()
+
+			killed := false
+			var died *exec.ExitError
+			if errors.As(err, &died) {
+				if status, ok := died.Sys().(syscall.WaitStatus); ok {
+					killed = status.Signaled() && status.Signal() == syscall.SIGTERM
+				}
+			}
+			if killed != tt.wantKilled {
+				t.Fatalf("a child signalled %s: ended by SIGTERM = %v, want %v "+
+					"(exit %v, said %q)", tt.half, killed, tt.wantKilled, err, said)
+			}
+			if tt.wantSaid != "" && !strings.Contains(string(said), tt.wantSaid) {
+				t.Fatalf("a child signalled %s said %q, want it to say %q (exit %v)",
+					tt.half, said, tt.wantSaid, err)
+			}
+		})
+	}
+}
