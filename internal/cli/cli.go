@@ -71,6 +71,25 @@ func Main() int {
 		return 2
 	}
 
+	// Herdr shows a plugin command's output once it has finished, and the
+	// daemon does not finish, so everything it has to say would otherwise go
+	// somewhere nobody can read it.
+	//
+	// Opened here rather than around the daemon inside run, because the two
+	// lines worth most sit outside it. The complaints about settings that read
+	// fine and mean something else are logged before the daemon is built, and
+	// the reason it stopped is reported below, once run has returned -- so a
+	// file opened and closed inside run missed both, and a daemon that could
+	// not bind the control socket left a log saying it had started and no
+	// reason. That is the one question this file is opened to answer: the
+	// symptom either way is "no running daemon", and the page that says to
+	// read it promises the daemon's side of the story is in here.
+	if args[0] == "daemon" {
+		if closeLog := daemonLog(); closeLog != nil {
+			defer closeLog()
+		}
+	}
+
 	if err := run(args[0], args[1:]); err != nil {
 		log.Print(err)
 		return 1
@@ -149,12 +168,6 @@ func run(command string, args []string) error {
 		// spelled wrong quietly turned mirroring on.
 		for _, problem := range cfg.Problems() {
 			log.Printf("config: %s", problem)
-		}
-		// Herdr shows a plugin command's output once it has finished, and the
-		// daemon does not finish, so everything it has to say would otherwise
-		// go somewhere nobody can read it.
-		if closeLog := daemonLog(); closeLog != nil {
-			defer closeLog()
 		}
 		return syncd.NewWithConfigError(cfg, err).Run()
 

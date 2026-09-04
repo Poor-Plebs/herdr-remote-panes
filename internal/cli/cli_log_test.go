@@ -485,3 +485,94 @@ func TestAConfigThatReadsIsUsedAsWritten(t *testing.T) {
 		t.Errorf("session = %q, want the one the config names", cfg.Session)
 	}
 }
+
+// TestTheDaemonsLogHoldsWhyItStoppedAsWellAsThatItStarted holds the WINDOW the
+// daemon's log file is open for, which used to be too small at both ends.
+//
+// Every line the daemon writes goes to standard error and into daemon.log at
+// once, and the two worth most were written outside that window. The
+// complaints about settings that read fine and mean something else are logged
+// before the daemon is built; the reason it stopped is reported by Main once
+// run has returned. A file opened and closed inside run's daemon case missed
+// both, so a daemon that could not bind its control socket left a log holding
+// "starting" and nothing else -- and daemon.go says in as many words that such
+// a log "reads the same whether the socket was bound or the binding is what
+// went wrong". The symptom is "no running daemon" either way, and the
+// troubleshooting page sends the reader here for the difference.
+//
+// Both ends, and a control: what reached the terminal and what reached the
+// file are the same bytes. Without it an equality between two empty files
+// would pass, and it is also what says neither line above arrived by being
+// reported twice.
+func TestTheDaemonsLogHoldsWhyItStoppedAsWellAsThatItStarted(t *testing.T) {
+	args, stderr := os.Args, os.Stderr
+	flags, prefix, out := log.Flags(), log.Prefix(), log.Writer()
+	t.Cleanup(func() {
+		os.Args, os.Stderr = args, stderr
+		log.SetFlags(flags)
+		log.SetPrefix(prefix)
+		log.SetOutput(out)
+	})
+
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	t.Setenv("HERDR_SESSION", "probe")
+	// A setting that reads fine and means something else, so there is a
+	// complaint to go looking for as well as a failure.
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
+		[]byte(`{"mode":"shh","hosts":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A control socket that can be neither bound nor cleared away: a directory
+	// with something in it. The daemon then fails on the first thing Run does
+	// and returns, rather than blocking for the rest of the test.
+	socket := filepath.Join(dir, "control-probe.sock")
+	if err := os.MkdirAll(filepath.Join(socket, "keep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// A file rather than a pipe: all of it has to be readable afterwards, and
+	// a pipe nobody is draining holds only what fits in it.
+	terminal := filepath.Join(t.TempDir(), "stderr")
+	f, err := os.Create(terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr, os.Args = f, []string{"herdr-remote-panes", "daemon"}
+	code := Main()
+	os.Stderr, os.Args = stderr, args
+	_ = f.Close()
+
+	if code != 1 {
+		t.Fatalf("a daemon that could not bind its control socket exited %d, so "+
+			"this is not the path being asked about", code)
+	}
+
+	logged, err := os.ReadFile(filepath.Join(dir, "daemon.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shown, err := os.ReadFile(terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The far end of the window. Named by the socket it could not bind, which
+	// comes from the failure itself rather than from a form of words.
+	if !bytes.Contains(logged, []byte(socket)) {
+		t.Errorf("daemon.log says the daemon started and not why it stopped:\n%s", logged)
+	}
+	// The near end: what it was asked to run with.
+	if !bytes.Contains(logged, []byte(`mode "shh"`)) {
+		t.Errorf("daemon.log does not carry the complaint about a setting that "+
+			"reads fine and means something else:\n%s", logged)
+	}
+	// One writer feeds both, so this is equality by construction unless
+	// something reached one and not the other.
+	if !bytes.Equal(logged, shown) {
+		t.Errorf("the daemon's log and its terminal do not say the same thing.\n"+
+			"daemon.log:\n%s\nthe terminal:\n%s", logged, shown)
+	}
+}

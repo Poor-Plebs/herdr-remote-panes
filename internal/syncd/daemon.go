@@ -576,9 +576,12 @@ func (d *Daemon) Run() error {
 		return err
 	}
 	// Where, and that it got that far. A healthy daemon says nothing else for
-	// the rest of its life, so a log holding "starting" and nothing after it
-	// reads the same whether the socket was bound or the binding is what went
-	// wrong -- and "no running daemon" is the report either way.
+	// the rest of its life, so without this a log holding "starting" and
+	// nothing after it read the same whether the socket was bound or the
+	// binding is what went wrong -- and "no running daemon" is the report
+	// either way. A failure now names itself in that file too, since Main
+	// reports what this returns before the log is closed; where the socket is
+	// is still said only here.
 	log.Printf("listening on %s", socket)
 
 	d.logConfig()
