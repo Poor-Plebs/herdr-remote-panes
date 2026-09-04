@@ -769,6 +769,58 @@ func TestDisconnectWithNothingToDisconnectSaysHow(t *testing.T) {
 	}
 }
 
+func TestStatusAsksTheTerminalItWasRunFrom(t *testing.T) {
+	// `stty size` reports on the terminal attached to its OWN standard input,
+	// so the question only reaches the right one if this process's stdin is
+	// handed to it. Without that the child is given /dev/null, stty has no
+	// terminal to answer about and fails, and outputWidth reads that as the
+	// no-terminal case -- which means no limit, so status quietly stops
+	// wrapping to the width it is being read in.
+	//
+	// The table below cannot see any of that: every stand-in there prints a
+	// fixed answer and never looks at its input, so the one line that hands
+	// the terminal over could be deleted with all nine cases still passing.
+	// This stand-in answers with what it was given.
+	dir := t.TempDir()
+	script := "#!/bin/sh\nread line || exit 1\necho \"$line\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "stty"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	answer := filepath.Join(dir, "terminal")
+	if err := os.WriteFile(answer, []byte("24 100\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := os.Open(answer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer terminal.Close()
+	was := os.Stdin
+	t.Cleanup(func() { os.Stdin = was })
+
+	os.Stdin = terminal
+	if got := outputWidth(); got != 100 {
+		t.Errorf("outputWidth() = %d, want 100: stty was not given this process's "+
+			"standard input, so it answered about a terminal that is not the one "+
+			"being read in", got)
+	}
+
+	// The control. With nothing on standard input the stand-in fails, which is
+	// what a real stty does with no terminal -- so the assertion above is about
+	// the input reaching the child, not about the stand-in always saying 100.
+	empty, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer empty.Close()
+	os.Stdin = empty
+	if got := outputWidth(); got != 0 {
+		t.Errorf("outputWidth() = %d with no terminal on standard input, want 0", got)
+	}
+}
+
 func TestHowWideStatusMayDraw(t *testing.T) {
 	// `stty size` is the terminal's answer, and it is read as text: the width
 	// is the second of two fields. Everything else it might say -- a machine

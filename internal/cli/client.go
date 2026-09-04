@@ -317,7 +317,15 @@ const maxStateLines = 8
 // the line whole.
 func outputWidth() int {
 	cmd := exec.Command("stty", "size")
+	// Its own standard input is what stty reports on, so the terminal has to
+	// be handed over; without this the child gets /dev/null and answers about
+	// no terminal at all, which reads here as "no limit" and stops the
+	// wrapping entirely.
 	cmd.Stdin = os.Stdin
+	// Already nil on a fresh Cmd, so a deletion sweep reports this every time
+	// and is right to: it is measured equivalent. Kept because Output()
+	// refuses a Cmd whose Stderr is set and collects it itself, and saying so
+	// here is cheaper than working it out again.
 	cmd.Stderr = nil
 	out, err := cmd.Output()
 	if err != nil {
