@@ -497,3 +497,71 @@ func TestADragAcrossADividerIsOneReconnectAndNotOnePerStep(t *testing.T) {
 		t.Errorf("the stream was opened %d times, want the first and one reconnect", got)
 	}
 }
+
+// TestAResizeDuringTheWaitBetweenAttemptsReconnectsAtOnce holds the winch arm
+// of the retry wait.
+//
+// A stream that failed is picked up again after one, two, three and four
+// seconds. Resizing during that wait means somebody is looking at a pane
+// showing nothing, so the wait is abandoned and the stream reopened at the
+// size the window has now. Without that arm the resize is ignored and the pane
+// stays dead for the rest of the backoff.
+//
+// Two things make this readable rather than a race. The backoff is set far
+// longer than the window the reconnect is checked in, so load can only make a
+// missing arm look worse, never make the present one look absent. And
+// resizeSettle is set LONG on purpose: a signal that arrived while the stream
+// was still running would end it with errResized and go through settleResize
+// instead, which would then take five seconds and fail the check below -- so
+// coming back quickly is evidence the retry wait consumed the signal, and not
+// merely that something did.
+func TestAResizeDuringTheWaitBetweenAttemptsReconnectsAtOnce(t *testing.T) {
+	wasStep := observeRetryStep
+	observeRetryStep = 10 * time.Second
+	defer func() { observeRetryStep = wasStep }()
+	wasSettle := resizeSettle
+	resizeSettle = 5 * time.Second
+	defer func() { resizeSettle = wasSettle }()
+
+	attempts := countingSSH(t,
+		"echo 'ssh: connection reset' >&2; exit 255",
+		"echo '"+frame("back")+"'; exit 0")
+
+	done := make(chan error, 1)
+	go func() { done <- observe(remote.New("bot", ""), "term_1") }()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for attempts() < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("the first stream never started")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	// The control, and the synchronisation in one: the backoff is really being
+	// waited out, so the signal below lands in the wait rather than in the
+	// stream. Without it a build that did not wait at all would pass the
+	// assertion that follows by having nothing left to cut short.
+	time.Sleep(300 * time.Millisecond)
+	if got := attempts(); got != 1 {
+		t.Fatalf("the stream was opened %d times 300ms after a failure, want 1: "+
+			"there is meant to be a wait before the next attempt", got)
+	}
+
+	if err := syscall.Kill(os.Getpid(), syscall.SIGWINCH); err != nil {
+		t.Fatalf("resizing this process: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("observe returned %v after reconnecting", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a resize during the wait did not bring the stream back: the pane " +
+			"shows nothing until the backoff runs out")
+	}
+	if got := attempts(); got != 2 {
+		t.Errorf("the stream was opened %d times, want the failure and one reconnect", got)
+	}
+}

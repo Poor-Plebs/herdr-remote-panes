@@ -516,6 +516,13 @@ func observe(client *remote.Client, terminal string) error {
 			settleResize(winch)
 			continue
 		}
+		// The wait grows with the attempt, but a resize ends it early: it
+		// means somebody is looking at a pane showing nothing, and the size
+		// they are looking at is the one the next stream should ask for.
+		// Without that arm the resize is ignored and the pane stays dead for
+		// the rest of the backoff, up to four seconds of it.
+		//
+		// Held by TestAResizeDuringTheWaitBetweenAttemptsReconnectsAtOnce.
 		select {
 		case <-time.After(time.Duration(attempt+1) * observeRetryStep):
 		case <-winch:
