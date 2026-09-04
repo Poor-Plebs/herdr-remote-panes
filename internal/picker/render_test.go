@@ -1183,6 +1183,15 @@ func TestHowAMachineIsNamedInTheMenu(t *testing.T) {
 		{"bot", "bot", "bot"},
 		// A label that differs only in case is still something somebody wrote.
 		{"bot", "Bot", "bot (Bot)"},
+		// A label that is nothing ONCE IT IS MADE SAFE TO DRAW is not a label.
+		// Sanitize strips what cannot be drawn and then trims, so a label of
+		// spaces is not empty and draws as empty: asked of the raw one, the
+		// machine came out as "bot ()", brackets around nothing.
+		{"bot", "   ", "bot"},
+		// And one that repeats the target apart from what Sanitize removes is
+		// the same name twice, which is what the "bot (bot)" case above is
+		// for -- it was only ever asked of the raw pair, which differ.
+		{"bot", " bot ", "bot"},
 		{"deploy@vm", "", "deploy@vm"},
 	} {
 		if got := displayName(Entry{Target: tt.target, Label: tt.label}); got != tt.want {

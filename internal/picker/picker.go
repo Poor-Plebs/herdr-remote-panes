@@ -832,7 +832,16 @@ func statusSpans(entry Entry) []span {
 		// before pressing m, and without it there is no telling which way the
 		// toggle would go.
 		out := []span{{"unreachable", red}}
-		if entry.Reason != "" {
+		// Asked of the SANITISED reason, because that is what gets drawn.
+		// Sanitize ends in TrimSpace, so a reason of only spaces -- or only
+		// undrawable bytes, or a newline, which is what a remote complaint
+		// can amount to once the interesting part is gone -- is not empty and
+		// draws as empty. Deciding on the raw one put a " · " on the line with
+		// nothing after it: a separator introducing the thing it does not
+		// have. Found by the fuzz property that compares a frame against the
+		// same frame with the names sanitised on the way in, from a reason of
+		// one space.
+		if reason := text.Sanitize(entry.Reason); reason != "" {
 			// Before the reminder, not after. When there is not room for
 			// everything the reminder is what goes: enter is guessable and the
 			// reason is not, and "unreachable" on its own leaves somebody with
@@ -844,7 +853,7 @@ func statusSpans(entry Entry) []span {
 			// on the way to the screen rather than on the way into the entry.
 			// A reason that is not is a field whose safety depends on which
 			// function built the entry.
-			out = append(out, span{" · " + text.Sanitize(entry.Reason), dim})
+			out = append(out, span{" · " + reason, dim})
 		}
 		if isMirroring(entry) {
 			out = append(out, span{" · " + mode, dim})
@@ -1031,8 +1040,15 @@ func nameWidth(cols int) int {
 // trusted to be short and printable.
 func displayName(entry Entry) string {
 	name := text.Sanitize(entry.Target)
-	if entry.Label != "" && entry.Label != entry.Target {
-		return fmt.Sprintf("%s (%s)", name, text.Sanitize(entry.Label))
+	// Both halves asked of the sanitised values, since those are what is
+	// drawn and compared. Sanitize strips undrawable bytes and then trims, so
+	// a label of only spaces is not empty and draws as empty -- which put a
+	// machine on the screen as "bot ()" -- and a label differing from the
+	// target only in what Sanitize removes is not equal to it and draws the
+	// same name twice. nameWithin below already asks it this way, so the two
+	// now agree about the same machine.
+	if label := text.Sanitize(entry.Label); label != "" && label != name {
+		return fmt.Sprintf("%s (%s)", name, label)
 	}
 	return name
 }
