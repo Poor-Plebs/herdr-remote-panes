@@ -96,16 +96,26 @@ func (c Config) Problems() []string {
 	// and what somebody sees for it is "no herdr found on the machine, set
 	// herdr_bin if it is installed elsewhere there", which is the one thing
 	// they have already done.
+	// Both sentences say that, rather than "this is not run through a shell",
+	// which is what they said while the paragraph above explained the quoting.
+	// `ssh host <cmd>` DOES run a shell on the machine -- remote.go's own start
+	// line is `nohup ... >/dev/null 2>&1 </dev/null &`, which is shell syntax
+	// and works
+	// for no other reason -- so the old clause was false about ssh, and the
+	// reader could not check it against anything. internal/remote holds the
+	// half these now name: TestConfiguredBinIsUsedVerbatim asserts the argv
+	// carries '~/.local/bin/herdr' with the tilde inside the quotes.
 	if unexpanded(c.HerdrBin) {
 		problems = append(problems, fmt.Sprintf(
-			"herdr_bin %q is expanded by a shell, and this one is not run through a "+
-				"shell; write the path out in full", c.HerdrBin))
+			"herdr_bin %q is expanded by a shell, and this reaches the machine "+
+				"quoted so nothing expands it; write the path out in full", c.HerdrBin))
 	}
 	for _, h := range c.Hosts {
 		if unexpanded(h.HerdrBin) {
 			problems = append(problems, fmt.Sprintf(
-				"host %q has herdr_bin %q, which is expanded by a shell and this one is "+
-					"not run through a shell; write the path out in full",
+				"host %q has herdr_bin %q, which is expanded by a shell, and this "+
+					"reaches the machine quoted so nothing expands it; write the "+
+					"path out in full",
 				h.Target, h.HerdrBin))
 		}
 	}
