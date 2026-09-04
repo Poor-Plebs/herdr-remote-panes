@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // TestAVerdictIsNotInventedFromAnExitCode holds the one judgement this tool
@@ -482,5 +484,123 @@ func TestTheReportCountsWhatItFound(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "const maxHeld = 4\n") {
 		t.Errorf("a bound was left raised in the tree it swept:\n%s", raw)
+	}
+}
+
+// probeTestBody is the fixture package's test: it waits, so that a mutation of
+// the bound above it is still on disk when the signal arrives.
+const probeTestBody = `import (
+	"testing"
+	"time"
+)
+
+func TestSlow(t *testing.T) {
+	time.Sleep(20 * time.Second)
+	if !Slow(4) {
+		t.Fatal("the bound moved")
+	}
+}
+`
+
+// TestAnInterruptedRunPutsTheFileBack holds the one restore that a deferred
+// function cannot do.
+//
+// restoreOnSignal's own comment is the specification: ctrl-c and SIGTERM end
+// the process where it stands, defers and all, so a run given up on halfway
+// "left a constant multiplied by a thousand in the tree -- which builds, and
+// which the next commit carries". Nothing named that function in any test, and
+// the deletion sweep says main's one call to it can be removed with the
+// package green -- the handler and its call site both held by nothing, while
+// putBack below them has three tests of its own.
+//
+// The normal path is already held by TestTheReportCountsWhatItFound, which
+// checks the tree it walked is the tree it left. That one passes whether the
+// handler exists or not, because nothing signals it; this is the other half.
+func TestAnInterruptedRunPutsTheFileBack(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "bounds")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("building the command: %v\n%s", err, out)
+	}
+
+	// One bound, whose test waits long enough that the mutation is still on
+	// disk when the signal arrives. The wait is never paid: the run is stopped
+	// as soon as the raised file is seen, and what is left sleeping is an
+	// orphan nothing here waits for.
+	work := t.TempDir()
+	if err := os.Mkdir(filepath.Join(work, "pkg"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const original = "package probe\n\nconst maxSlow = 4\n\nfunc Slow(n int) bool { return n <= maxSlow }\n"
+	for name, body := range map[string]string{
+		"go.mod":            "module probe\n\ngo 1.25\n",
+		"pkg/probe.go":      original,
+		"pkg/probe_test.go": "package probe\n\n" + probeTestBody,
+	} {
+		if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Its output goes to a file rather than a pipe, so Wait returns when the
+	// command exits rather than when the orphaned test process lets go of the
+	// other end.
+	said, err := os.Create(filepath.Join(t.TempDir(), "out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer said.Close()
+	run := exec.Command(bin, "pkg")
+	run.Dir, run.Stdout, run.Stderr = work, said, said
+	if err := run.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = run.Process.Kill()
+		_ = run.Wait()
+	}()
+
+	// Wait for the mutation to actually be on disk. Signalling before it is
+	// there would leave nothing to put back, and the test would pass against a
+	// command that never installed a handler at all.
+	probe := filepath.Join(work, "pkg", "probe.go")
+	raised := false
+	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); {
+		now, err := os.ReadFile(probe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(now), "* 1000") {
+			raised = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !raised {
+		t.Fatal("the bound was never raised, so there was never anything to put back")
+	}
+
+	if err := run.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.Wait(); err == nil {
+		t.Error("a command killed by a signal exited nought")
+	} else {
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) {
+			t.Fatalf("waiting for the command: %v", err)
+		}
+		// 128 + SIGTERM is what the handler exits with, and it says the
+		// handler ran rather than the runtime taking the default disposition.
+		if want := 128 + int(syscall.SIGTERM); exit.ExitCode() != want {
+			t.Errorf("the interrupted command exited %d, want %d", exit.ExitCode(), want)
+		}
+	}
+
+	back, err := os.ReadFile(probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(back) != original {
+		t.Errorf("the interrupted run left the tree mutated:\n%s", back)
 	}
 }
