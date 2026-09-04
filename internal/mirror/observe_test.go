@@ -437,3 +437,63 @@ func TestAScreenRepaintPastTheDefaultBufferStillArrives(t *testing.T) {
 		t.Errorf("the terminal shows %d bytes of the repaint, want %d", len(out), repaint)
 	}
 }
+
+// TestADragAcrossADividerIsOneReconnectAndNotOnePerStep holds the one call to
+// settleResize.
+//
+// The helper is held both ways by its own two tests -- a drag waits, a single
+// resize does not -- and nothing held that the loop ever calls it. Take the
+// line out and every test in the package still passes, while a drag across a
+// divider becomes an ssh per step, each asking the machine to render a size
+// that is already out of date by the time it arrives.
+//
+// The margin runs the safe way round: the wait is a second and the window it
+// is checked in is a quarter of one, and a loaded machine settles later rather
+// than sooner, which still passes. What fails is reconnecting at once.
+func TestADragAcrossADividerIsOneReconnectAndNotOnePerStep(t *testing.T) {
+	wasSettle := resizeSettle
+	resizeSettle = time.Second
+	defer func() { resizeSettle = wasSettle }()
+
+	attempts := countingSSH(t,
+		// Stays open until the resize ends it, then ends cleanly so observe
+		// has somewhere to return from.
+		"exec sleep 10",
+		"echo '"+frame("redrawn")+"'; exit 0")
+
+	done := make(chan error, 1)
+	go func() { done <- observe(remote.New("bot", ""), "term_1") }()
+
+	// Resize only once the first stream is really running: sent before observe
+	// has asked for the signal, it is ignored and nothing ends the stream.
+	deadline := time.Now().Add(10 * time.Second)
+	for attempts() < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("the first stream never started")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := syscall.Kill(os.Getpid(), syscall.SIGWINCH); err != nil {
+		t.Fatalf("resizing this process: %v", err)
+	}
+
+	// The resize has ended the stream. Without the wait the next one is opened
+	// straight away; with it the loop holds off until the window stops moving.
+	time.Sleep(250 * time.Millisecond)
+	if got := attempts(); got != 1 {
+		t.Errorf("the stream was opened %d times within 250ms of a resize, want 1: "+
+			"a drag across a divider would be one ssh per step", got)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("observe returned %v after a resize; it is not a failure", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("observe never came back after the resize")
+	}
+	if got := attempts(); got != 2 {
+		t.Errorf("the stream was opened %d times, want the first and one reconnect", got)
+	}
+}

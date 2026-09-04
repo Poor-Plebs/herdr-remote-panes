@@ -507,12 +507,12 @@ func observe(client *remote.Client, terminal string) error {
 			// whole screen at a size that is already out of date. Waiting for
 			// the size to stop changing makes it one.
 			//
-			// This line is not held by a test, unlike settleResize itself.
-			// Reaching it means a real SIGWINCH at the process, and a test
-			// built on that is one that fails on a loaded machine for reasons
-			// having nothing to do with the code. What it costs if it goes is
-			// a reconnect per drag step -- slower, not wrong -- which is a
-			// different bargain from the wirings that were worth holding.
+			// Held by TestADragAcrossADividerIsOneReconnectAndNotOnePerStep,
+			// which sends this process a real SIGWINCH once the first stream
+			// is running and asks that the next one is not opened at once.
+			// That test was written off here as one that would fail on a
+			// loaded machine; it does not, because the margin runs the safe
+			// way round -- load makes the settle later, and later passes.
 			settleResize(winch)
 			continue
 		}
