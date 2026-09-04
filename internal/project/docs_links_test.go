@@ -131,6 +131,44 @@ func TestEveryPageUnderDocsIsLinkedFromAnother(t *testing.T) {
 // paragraph that lost its wrapping altogether is reported.
 const proseWidth = 88
 
+// wideLine is a line of prose that wants re-wrapping: where it is in the page
+// and what it says, which is what a report about it has to show.
+type wideLine struct {
+	number int
+	text   string
+}
+
+// unwrapped is every line of prose in a page that runs past [proseWidth].
+//
+// A pure function rather than a loop inside the test, because the test walks
+// this repository's own pages and they are wrapped -- so it reports nothing,
+// and a check that reports nothing holds neither its bound nor its exemptions.
+// Measured before this was moved: widening proseWidth to 5000, neutralising
+// the width check, and letting the link exemption swallow every line all left
+// the package green. Handed a page built to trip it, each of those fails.
+func unwrapped(page string) []wideLine {
+	var wide []wideLine
+	fenced := false
+	for n, line := range strings.Split(page, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+			continue
+		}
+		switch {
+		case fenced:
+			// Quoted output, which has whatever width it has. Wrapping it
+			// would be a picture of something the program does not print.
+		case strings.HasPrefix(strings.TrimSpace(line), "|"):
+			// A table row cannot be wrapped and stay a table row.
+		case strings.Contains(line, "](http"):
+			// A badge or a link whose target is longer than the line.
+		case len([]rune(line)) > proseWidth:
+			wide = append(wide, wideLine{number: n + 1, text: line})
+		}
+	}
+	return wide
+}
+
 func TestTheProseInTheDocsStaysWrapped(t *testing.T) {
 	// The line this was written for ran to 117 columns in the middle of a
 	// paragraph wrapped at 80: an edit that added a clause and never re-flowed
@@ -142,25 +180,54 @@ func TestTheProseInTheDocsStaysWrapped(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		fenced := false
-		for n, line := range strings.Split(string(raw), "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "```") {
-				fenced = !fenced
-				continue
-			}
-			switch {
-			case fenced:
-				// Quoted output, which has whatever width it has. Wrapping it
-				// would be a picture of something the program does not print.
-			case strings.HasPrefix(strings.TrimSpace(line), "|"):
-				// A table row cannot be wrapped and stay a table row.
-			case strings.Contains(line, "](http"):
-				// A badge or a link whose target is longer than the line.
-			case len([]rune(line)) > proseWidth:
-				t.Errorf("%s:%d is %d columns and is prose, so it wants re-wrapping:\n  %s",
-					filepath.Base(page), n+1, len([]rune(line)), line)
-			}
+		for _, wide := range unwrapped(string(raw)) {
+			t.Errorf("%s:%d is %d columns and is prose, so it wants re-wrapping:\n  %s",
+				filepath.Base(page), wide.number, len([]rune(wide.text)), wide.text)
 		}
+	}
+}
+
+func TestWhatCountsAsALineThatWantsReWrapping(t *testing.T) {
+	// Against pages built to trip it, because the repository's own pages are
+	// wrapped and so the walk above reports nothing whatever it is told to
+	// look for. Every exemption gets the case that is only about it, and the
+	// bound gets both of its sides.
+	prose := strings.Repeat("word ", 30)   // 150 columns
+	wrapped := strings.Repeat("word ", 10) // 50 columns
+	atBound := strings.Repeat("a", proseWidth)
+	pastBound := strings.Repeat("a", proseWidth+1)
+	badge := "[![build](https://example.test/b.svg)](https://example.test/) " + prose
+
+	// Guard the fixtures rather than trusting the arithmetic: a "long" line
+	// that is not long makes every case below pass by asserting nothing.
+	if len([]rune(prose)) <= proseWidth || len([]rune(wrapped)) > proseWidth {
+		t.Fatalf("the fixtures are %d and %d columns against a bound of %d",
+			len([]rune(prose)), len([]rune(wrapped)), proseWidth)
+	}
+
+	for _, tt := range []struct {
+		name string
+		page string
+		want []int
+	}{
+		{"a paragraph that lost its wrapping", "# Title\n\n" + prose + "\n", []int{3}},
+		{"a paragraph that still has it", "# Title\n\n" + wrapped + "\n", nil},
+		{"a line as wide as the bound, and one past it", atBound + "\n" + pastBound + "\n", []int{2}},
+		{"quoted output, which is as wide as it is", "```\n" + prose + "\n```\n", nil},
+		{"prose after the quoting ends", "```\n" + prose + "\n```\n" + prose + "\n", []int{4}},
+		{"a table row, which cannot be wrapped", "| " + prose + "\n", nil},
+		{"a badge, whose target is longer than the line", badge + "\n", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []int
+			for _, wide := range unwrapped(tt.page) {
+				got = append(got, wide.number)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("lines %v want re-wrapping in this page, want %v:\n%s",
+					got, tt.want, tt.page)
+			}
+		})
 	}
 }
 
