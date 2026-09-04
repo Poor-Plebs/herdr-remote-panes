@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -890,5 +891,82 @@ func TestAStopSignalEndsThisProcessAgainOnceTheWatchIsOver(t *testing.T) {
 					tt.half, said, tt.wantSaid, err)
 			}
 		})
+	}
+}
+
+// goroutinesSettled waits for the goroutine count to stop moving and returns
+// it.
+//
+// A goroutine ends when the runtime next schedules it, not when the channel it
+// is waiting on closes, so a count read straight after a cleanup is read too
+// early. Waiting for a few identical readings costs milliseconds and answers
+// the same way whether the count came back down or stayed up.
+func goroutinesSettled() int {
+	deadline := time.Now().Add(5 * time.Second)
+	last := runtime.NumGoroutine()
+	same := 0
+	for time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+		n := runtime.NumGoroutine()
+		if n != last {
+			last, same = n, 0
+			continue
+		}
+		same++
+		if same == 5 {
+			return n
+		}
+	}
+	return runtime.NumGoroutine()
+}
+
+// TestTheWatchLetsGoOfItsGoroutineAndNotOnlyOfTheSignal holds that the cleanup
+// ends the goroutine watchForStop started.
+//
+// signal.Stop beside it takes back the registration; close(done) is what tells
+// the goroutine to stop waiting. Without it the goroutine blocks on that select
+// for ever -- no signal can arrive, because the registration has just gone, and
+// nothing else closes the channel -- and it holds the channel and the process
+// handle with it. Measured at 200 cleanups: with the line the count comes back
+// to where it started, without it 200 goroutines stay.
+//
+// The number of watches is not bounded by the retry limit, which is what makes
+// this worth holding. A resize ends a stream with errResized, planObserveNext
+// answers observeAgainNow and resets the attempt count to nothing, so observe
+// starts another stream -- and another watch -- for every drag of a window
+// edge, for as long as the pane is open.
+func TestTheWatchLetsGoOfItsGoroutineAndNotOnlyOfTheSignal(t *testing.T) {
+	// os/signal starts a receive loop of its own on the first Notify and never
+	// ends it. That is one goroutine for the process, not one per watch, so it
+	// belongs in the baseline rather than in the count under test.
+	warm := watchForStop(nil)
+	warm()
+	base := goroutinesSettled()
+
+	const watches = 50
+	stops := make([]func(), 0, watches)
+	for i := 0; i < watches; i++ {
+		stops = append(stops, watchForStop(nil))
+	}
+
+	// The control: each watch really is a goroutine while it is up, so what
+	// follows is about them ending rather than about their never having been
+	// started. Without this a build whose watchForStop ran nothing at all
+	// would pass the assertion below by having nothing to leak.
+	if up := runtime.NumGoroutine(); up < base+watches {
+		t.Fatalf("%d watches took the goroutine count from %d only to %d; "+
+			"a watch that runs nothing cannot be leaking anything", watches, base, up)
+	}
+
+	for _, stop := range stops {
+		stop()
+	}
+
+	// Two spare, for anything this test did not start; the leak being caught
+	// is fifty.
+	if after := goroutinesSettled(); after > base+2 {
+		t.Errorf("%d cleanups left the goroutine count at %d, up from %d: "+
+			"the watches were stopped but their goroutines are still waiting",
+			watches, after, base)
 	}
 }
