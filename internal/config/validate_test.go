@@ -645,6 +645,78 @@ func TestSetHostModeWithNoFileYet(t *testing.T) {
 	}
 }
 
+// toggledConfigFrom writes a config file and returns what a mode toggle hands
+// the daemon, which is built from the file directly rather than through Load.
+func toggledConfigFrom(t *testing.T, content string) Config {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+	t.Setenv("HOME", dir)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := SetHostMode("bot", ModeAttach)
+	if err != nil {
+		t.Fatalf("SetHostMode(%s): %v", content, err)
+	}
+	return cfg
+}
+
+// describeLine is the line Describe writes about one setting.
+func describeLine(c Config, setting string) string {
+	for _, l := range c.Describe() {
+		if strings.HasPrefix(l, "config: "+setting+" ") {
+			return l
+		}
+	}
+	return ""
+}
+
+// TestAValueThatCannotBeUsedIsStillReportedAfterAToggle holds the third of the
+// four things the file-reading path works out.
+//
+// There are two paths that build a configuration -- Load, and loadRaw for
+// SetHostMode -- and a diagnostic wired into one and not the other disappears
+// on a keypress with the file unchanged. The test below was written when that
+// happened to the unknown-setting warning; this one and the next were reachable
+// and unheld, and deleting either line from loadRaw passed the whole package.
+// What this one costs is somebody pressing m and the menu forgetting that
+// max_mirrors is set to a number that caps nothing, while the file still says 0.
+func TestAValueThatCannotBeUsedIsStillReportedAfterAToggle(t *testing.T) {
+	cfg := toggledConfigFrom(t, `{"max_mirrors":0,"hosts":[{"target":"bot"}]}`)
+	if !strings.Contains(strings.Join(cfg.Problems(), "\n"), "max_mirrors") {
+		t.Errorf("after a toggle the unusable max_mirrors is no longer reported: %v",
+			cfg.Problems())
+	}
+	// The control: a cap that is a cap says nothing, so this is not passing by
+	// complaining about max_mirrors whatever it holds.
+	fine := toggledConfigFrom(t, `{"max_mirrors":64,"hosts":[{"target":"bot"}]}`)
+	if strings.Contains(strings.Join(fine.Problems(), "\n"), "max_mirrors") {
+		t.Errorf("a real cap was reported as unusable: %v", fine.Problems())
+	}
+}
+
+// TestWhatTheFileChoseIsStillKnownAfterAToggle holds the fourth.
+//
+// The file no longer says what is in force -- it holds what somebody chose, and
+// everything absent takes its default -- so Describe marks the settings the file
+// names and leaves the rest bare. That list is worked out from the raw bytes, and
+// on the toggle path it was worked out and held by nothing: the daemon's log
+// would have gone on printing every setting after a keypress with no way to tell
+// a chosen value from one that came with the version.
+func TestWhatTheFileChoseIsStillKnownAfterAToggle(t *testing.T) {
+	cfg := toggledConfigFrom(t, `{"placement":"tab","hosts":[{"target":"bot"}]}`)
+	if chose := describeLine(cfg, "placement"); !strings.Contains(chose, "config.json") {
+		t.Errorf("after a toggle the log no longer says placement came from the "+
+			"file: %q", chose)
+	}
+	// The control: a setting the file never names carries no annotation at all,
+	// so this is not passing by marking everything as chosen.
+	if bare := describeLine(cfg, "scope"); strings.Contains(bare, "config.json") {
+		t.Errorf("a setting the file does not name is marked as chosen: %q", bare)
+	}
+}
+
 func TestUnknownSettingsSurviveAToggle(t *testing.T) {
 	// Toggling mirroring hands the daemon a fresh configuration to run on, and
 	// that one is built from the file directly rather than through Load. It
