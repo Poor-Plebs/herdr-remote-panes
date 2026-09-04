@@ -214,6 +214,63 @@ func TestAShortPopupKeepsSomeOfTheWarning(t *testing.T) {
 	}
 }
 
+// TestEveryScreenStartsFromAClearOne holds the pair that makes the menu a menu
+// rather than a log of menus.
+//
+// ESC[2J erases what is on the screen and ESC[H puts the cursor back at the
+// top, and they are drawn together at the head of every frame. Without the
+// home, a redraw carries on from wherever the cursor was left, so each keypress
+// pushes another whole copy of the menu down the terminal; without the erase, a
+// frame shorter than the one before it leaves that one's tail sitting under it
+// -- machines that are no longer listed, or a warning that has gone.
+//
+// Held by nothing until now, and the reason is worth writing down: lines() and
+// noticeLines(), which nearly every test in this file goes through, STRIP this
+// exact pair before splitting, because it is not part of the text they are
+// about. What every test normalised away is what nothing checked.
+//
+// Four places do it and each has its own case here: the menu, a notice, clear
+// itself, and quitting -- which is the one call to clear that a person sees,
+// since without it the menu stays painted over whatever they were doing.
+func TestEveryScreenStartsFromAClearOne(t *testing.T) {
+	start := esc + "[2J" + esc + "[H"
+
+	for _, tt := range []struct{ what, got string }{
+		{"the menu", render(machines(3), 0, 80, 20, "")},
+		{"a notice", renderNotice(80, "Could not connect", "the daemon said no")},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			if !strings.HasPrefix(tt.got, start) {
+				t.Errorf("%s does not begin by clearing the screen and going home, "+
+					"so it is drawn onto whatever was already there:\n%q",
+					tt.what, tt.got[:min(len(tt.got), 60)])
+			}
+		})
+	}
+
+	t.Run("clear itself", func(t *testing.T) {
+		got := captureStdout(t, clear)
+		if got != start {
+			t.Errorf("clear() printed %q, want the erase and the home", got)
+		}
+	})
+
+	t.Run("and quitting clears", func(t *testing.T) {
+		// The menu is left behind otherwise, painted over whatever the terminal
+		// was showing before. Held apart from clear's own case because it is a
+		// different line: this is the only call to it a person sees.
+		got := runMenu(t, threeMachines, "q")
+		if !strings.HasSuffix(got.drawn, start) {
+			shown := got.drawn
+			if len(shown) > 60 {
+				shown = shown[len(shown)-60:]
+			}
+			t.Errorf("quitting left the menu on the screen; the last thing drawn "+
+				"was %q", shown)
+		}
+	})
+}
+
 func noticeLines(cols int, heading string, body ...string) []string {
 	out := renderNotice(cols, heading, body...)
 	out = strings.ReplaceAll(out, esc+"[2J"+esc+"[H", "")
