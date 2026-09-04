@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -23,14 +24,14 @@ func call(cmd syncd.Command) error {
 	if !reply.OK {
 		return fmt.Errorf("%s", reply.Message)
 	}
-	report(reply.Message)
+	report(os.Stdout, reply.Message)
 	return nil
 }
 
 // report writes a result where the user will actually see it. Action stdout
 // only reaches the plugin log, so surface it as a Herdr notification too.
-func report(message string) {
-	fmt.Fprintln(os.Stdout, message)
+func report(w io.Writer, message string) {
+	fmt.Fprintln(w, message)
 	notifyIfAction(message)
 }
 
@@ -52,31 +53,41 @@ func notifyIfAction(message string) {
 
 // status prints one line per connected host.
 func status() error {
+	return reportStatus(os.Stdout, os.Stderr, version.Short())
+}
+
+// reportStatus is status with the installed build handed to it and somewhere to
+// write, the same shape reportVersion has and for the same reason:
+// version.Short cannot be anything but "unknown" inside a test binary, and that
+// one answer is what silences the stale-daemon warning below -- so with it the
+// decision reads as correct whether it is or not, which is how that warning came
+// to be the only thing in here nothing could hold.
+func reportStatus(out, warn io.Writer, installed string) error {
 	reply, err := syncd.Ask(syncd.Command{Cmd: "status"})
 	if err != nil {
 		return err
 	}
 	if reply.Warning != "" {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", reply.Warning)
+		fmt.Fprintf(warn, "warning: %s\n", reply.Warning)
 	}
 	// Installing an update replaces the files but leaves the running daemon
 	// alone, so its fixes do nothing until Herdr restarts. That is invisible
 	// otherwise: the new build sits on disk while the old one keeps answering.
-	if stale := version.StaleMessage(reply.Revision); stale != "" {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", stale)
+	if stale := version.StaleMessageFor(reply.Revision, installed); stale != "" {
+		fmt.Fprintf(warn, "warning: %s\n", stale)
 	}
 	if len(reply.Hosts) == 0 {
 		// The same words the notification uses, from the same place. Said
 		// twice, the two drifted: this printed "hosts", which is what the
 		// config file calls them and not what anything else here calls them.
-		report(statusSummary(reply.Hosts))
+		report(out, statusSummary(reply.Hosts))
 		return nil
 	}
 	for _, line := range statusLines(reply.Hosts, outputWidth()) {
-		fmt.Println(line)
+		fmt.Fprintln(out, line)
 	}
 	if line := howToRetry(reply.Hosts); line != "" {
-		fmt.Println()
+		fmt.Fprintln(out)
 		// Wrapped like the table above it. The advice names machines and a
 		// command, so it is longer than a terminal on any day the machines are
 		// not called a and b.
@@ -88,10 +99,10 @@ func status() error {
 		// nowhere else -- which is the one place it was written for.
 		if width := outputWidth(); width > 0 {
 			for _, wrapped := range text.Wrap(line, width, maxRetryLines) {
-				fmt.Println(wrapped)
+				fmt.Fprintln(out, wrapped)
 			}
 		} else {
-			fmt.Println(line)
+			fmt.Fprintln(out, line)
 		}
 	}
 	notifyIfAction(statusSummary(reply.Hosts))

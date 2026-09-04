@@ -9,6 +9,7 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/project"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/text"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/version"
 )
 
 // This is what somebody reads when they want to know whether the thing is
@@ -789,6 +790,49 @@ func TestTheListingSaysWhatBringsBackAMachineItGaveUpOn(t *testing.T) {
 	}
 	if !strings.Contains(many, "prod or staging") {
 		t.Errorf("the advice does not name both machines: %q", many)
+	}
+}
+
+func TestStatusWarnsWhenTheRunningDaemonIsNotTheInstalledBuild(t *testing.T) {
+	// Installing an update replaces the files and leaves the running daemon
+	// alone, so its fixes do nothing until Herdr restarts, and nothing else says
+	// so -- the new build sits on disk while the old one keeps answering. The
+	// warning could be deleted with every test in the package passing, and the
+	// reason is not that nobody looked: version.Short is "unknown" inside a test
+	// binary, and "unknown" is the single answer StaleMessageFor stays quiet for,
+	// so the whole decision read as correct whether it was or not. Handing the
+	// installed build in is what makes it answerable, which is the shape
+	// reportVersion was already given for this exact reason.
+	//
+	// The two status tests below capture standard OUTPUT; this warning goes to
+	// standard error, which nothing here was reading either.
+	answerWith(t, syncd.Reply{OK: true, Revision: "9fcc667"})
+
+	var out, warn strings.Builder
+	if err := reportStatus(&out, &warn, "abc1234"); err != nil {
+		t.Fatalf("status failed: %v", err)
+	}
+	// From the same place the code gets it, so correcting the sentence cannot
+	// leave this asserting a form of words nothing says any more.
+	want := version.StaleMessageFor("9fcc667", "abc1234")
+	if want == "" {
+		t.Fatal("the fixture produces no warning at all, so what follows asserts nothing")
+	}
+	if !strings.Contains(warn.String(), want) {
+		t.Errorf("status did not warn that the daemon is a different build from the "+
+			"installed one:\nwant %q\ngot  %q", want, warn.String())
+	}
+
+	// The control: the same daemon, and an installed build that matches what it
+	// answered with, is not stale. Without it a warning printed unconditionally
+	// would pass everything above.
+	var sameOut, quiet strings.Builder
+	if err := reportStatus(&sameOut, &quiet, "9fcc667"); err != nil {
+		t.Fatalf("status failed: %v", err)
+	}
+	if quiet.String() != "" {
+		t.Errorf("a daemon running the build that is installed was reported as "+
+			"something to restart: %q", quiet.String())
 	}
 }
 
