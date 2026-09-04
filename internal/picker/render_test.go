@@ -1201,6 +1201,19 @@ func TestFittingAStatusIntoItsColumn(t *testing.T) {
 			t.Fatalf("with %d columns the whole state was given up, leaving the "+
 				"machine with nothing said about it", room)
 		}
+		// And nothing said is not the same as no piece left. Below one column
+		// the line comes back as a single piece holding "", because truncating
+		// to a width of nought is what text.Truncate does -- the slice is
+		// there, the state column is blank, and the machine reads as one with
+		// nothing to say rather than one whose state would not fit. That is the
+		// promise the comment below makes, and only the floor in fitStatus
+		// keeps it. Reachable without contriving anything: room is
+		// cols - chromeWidth - the name, so a narrow menu and a long machine
+		// name is all it takes.
+		if plainOf(got) == "" {
+			t.Fatalf("with %d columns the state came back blank, so the machine "+
+				"reads as one with nothing to say about it", room)
+		}
 		if w := text.Width(plainOf(got)); room >= 1 && w > room {
 			t.Fatalf("with %d columns the line came back %d wide, which runs past "+
 				"the column and into the next machine's", room, w)
