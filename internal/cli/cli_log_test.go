@@ -140,18 +140,63 @@ func TestTheDaemonLogSaysWhichDaySomethingHappened(t *testing.T) {
 	}
 }
 
-func TestMainAsksForTheDateOnEveryLine(t *testing.T) {
-	// The flags above are set once, in Main, and the test beside this one sets
-	// them itself -- so it would pass with the line in Main deleted. Read
-	// instead: Main cannot be called from a test without it taking over the
-	// process's logger and arguments for the rest of the run.
-	source, err := os.ReadFile("cli.go")
-	if err != nil {
-		t.Fatal(err)
+// logLine is what one line written through the logger Main sets up looks like:
+// a prefix naming the program, then the date and time.
+var logLine = regexp.MustCompile(`(?m)^(\S+: )(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) `)
+
+// TestEveryLineNamesTheProgramAndTheDay holds what Main's logger renders.
+//
+// This replaces a test that grepped cli.go for `log.SetFlags(log.Ldate |
+// log.Ltime)`. That was the only thing holding any of the three settings, and it
+// held the SOURCE TEXT: the same line moved into a function nothing calls would
+// still have passed it, and the prefix and the sanitiser beside it were held by
+// nothing whatever. The reason given was that Main takes over the process's
+// logger and arguments, which was true of Main and is not true of logTo.
+func TestEveryLineNamesTheProgramAndTheDay(t *testing.T) {
+	flags, prefix, out := log.Flags(), log.Prefix(), log.Writer()
+	t.Cleanup(func() {
+		log.SetFlags(flags)
+		log.SetPrefix(prefix)
+		log.SetOutput(out)
+	})
+
+	// Nothing inherited: the standard logger ALREADY dates every line by
+	// default, so with the flags left alone the date says nothing about whether
+	// logTo asked for it -- deleting that line changed no rendering at all until
+	// this was here. The prefix is cleared for the same reason.
+	log.SetFlags(0)
+	log.SetPrefix("")
+
+	var written strings.Builder
+	logTo(&written)
+	// With an escape in it, because the third thing logTo sets is the sanitiser
+	// and a message of ordinary text cannot tell whether it is there.
+	log.Print("listening on \x1b[31m/somewhere/control-hub.sock")
+
+	line := strings.TrimSpace(written.String())
+	if strings.ContainsRune(line, 0x1b) {
+		t.Errorf("an escape from the far side reached the terminal reading the "+
+			"report: %q", line)
 	}
-	if !strings.Contains(string(source), "log.SetFlags(log.Ldate | log.Ltime)") {
-		t.Error("the daemon no longer asks for the date, so daemon.log covers days " +
-			"of restarts with nothing saying which day any of them was")
+	match := logLine.FindStringSubmatch(line)
+	if match == nil {
+		t.Fatalf("a log line reads %q, which names neither the program nor the day: "+
+			"daemon.log covers days of restarts, and Herdr collects this into the "+
+			"plugin log beside every other plugin's", line)
+	}
+
+	// And the page that teaches somebody to read these lines shows them opening
+	// the same way. Taken from what the logger RENDERS rather than from the
+	// literal in cli.go, so the two cannot drift apart while both look right.
+	shown := logLine.FindAllStringSubmatch(docsText(t), -1)
+	if len(shown) == 0 {
+		t.Fatal("no example log line in the documentation, so this compares nothing")
+	}
+	for _, example := range shown {
+		if example[1] != match[1] {
+			t.Errorf("the pages show a log line opening %q and this writes %q",
+				example[1], match[1])
+		}
 	}
 }
 

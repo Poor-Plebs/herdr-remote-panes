@@ -26,26 +26,42 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/version"
 )
 
+// logTo sets up the logger every command writes through.
+//
+// Its own function so it can be ASKED what it does. Main cannot be called from
+// a test without taking over the process's logger and arguments for the rest of
+// the run, so what it set up here used to be held by a test that grepped this
+// file for one of the three lines -- which holds the source text rather than
+// anything rendered, and left the other two held by nothing at all.
+//
+// The date as well as the time. daemon.log is kept until it rolls at a quarter
+// of a megabyte, which is days of a healthy daemon, and the times alone then run
+// backwards down the page every time Herdr is restarted on a later day --
+// "stopping" at 21:29 above "starting" at 12:24. Anyone working out when
+// something happened has to count restarts to place it. mirror.log, written
+// beside it, has carried a full timestamp all along.
+//
+// The prefix names the program. Herdr collects a command's standard error into
+// the plugin log, and the troubleshooting page teaches somebody to recognise
+// these lines by exactly this opening -- every log line it shows begins with it.
+//
+// Sanitised, because every command's failure is reported through this logger and
+// a failure that came from a machine carries whatever that machine said. Herdr
+// shows a command's standard error once it has finished, so an escape in it acts
+// on the terminal reading the report.
+func logTo(w io.Writer) {
+	log.SetFlags(log.Ldate | log.Ltime)
+	log.SetPrefix("herdr-remote-panes: ")
+	log.SetOutput(logfile.Sanitized(w))
+}
+
 // Main runs the command and reports what to exit with.
 //
 // The exit codes are the ones a shell expects and the manifest relies on: 2
 // for being asked for something that is not a command, 1 for a command that
 // was understood and did not work.
 func Main() int {
-	// The date as well as the time. daemon.log is kept until it rolls at a
-	// quarter of a megabyte, which is days of a healthy daemon, and the times
-	// alone then run backwards down the page every time Herdr is restarted on
-	// a later day -- "stopping" at 21:29 above "starting" at 12:24. Anyone
-	// working out when something happened has to count restarts to place it.
-	//
-	// mirror.log, written beside it, has carried a full timestamp all along.
-	log.SetFlags(log.Ldate | log.Ltime)
-	log.SetPrefix("herdr-remote-panes: ")
-	// Every command's failure is reported through this logger, and a failure
-	// that came from a machine carries whatever that machine said. Herdr shows
-	// a command's standard error once it has finished, so an escape in it acts
-	// on the terminal reading the report.
-	log.SetOutput(logfile.Sanitized(os.Stderr))
+	logTo(os.Stderr)
 
 	args := os.Args[1:]
 	if len(args) == 0 {
