@@ -123,8 +123,16 @@ func FuzzParseKeyDrainsWhatItReads(f *testing.F) {
 	})
 }
 
-// ownEscapes is every escape sequence the menu emits for itself. Anything left
-// after these are taken out came from a machine's name.
+// ownEscapes takes out every escape sequence the menu emits for itself, so that
+// anything left came from a machine's name.
+//
+// It cannot work the other way round, and that is the whole of its limit: it
+// removes those sequences BY VALUE, so one that arrived in a name is taken out
+// exactly as if the menu had written it. Measured, with displayName's Sanitize
+// removed: the frame grows from 18 escape bytes to 19, the machine's own
+// "\x1b[31m" is in it, and after this nothing is left to find. The seed with
+// "\x1b[31mprod" in it is the one this is blindest to. What covers that is the
+// comparison below, which needs no such list.
 func ownEscapes(s string) string {
 	for _, own := range []string{esc + "[2J", esc + "[H", reset, dim, bold, green, yellow, red, reverse} {
 		s = strings.ReplaceAll(s, own, "")
@@ -150,6 +158,9 @@ func FuzzTheMenuFitsThePopupAndCarriesNothingFromAName(f *testing.F) {
 	f.Add("bot", "the label", "connection refused", 80, 24, 0)
 	f.Add("\x1b[31mprod", "a\nb", "\x1b]0;title\x07", 40, 6, 1)
 	f.Add("日本語のマシン", "🚀", "ﬀ", 16, 1, 2)
+	// The menu's own sequences, in every field, which is the case ownEscapes
+	// is blind to and the comparison below is not.
+	f.Add(esc+"[2Jbot", esc+"[Hlabel", esc+"[31mrefused", 80, 24, 0)
 	f.Add("", "", "", 200, 60, 0)
 
 	f.Fuzz(func(t *testing.T, target, label, reason string, cols, rows, selected int) {
@@ -169,6 +180,34 @@ func FuzzTheMenuFitsThePopupAndCarriesNothingFromAName(f *testing.F) {
 			if got := text.Width(visible(line)); got > cols {
 				t.Fatalf("at %d columns a line is %d wide: %q", cols, got, visible(line))
 			}
+		}
+
+		// Pre-sanitising what goes IN must not change what comes out, and that
+		// is the check with no list of exceptions in it. Every piece the menu
+		// draws from a machine goes through text.Sanitize, so handing it the
+		// sanitised form already can only give the same frame -- unless some
+		// piece is drawn raw, and then the two differ wherever it is, whatever
+		// the bytes happen to be. It uses Sanitize itself rather than a second
+		// copy of its rule, so it cannot drift from it either.
+		clean := []Entry{
+			{Target: text.Sanitize(target), Label: text.Sanitize(label),
+				Configured: true, Connected: true, Mirroring: true, Mirrors: 2},
+			{Target: text.Sanitize(target + label), Configured: true, GaveUp: true,
+				Reason: text.Sanitize(reason)},
+			{Target: "plain", Configured: true},
+		}
+		// Self-verifying: the comparison means nothing unless sanitising twice
+		// is the same as sanitising once, so say so here rather than assume it.
+		for _, s := range []string{target, label, reason} {
+			if once := text.Sanitize(s); text.Sanitize(once) != once {
+				t.Fatalf("Sanitize(%q) is not settled after one pass: %q then %q",
+					s, once, text.Sanitize(once))
+			}
+		}
+		if other := render(clean, mod(selected, len(clean)), cols, rows, ""); other != drawn {
+			t.Fatalf("the frame changes when the names are sanitised before they go "+
+				"in, so some piece of a machine is drawn raw:\nraw:   %q\nclean: %q",
+				drawn, other)
 		}
 
 		left := ownEscapes(drawn)
