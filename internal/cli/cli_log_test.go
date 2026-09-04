@@ -309,6 +309,104 @@ func TestTheDaemonLogRollsOverAtTwoHundredAndFiftySixKilobytes(t *testing.T) {
 	}
 }
 
+func TestTheDaemonSaysWhyItsLogFileIsMissing(t *testing.T) {
+	// The daemon keeps its diagnostics in a file as well as on standard error,
+	// and carries on with only standard error if the file will not open. Nothing
+	// held the line that says so, so the whole of the failure could be deleted
+	// with the package passing: somebody who went looking for daemon.log would
+	// find nothing there, nothing about it anywhere, and no way to tell an empty
+	// log from a daemon that never ran.
+	flags, prefix, out := log.Flags(), log.Prefix(), log.Writer()
+	t.Cleanup(func() {
+		log.SetFlags(flags)
+		log.SetPrefix(prefix)
+		log.SetOutput(out)
+	})
+	var said strings.Builder
+	log.SetOutput(&said)
+
+	// A directory where the log file goes, which is a thing that cannot be
+	// opened for writing without arranging any particular permissions.
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	if err := os.Mkdir(filepath.Join(dir, "daemon.log"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if closeLog := daemonLog(); closeLog != nil {
+		closeLog()
+		t.Fatal("the log opened when it should not have, so this asserts nothing")
+	}
+
+	if said.Len() == 0 {
+		t.Fatal("the daemon log could not be opened and nothing was said about it")
+	}
+	// The path as well as the failure: "could not open the daemon log" on its own
+	// leaves the reader hunting for which file that is.
+	if want := filepath.Join(dir, "daemon.log"); !strings.Contains(said.String(), want) {
+		t.Errorf("what was said does not name the file it could not open:\n"+
+			"the file was %s\nand it said:\n%s", want, said.String())
+	}
+}
+
+func TestACommandThatFailedSaysWhyRatherThanExitingQuietly(t *testing.T) {
+	// run's error is reported by exactly one line in Main, and nothing held it:
+	// delete it and every command that fails exits 1 in silence. Herdr shows a
+	// command's standard error once it has finished, so that silence is the whole
+	// of what the person who ran it gets.
+	//
+	// Main was written off as uncallable from a test because it takes over the
+	// process's logger and arguments. It does take both, and both can be given
+	// back: os.Args and os.Stderr are saved and restored here, and logTo writes
+	// through whatever os.Stderr is when Main runs.
+	args, stderr := os.Args, os.Stderr
+	flags, prefix, out := log.Flags(), log.Prefix(), log.Writer()
+	t.Cleanup(func() {
+		os.Args, os.Stderr = args, stderr
+		log.SetFlags(flags)
+		log.SetPrefix(prefix)
+		log.SetOutput(out)
+	})
+
+	// No state directory: status then fails before it dials anything, so this
+	// asks about the reporting rather than about a timeout.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", "")
+
+	// The same failure, asked for directly, so the assertion is about the error
+	// the command actually produced rather than a form of words.
+	want := run("status", nil)
+	if want == nil {
+		t.Fatal("status succeeded with no state directory, so this asserts nothing")
+	}
+
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = write
+	os.Args = []string{"herdr-remote-panes", "status"}
+
+	code := Main()
+
+	_ = write.Close()
+	os.Stderr = stderr
+	shown := make([]byte, 4096)
+	n, _ := read.Read(shown)
+	said := strings.TrimSpace(string(shown[:n]))
+
+	if code != 1 {
+		t.Fatalf("a command that failed exited %d, so this is not the path being "+
+			"asked about", code)
+	}
+	if said == "" {
+		t.Fatalf("a command that failed said nothing at all and exited %d", code)
+	}
+	if !strings.Contains(said, want.Error()) {
+		t.Errorf("what a failed command reported does not carry the reason:\n"+
+			"the error was %v\nand it said:\n%s", want, said)
+	}
+}
+
 func TestTheDaemonRunsOnDefaultsWhenTheConfigCannotBeRead(t *testing.T) {
 	// The daemon says "continuing with defaults" and then has to be running on
 	// them. Without the line that puts them there it carries on with the zero
@@ -350,6 +448,19 @@ func TestTheDaemonRunsOnDefaultsWhenTheConfigCannotBeRead(t *testing.T) {
 	// And it said so, since the message and the fallback are one promise.
 	if !strings.Contains(said.String(), "continuing with defaults") {
 		t.Errorf("nothing said the daemon was carrying on with defaults:\n%s", said.String())
+	}
+
+	// And WHAT was wrong with it, in the same place. The advice above was held
+	// and the line that gives it a subject was not, so the reason could be
+	// deleted with the whole package passing: daemon.log would tell somebody to
+	// fix a config without saying what is wrong with it, and they would open a
+	// file that looks fine to them. The menu carries the reason too, but only
+	// while somebody thinks to ask a running daemon; the log is what gets read
+	// afterwards. Taken from the error this returned rather than from a form of
+	// words, so it cannot pin a sentence config.Load has stopped using.
+	if !strings.Contains(said.String(), err.Error()) {
+		t.Errorf("the log says to fix the config and not what is wrong with it:\n"+
+			"the error was %v\nand the log says:\n%s", err, said.String())
 	}
 }
 
