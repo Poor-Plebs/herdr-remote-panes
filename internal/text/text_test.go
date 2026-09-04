@@ -421,3 +421,53 @@ func TestARunOfEmojiSelectorsPromotesOnlyOneCharacter(t *testing.T) {
 		}
 	}
 }
+
+// sanitized is where the results below go, so the compiler cannot decide a
+// call had no effect and remove the allocation being counted.
+var sanitized string
+
+// TestSanitizingANameAllocatesOnceHoweverLongItIs holds the size hint.
+//
+// Sanitize writes into a strings.Builder, and b.Grow(len(name)) asks for the
+// whole buffer up front. Without it the builder doubles as it fills: measured
+// on the fixture below, thirty-six bytes costs three allocations, three
+// hundred and ninety-six costs seven and three thousand nine hundred and
+// ninety-six costs twelve, against one at every length with the hint.
+//
+// The line had been written off as an allocation hint whose absence cannot be
+// observed through any exported function. That is true of what Sanitize
+// RETURNS and false of what it COSTS, and the cost is not idle: the menu
+// sanitises every machine's name every time it draws, so this is per entry per
+// redraw.
+//
+// The bound is two rather than one, so that a runtime one day taking an extra
+// allocation somewhere does not read as this line having gone; what it is here
+// to catch starts at three.
+func TestSanitizingANameAllocatesOnceHoweverLongItIs(t *testing.T) {
+	for _, length := range []int{40, 400, 4000} {
+		// With something to strip on the way, since that is the shape of the
+		// names this is for.
+		name := strings.Repeat("ab\tc\x1bd", length/6)
+		got := testing.AllocsPerRun(100, func() { sanitized = Sanitize(name) })
+		if got > 2 {
+			t.Errorf("sanitizing a %d-byte name allocated %v times, want the one "+
+				"buffer: it is being grown a piece at a time", len(name), got)
+		}
+	}
+
+	// The control. Without it every count above could be one for reasons that
+	// have nothing to do with the hint -- an inlined call, a measurement that
+	// sees nothing -- and the assertions would hold nothing at all.
+	name := strings.Repeat("a", 4000)
+	grown := testing.AllocsPerRun(100, func() {
+		var b strings.Builder
+		for _, r := range name {
+			b.WriteRune(r)
+		}
+		sanitized = b.String()
+	})
+	if grown <= 2 {
+		t.Errorf("a builder filled with no size asked for allocated %v times, so "+
+			"the counts above cannot tell whether Sanitize asks for one", grown)
+	}
+}
