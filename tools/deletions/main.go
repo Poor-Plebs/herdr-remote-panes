@@ -149,9 +149,16 @@ func putBack() (string, error) {
 // restoreOnSignal puts the file back when the run is interrupted.
 //
 // The deferred restore covers a normal return and a panic, and not a signal:
-// SIGTERM and ctrl-c end the process where it stands. A run given up on halfway
-// then leaves a statement missing from the tree, which builds, and which the
-// next commit carries.
+// ctrl-c, SIGTERM and a hangup all end the process where it stands. A run given
+// up on halfway then leaves a statement missing from the tree, which builds,
+// and which the next commit carries.
+//
+// Three of them rather than the two this comment used to name, and the third is
+// the one this tool needs more than tools/bounds does. A sweep is minutes for a
+// small package and hours for the daemon, which is a run somebody starts and
+// walks away from -- so the terminal closing or an ssh session dropping is an
+// ordinary way for it to end, and a hangup nothing has registered kills the
+// process with a statement still missing.
 func restoreOnSignal() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -167,6 +174,13 @@ func restoreOnSignal() {
 		if sig, ok := s.(syscall.Signal); ok {
 			os.Exit(128 + int(sig))
 		}
+		// Unreachable as things stand, and kept rather than deleted. Every
+		// value os/signal can deliver here is a syscall.Signal, because all
+		// three registered above are -- os.Interrupt IS syscall.SIGINT -- so
+		// the assertion never turns anything away. Measured: exiting 99 here
+		// instead SURVIVES every row of
+		// TestAnInterruptedSweepPutsTheStatementBack, which is what says
+		// nothing arrives to reach it.
 		os.Exit(1)
 	}()
 }

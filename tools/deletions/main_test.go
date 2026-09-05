@@ -1,11 +1,15 @@
 package main
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // TestOnlyStatementsWorthRemovingAreOffered holds what the sweep is about.
@@ -275,5 +279,302 @@ func TestACleanSweepDoesNotExplainAListItDoesNotHave(t *testing.T) {
 	}
 	if strings.Contains(got, "Read each one and decide") {
 		t.Errorf("a sweep with no survivors still explains how to read them:\n%s", got)
+	}
+}
+
+// probeOriginal is the fixture package's source. One statement worth deleting,
+// and what the file must hold again once an interrupted run has put it back.
+const probeOriginal = "package probe\n\nvar Ran int\n\nfunc Do() {\n\tRan = 1\n}\n"
+
+// probeDeleted is that file with the one statement taken out, which is exactly
+// what the sweep writes before it builds.
+//
+// Compared whole rather than by the line's absence: os.WriteFile truncates
+// before it writes, so a read landing mid-write also fails to contain the line
+// and would send the signal while there was nothing yet to put back.
+const probeDeleted = "package probe\n\nvar Ran int\n\nfunc Do() {\n}\n"
+
+// probeInTree is how the fixture's file is named in anything the command
+// prints. The sweep is given "./pkg" and the command runs with the tree as its
+// working directory, so what comes back is relative -- the path somebody who
+// ran it can act on, rather than one only this process knows.
+const probeInTree = "pkg/probe.go"
+
+// probeTestBody is the fixture package's test: it waits, so the deletion above
+// it is still on disk when the signal arrives.
+//
+// The wait is never actually paid. The sweep writes the file before it even
+// builds, so the poll below catches the deletion there and stops the run long
+// before anything sleeps; what is left sleeping is an orphan nothing here
+// waits for.
+const probeTestBody = `import (
+	"testing"
+	"time"
+)
+
+func TestDo(t *testing.T) {
+	time.Sleep(20 * time.Second)
+	Do()
+	if Ran != 1 {
+		t.Fatal("the statement this sweep removes is not there")
+	}
+}
+`
+
+// standInCeiling puts a systemd-run on PATH that imposes nothing and runs what
+// it was handed.
+//
+// The command refuses to sweep at all where a memory ceiling cannot be had,
+// and it exits before registering anything -- so on a machine with no systemd
+// user session, which is two of this project's three CI jobs, building and
+// running it would exercise that refusal and nothing else. What is held below
+// is the restore, and the ceiling is machinery in the way of reaching it.
+//
+// It can say nothing about the bounding itself, and is not asked to:
+// TestBothCommandsRunInTheTreeBeingSwept holds that by reading the command's
+// arguments rather than by running it.
+func standInCeiling(t *testing.T) string {
+	t.Helper()
+
+	// Its own options first -- --user, --scope, -q, and each -p with the value
+	// after it -- and then whatever it was asked to run. That is "true" for
+	// the probe in main and `go test` for a statement being tried.
+	const script = "#!/bin/sh\n" +
+		"while [ $# -gt 0 ]; do\n" +
+		"  case \"$1\" in\n" +
+		"    --user|--scope|-q) shift ;;\n" +
+		"    -p) shift 2 ;;\n" +
+		"    *) break ;;\n" +
+		"  esac\n" +
+		"done\n" +
+		"exec \"$@\"\n"
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "systemd-run"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// sweptRun starts the command over a fixture tree of one statement and comes
+// back once the deletion is actually on disk.
+//
+// That moment is the whole point: signalling before it is there leaves nothing
+// to put back, and a test doing so would pass against a command that never
+// installed a handler at all. It answers with the running command, the path of
+// the file now missing a statement, a reader for everything said so far, and a
+// channel carrying how it ended. The caller sends the signal and decides what
+// to make of it.
+func sweptRun(t *testing.T) (*exec.Cmd, string, func() string, <-chan error) {
+	t.Helper()
+
+	bin := filepath.Join(t.TempDir(), "deletions")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("building the command: %v\n%s", err, out)
+	}
+
+	work := t.TempDir()
+	if err := os.Mkdir(filepath.Join(work, "pkg"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"go.mod":            "module probe\n\ngo 1.25\n",
+		"pkg/probe.go":      probeOriginal,
+		"pkg/probe_test.go": "package probe\n\n" + probeTestBody,
+	} {
+		if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Its output goes to a file rather than a pipe, so Wait returns when the
+	// command exits rather than when the orphaned test process lets go of the
+	// other end.
+	out := filepath.Join(t.TempDir(), "out")
+	f, err := os.Create(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+
+	run := exec.Command(bin, "./pkg")
+	run.Dir, run.Stdout, run.Stderr = work, f, f
+	run.Env = append(os.Environ(),
+		"PATH="+standInCeiling(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := run.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// Waited for HERE rather than by the caller, so the poll below can tell a
+	// command that is still working from one that has already stopped. The
+	// ending is carried on `done`, which exactly one reader takes; whether it
+	// has ended at all is `stopped`, which is CLOSED and so answers any number
+	// of readers -- the poll, the caller and the cleanup all ask, and a
+	// single-value channel shared between them deadlocks the second asker.
+	done := make(chan error, 1)
+	stopped := make(chan struct{})
+	go func() {
+		done <- run.Wait()
+		close(stopped)
+	}()
+	t.Cleanup(func() {
+		_ = run.Process.Kill()
+		<-stopped
+	})
+
+	said := func() string {
+		t.Helper()
+		raw, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+
+	// The deadline is generous on purpose: load can only make the command
+	// slower to reach the deletion, and waiting longer costs nothing when it
+	// gets there. What must NOT be waited out is a command that has already
+	// stopped -- there is no deletion coming then, and sitting out the
+	// deadline turns a fast failure into a timeout somebody has to diagnose.
+	probe := filepath.Join(work, "pkg", "probe.go")
+	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); {
+		now, err := os.ReadFile(probe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(now) == probeDeleted {
+			return run, probe, said, done
+		}
+		select {
+		case <-stopped:
+			t.Fatalf("the command stopped without removing anything:\n%s", said())
+		default:
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("no statement was ever removed, so there was never anything to put "+
+		"back:\n%s", said())
+	return nil, "", nil, nil
+}
+
+// TestAnInterruptedSweepPutsTheStatementBack holds the one restore that a
+// deferred function cannot do.
+//
+// restoreOnSignal's own comment is the specification: a signal ends the process
+// where it stands, defers and all, so a run given up on halfway "leaves a
+// statement missing from the tree, which builds, and which the next commit
+// carries". Nothing named that function in any test -- neutralising main's one
+// call to it left the whole tree green -- while putBack under it is held both
+// ways by TestTheFileGoesBackWhateverHappened, the restore and the letting go
+// of what was restored. The helper was held; the handler, its call site and
+// every signal it registers were held by nothing.
+//
+// That test calls putBack directly, which is why it could not see any of this:
+// it says the file goes back when something asks, and nothing here asked. This
+// is the first test in the package to run the command at all.
+//
+// ALL THREE SIGNALS, because one statement registering several is a mutation
+// no deletion sweep proposes: it offers the whole line, so the line reads as
+// settled while any one argument of it can be dropped unnoticed. They are
+// answered by a single path, so what the extra rows buy is the STATUS -- a run
+// stopped by a signal exits 128 plus that signal, and the right number for
+// each says the handler chose it rather than the runtime taking the default
+// disposition.
+func TestAnInterruptedSweepPutsTheStatementBack(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP} {
+		t.Run(sig.String(), func(t *testing.T) {
+			run, probe, said, done := sweptRun(t)
+
+			if err := run.Process.Signal(sig); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err == nil {
+				t.Error("a command stopped by a signal exited nought")
+			} else {
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) {
+					t.Fatalf("waiting for the command: %v", err)
+				}
+				if want := 128 + int(sig); exit.ExitCode() != want {
+					t.Errorf("the interrupted sweep exited %d, want %d", exit.ExitCode(), want)
+				}
+			}
+
+			back, err := os.ReadFile(probe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(back) != probeOriginal {
+				t.Errorf("the interrupted sweep left a statement out of the tree:\n%s", back)
+			}
+
+			// And it SAYS which file it put back. Somebody who has just
+			// interrupted a sweep over their own tree has to know whether
+			// anything was left missing from it, and this line is the only
+			// place that is answered.
+			out := said()
+			if want := "put " + probeInTree + " back before stopping"; !strings.Contains(out, want) {
+				t.Errorf("the interrupted sweep does not say %q:\n%s", want, out)
+			}
+			if strings.Contains(out, "could not put") {
+				t.Errorf("a restore that worked reported a failure:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestASweepThatCannotRestoreSaysWhichFileIsStillShort holds the other arm of
+// the same decision, and it is the arm that matters.
+//
+// putBack's own comment says a file that could not be written is not
+// forgotten. When the write fails, that sentence is ALL that is left: the tree
+// keeps a statement that was removed, it still builds, and nothing else
+// anywhere names which file it is in. The test above drives only the arm where
+// the write works, and passes whether either message is printed or not --
+// which is exactly how the same pair came to still be survivors one commit
+// after tools/bounds held its own restore.
+func TestASweepThatCannotRestoreSaysWhichFileIsStillShort(t *testing.T) {
+	// Self-check the fixture before building on it: a user who can write a
+	// read-only file cannot stage a failing restore at all, and the whole test
+	// would then be about nothing.
+	guard := filepath.Join(t.TempDir(), "readonly")
+	if err := os.WriteFile(guard, []byte("x"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(guard, []byte("y"), 0o400); err == nil {
+		t.Skip("this user can write a read-only file, so a restore cannot be made to fail")
+	}
+
+	run, probe, said, done := sweptRun(t)
+
+	// Read-only, so putBack's write fails. The mode goes back afterwards so
+	// what was left behind can be read like any other file.
+	if err := os.Chmod(probe, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(probe, 0o600) })
+
+	if err := run.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+
+	out := said()
+	if want := "could not put " + probeInTree + " back"; !strings.Contains(out, want) {
+		t.Errorf("a failed restore does not say %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "back before stopping") {
+		t.Errorf("a restore that failed reported success:\n%s", out)
+	}
+
+	// The control, and it is about the fixture rather than the code: the write
+	// really did fail, so the tree really is still short a statement. Without
+	// it this passes against a run that put the file back and printed the
+	// failure anyway.
+	still, err := os.ReadFile(probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(still) != probeDeleted {
+		t.Errorf("the file was put back after all, so nothing failed:\n%s", still)
 	}
 }
