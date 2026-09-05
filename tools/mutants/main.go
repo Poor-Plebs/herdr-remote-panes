@@ -119,17 +119,8 @@ func main() {
 	muts, skipped, untouched, err := mutationsIn(work, pkg, only, covered, changed)
 	check(err)
 	if len(muts) == 0 {
-		switch {
-		case since != "":
-			// Which is an answer rather than a problem: nothing here has
-			// changed since then, so there is nothing new to decide.
-			fmt.Printf("nothing to mutate: no covered lines in %s have changed since %s\n",
-				pkg, since)
-		case len(only) > 0:
-			fmt.Printf("nothing to mutate: %s has no covered lines, or no file of that name\n",
-				strings.Join(os.Args[2:], ", "))
-		default:
-			fmt.Println("nothing to mutate: no covered lines in that package")
+		fmt.Println(nothingToMutate(pkg, since, os.Args[2:], len(covered), skipped))
+		if since == "" && len(only) == 0 {
 			// Written down anyway, because a sweep that found nothing is
 			// still a sweep and this is the silence the record exists to
 			// remove: with no row, a package looked at and found to have
@@ -140,10 +131,10 @@ func main() {
 			//
 			// Only where the whole package was swept. A restricted run that
 			// found nothing says nothing about the package, which is what
-			// this file is read for -- and where files were named, the case
-			// above is the reason: nothing here can tell a file with no
-			// covered lines from a name matching no file, so a row for it
-			// could record a sweep of something that is not there.
+			// this file is read for -- and where files were named, nothing
+			// here can tell a file with no covered lines from a name
+			// matching no file, so a row for it could record a sweep of
+			// something that is not there.
 			recordSweep(sweptPath, pkg, since, os.Args[2:], 0, 0, 0, 0)
 		}
 		return
@@ -684,6 +675,50 @@ func wasRead(read map[string]string, m mutation) bool {
 	}
 	_, here := read[key+"\x00"+m.function]
 	return here
+}
+
+// nothingToMutate says WHICH nothing a run found, for a sweep that had no
+// mutation to try.
+//
+// One sentence used to answer for all of these and it was true of one of them.
+// A package covered by its tests can hold no operator this flips, and a package
+// with covered lines can have every operator on a line nothing runs; both were
+// told "no covered lines in that package", which sends somebody off to write
+// coverage that in the first case already exists.
+//
+// covered is how many of the package's files had any line run at all, and
+// skipped is how many mutations were passed over as unreached. Both are already
+// to hand where this is called, and between them they separate the three: no
+// coverage anywhere, coverage with every operator out of reach, and coverage
+// with nothing in it this knows how to flip.
+//
+// The first two cases are about a restriction the caller asked for and are
+// accurate as they stand. They are here so that every answer this run can give
+// is decided in one place, and so that each can be asked for without running a
+// sweep to get it.
+func nothingToMutate(pkg, since string, named []string, covered, skipped int) string {
+	switch {
+	case since != "":
+		// Which is an answer rather than a problem: nothing here has changed
+		// since then, so there is nothing new to decide.
+		return fmt.Sprintf("nothing to mutate: no covered lines in %s have changed since %s",
+			pkg, since)
+	case len(named) > 0:
+		return fmt.Sprintf("nothing to mutate: %s has no covered lines, or no file of that name",
+			strings.Join(named, ", "))
+	case covered == 0:
+		return "nothing to mutate: no covered lines in that package"
+	case skipped == 1:
+		// Its own sentence, because "all 1 of its mutations" is the count-of-one
+		// defect this repository has already had to fix once.
+		return "nothing to mutate: that package is covered, but its one mutation " +
+			"is on a line no test reaches"
+	case skipped > 1:
+		return fmt.Sprintf("nothing to mutate: that package is covered, but all %d of its "+
+			"mutations are on lines no test reaches", skipped)
+	default:
+		return "nothing to mutate: that package is covered and holds no operator this flips"
+	}
 }
 
 // recordSweep writes down that this package was looked at.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -1446,6 +1447,147 @@ func TestASweepIsRecordedWhetherOrNotItFoundAnything(t *testing.T) {
 			// at all about it, and the counts are what anybody reads it for.
 			if !strings.Contains(string(raw), tt.want+"\n") {
 				t.Errorf("the record does not say %q:\n%s\n%s", tt.want, raw, out)
+			}
+		})
+	}
+}
+
+// TestASweepThatFoundNothingSaysWhichNothing asks nothingToMutate for every
+// answer it can give.
+//
+// Three of these were one sentence -- "no covered lines in that package" --
+// and it was true of one of them. Asked here rather than through the command
+// because each case costs a whole sweep that way, and because the SINCE case
+// cannot be reached through the command at all without a git repository for it
+// to diff.
+//
+// Every row sets covered and skipped to something the branch it is testing
+// does not read, so no row can pass by agreeing with a neighbour: drop the
+// since arm and its row falls through to "all 7 of its mutations", which is
+// not what it asks for.
+func TestASweepThatFoundNothingSaysWhichNothing(t *testing.T) {
+	for _, tt := range []struct {
+		what    string
+		since   string
+		named   []string
+		covered int
+		skipped int
+		want    string
+	}{
+		{
+			"nothing changed since the revision asked for", "v1.2.3", nil, 3, 7,
+			"nothing to mutate: no covered lines in ./pkg have changed since v1.2.3",
+		},
+		{
+			"the files named hold nothing to try", "", []string{"one.go", "two.go"}, 3, 7,
+			"nothing to mutate: one.go, two.go has no covered lines, or no file of that name",
+		},
+		{
+			"no test ran a line of it", "", nil, 0, 7,
+			"nothing to mutate: no covered lines in that package",
+		},
+		{
+			"covered, with every operator out of reach", "", nil, 3, 7,
+			"nothing to mutate: that package is covered, but all 7 of its mutations " +
+				"are on lines no test reaches",
+		},
+		{
+			"covered, with one operator out of reach", "", nil, 3, 1,
+			"nothing to mutate: that package is covered, but its one mutation is on " +
+				"a line no test reaches",
+		},
+		{
+			"covered, and holding nothing this flips", "", nil, 3, 0,
+			"nothing to mutate: that package is covered and holds no operator this flips",
+		},
+	} {
+		if got := nothingToMutate("./pkg", tt.since, tt.named, tt.covered, tt.skipped); got != tt.want {
+			t.Errorf("%s:\n want %q\n  got %q", tt.what, tt.want, got)
+		}
+	}
+}
+
+// TestTheCommandSaysWhichNothingItFound builds the command and runs it over a
+// package for each answer it can reach.
+//
+// nothingToMutate holding the right sentence is not the command reaching for
+// it with the right two numbers, and that is the half this repository keeps
+// finding unheld. The third row is what makes the pair load-bearing: without a
+// package that nothing covers, a call site handing over a count it did not
+// measure still passes the two above.
+func TestTheCommandSaysWhichNothingItFound(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "mutants")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("building the command: %v\n%s", err, out)
+	}
+
+	const addOnly = "package probe\n\n" +
+		"// Add is covered, and addition is not an operator this flips.\n" +
+		"func Add(a, b int) int { return a + b }\n"
+	const andALooseOne = "\n// Loose is never called, so its operator is never reached.\n" +
+		"func Loose(n int) bool { return n > 3 }\n"
+	const addTest = "package probe\n\nimport \"testing\"\n\n" +
+		"func TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 {\n\t\tt.Fatal(\"wrong\")\n\t}\n}\n"
+
+	for _, tt := range []struct {
+		what   string
+		source string
+		tests  string // empty writes no test file at all
+		want   string
+	}{
+		{
+			"covered, and holding nothing this flips", addOnly, addTest,
+			"nothing to mutate: that package is covered and holds no operator this flips",
+		},
+		{
+			"covered, with its one operator out of reach", addOnly + andALooseOne, addTest,
+			"nothing to mutate: that package is covered, but its one mutation is on " +
+				"a line no test reaches",
+		},
+		{
+			"nothing covered at all", addOnly + andALooseOne, "",
+			"nothing to mutate: no covered lines in that package",
+		},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			work := t.TempDir()
+			if err := os.Mkdir(filepath.Join(work, "pkg"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			files := map[string]string{
+				"go.mod":       "module probe\n\ngo 1.25\n",
+				"pkg/probe.go": tt.source,
+			}
+			if tt.tests != "" {
+				files["pkg/probe_test.go"] = tt.tests
+			}
+			for name, body := range files {
+				if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			run := exec.Command(bin, "./pkg")
+			run.Dir = work
+			// keepSurvivors writes beside os.TempDir(), and nothing here has
+			// survivors to keep -- but the run is pointed at a directory of
+			// its own anyway, so a change that starts writing one cannot land
+			// on a name a real sweep would also use.
+			run.Env = append(os.Environ(), "TMPDIR="+t.TempDir())
+			// APART, because this is a claim about what the command SAYS and
+			// the two streams carry different things: with no tools/mutants
+			// directory staged here the command correctly warns on stderr
+			// that it cannot write its record, and CombinedOutput folds that
+			// into the answer. Where the record goes is another test's claim.
+			var said, warned bytes.Buffer
+			run.Stdout, run.Stderr = &said, &warned
+			if err := run.Run(); err != nil {
+				t.Fatalf("running the command: %v\n%s\n%s", err, said.String(), warned.String())
+			}
+			// The whole line. "is covered" opens two of these three answers,
+			// so a fragment holds which sentence was chosen only by accident.
+			if got := strings.TrimSpace(said.String()); got != tt.want {
+				t.Errorf("the command says the wrong thing:\n want %q\n  got %q", tt.want, got)
 			}
 		})
 	}
