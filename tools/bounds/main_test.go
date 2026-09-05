@@ -474,7 +474,7 @@ func TestTheReportCountsWhatItFound(t *testing.T) {
 	// whether the name appears anywhere is answered by a report that gathers
 	// nothing -- which is how this assertion was written first, and it passed
 	// with the gathering deleted.
-	_, gathered, found := strings.Cut(said, "Nothing noticed these growing a thousandfold")
+	running, gathered, found := strings.Cut(said, "Nothing noticed these growing a thousandfold")
 	if !found {
 		t.Errorf("the report does not gather what nothing holds:\n%s", said)
 	} else if want := "pkg/probe.go:5  maxLoose = 4"; !strings.Contains(gathered, want) {
@@ -489,6 +489,27 @@ func TestTheReportCountsWhatItFound(t *testing.T) {
 		// the loose form was satisfied by both faults at once.
 		t.Errorf("the bound nothing holds is not listed as %q:\n%s", want, said)
 	}
+	// The line-by-line above that list is the only place a bound the tool is
+	// content with is ever named: the summary COUNTS it, the list below gathers
+	// only what nothing holds, and the one after that only what was killed.
+	// Measured against the whole gate: deleting that Printf SURVIVED, and so
+	// did dropping the verdict from it, so the report could count a bound it
+	// never said it had looked at.
+	//
+	// WHOLE lines, for 2a1b192's reason. "held" on its own is in the summary
+	// and "maxLoose = 4" on its own is in the list below, so either half is
+	// answered by something that is not this line. The HELD row is the control:
+	// without it a run that logged only the loose ones would pass here on the
+	// strength of the list it already prints.
+	for _, want := range []string{
+		"held             pkg/probe.go:3  maxHeld = 4",
+		"NOT HELD         pkg/probe.go:5  maxLoose = 4",
+	} {
+		if !strings.Contains(running, want) {
+			t.Errorf("the run does not say %q as it goes:\n%s", want, said)
+		}
+	}
+
 	// And the bound that is held is not in that list.
 	if found && strings.Contains(gathered, "maxHeld") {
 		t.Errorf("a bound with a test behind it was listed as loose:\n%s", said)
