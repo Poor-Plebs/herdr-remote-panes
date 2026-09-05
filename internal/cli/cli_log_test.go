@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/config"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/version"
 )
 
@@ -525,12 +527,36 @@ func TestTheDaemonsLogHoldsWhyItStoppedAsWellAsThatItStarted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A control socket that can be neither bound nor cleared away: a directory
-	// with something in it. The daemon then fails on the first thing Run does
-	// and returns, rather than blocking for the rest of the test.
-	socket := filepath.Join(dir, "control-probe.sock")
+	// Where the daemon will bind, ASKED OF THE CODE rather than worked out
+	// here. socketPathFor falls back to a short hashed path in the temp
+	// directory when the state directory would overrun the sockaddr, and this
+	// state directory sits right at that boundary: a fixture that blocks a
+	// path it built itself blocks nothing on every machine that takes the
+	// other branch -- macOS always, and a Linux runner whose temp directory
+	// runs a few characters longer. The daemon then starts, Run never
+	// returns, and this hangs until the whole package times out.
+	socket, err := syncd.ControlSocket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Neither bindable nor clearable: a directory with something in it. The
+	// daemon then fails on the first thing Run does and returns, rather than
+	// blocking for the rest of the test.
 	if err := os.MkdirAll(filepath.Join(socket, "keep"), 0o755); err != nil {
 		t.Fatal(err)
+	}
+	// Removed by hand because the fallback puts it OUTSIDE t.TempDir(), and a
+	// directory named hrp-*.sock in the temp directory is picked up by
+	// internal/project's check that no daemon left its socket behind -- the
+	// glob there does not care which it is.
+	t.Cleanup(func() { _ = os.RemoveAll(socket) })
+
+	// And say so if it ever stops being true, rather than hanging to find
+	// out: everything below assumes this path cannot be bound.
+	if listener, err := net.Listen("unix", socket); err == nil {
+		_ = listener.Close()
+		t.Fatalf("%s can still be bound, so this does not block what the daemon "+
+			"binds and Main below would never return", socket)
 	}
 
 	// A file rather than a pipe: all of it has to be readable afterwards, and
