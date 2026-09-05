@@ -799,11 +799,25 @@ func TestAMirrorThatCouldNotStartSaysSoWhereItCanBeRead(t *testing.T) {
 	}
 }
 
-// envStopWatch tells a child of the test below which half to run.
-const envStopWatch = "HRP_TEST_STOP_WATCH"
+// envStopWatch tells a child of the test below which half to run, and
+// envStopSignal which signal it sends itself.
+const (
+	envStopWatch  = "HRP_TEST_STOP_WATCH"
+	envStopSignal = "HRP_TEST_STOP_SIGNAL"
+)
+
+// stopSignals are the signals watchForStop registers, under the name a child
+// is given one by. Each is a pane ending, and each is a separate argument to
+// one call, which is why each needs asking about separately.
+var stopSignals = map[string]syscall.Signal{
+	"terminated": syscall.SIGTERM,
+	"hangup":     syscall.SIGHUP,
+	"interrupt":  syscall.SIGINT,
+}
 
 // TestAStopSignalEndsThisProcessAgainOnceTheWatchIsOver holds that watching
-// for a stop is undone when the watch ends.
+// for a stop is undone when the watch ends, and that each of the three signals
+// the watch registers is really registered.
 //
 // signal.Notify takes SIGTERM away from the runtime: while a channel is
 // registered the signal is delivered there instead of ending the process, and
@@ -819,42 +833,72 @@ const envStopWatch = "HRP_TEST_STOP_WATCH"
 // closed during a reconnect would then not close: the bridge would carry on
 // through the whole retry sequence, and the ssh underneath it with it.
 //
+// THREE SIGNALS AND ONE STATEMENT. `signal.Notify(signals, syscall.SIGTERM,
+// syscall.SIGHUP, syscall.SIGINT)` is a single line, so a deletion sweep only
+// ever offers the whole of it -- and with SIGTERM held the line read as
+// settled while two thirds of it was held by nothing. Measured against the
+// whole tree rather than this package: dropping SIGHUP survived, and so did
+// dropping SIGINT. What differs per signal is only whether it reaches the
+// channel at all; everything past that is the one goroutine, and its
+// forwarding to the ssh is held by TestClosingAPaneTakesTheSSHWithIt. So each
+// row below asks the one question that is per-signal -- did this process take
+// it, or did the runtime.
+//
 // It runs in a child because what passing looks like here is the process
-// dying.
+// dying, and because for the rows below it is what FAILING looks like. A
+// signal nothing has registered ends the test binary: measured, dropping
+// SIGTERM takes the package down inside whichever test was running and reports
+// "signal: terminated" against that one, naming no claim at all, while
+// dropping SIGHUP or SIGINT here fails the row it belongs to and nothing else.
 func TestAStopSignalEndsThisProcessAgainOnceTheWatchIsOver(t *testing.T) {
-	switch os.Getenv(envStopWatch) {
-	case "after the watch":
-		stop := watchForStop(nil)
-		stop()
-		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
-		time.Sleep(2 * time.Second)
-		fmt.Println("still here")
-		os.Exit(0)
-	case "during the watch":
-		stop := watchForStop(nil)
-		defer stop()
-		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
-		deadline := time.Now().Add(10 * time.Second)
-		for !stopped.Load() {
-			if time.Now().After(deadline) {
-				fmt.Println("nothing recorded it")
-				os.Exit(1)
-			}
-			time.Sleep(time.Millisecond)
+	if half := os.Getenv(envStopWatch); half != "" {
+		sig, named := stopSignals[os.Getenv(envStopSignal)]
+		if !named {
+			fmt.Printf("no signal named %q\n", os.Getenv(envStopSignal))
+			os.Exit(1)
 		}
-		fmt.Println("recorded")
-		os.Exit(0)
+		switch half {
+		case "after the watch":
+			stop := watchForStop(nil)
+			stop()
+			_ = syscall.Kill(os.Getpid(), sig)
+			time.Sleep(2 * time.Second)
+			fmt.Println("still here")
+			os.Exit(0)
+		case "during the watch":
+			stop := watchForStop(nil)
+			defer stop()
+			_ = syscall.Kill(os.Getpid(), sig)
+			deadline := time.Now().Add(10 * time.Second)
+			for !stopped.Load() {
+				if time.Now().After(deadline) {
+					fmt.Println("nothing recorded it")
+					os.Exit(1)
+				}
+				time.Sleep(time.Millisecond)
+			}
+			fmt.Println("recorded")
+			os.Exit(0)
+		default:
+			// Rather than falling through to the parent's own path, which
+			// would have this child run the whole table again and start a
+			// child of its own for every row of it.
+			fmt.Printf("no half named %q\n", half)
+			os.Exit(1)
+		}
 	}
 
 	tests := []struct {
 		name       string
 		half       string
+		signal     string
 		wantKilled bool
 		wantSaid   string
 	}{
 		{
 			name:       "the signal ends the process once the watch has gone",
 			half:       "after the watch",
+			signal:     "terminated",
 			wantKilled: true,
 		},
 		{
@@ -864,6 +908,21 @@ func TestAStopSignalEndsThisProcessAgainOnceTheWatchIsOver(t *testing.T) {
 			// own about the watch ever having been in place.
 			name:     "and it does not while the watch is up",
 			half:     "during the watch",
+			signal:   "terminated",
+			wantSaid: "recorded",
+		},
+		{
+			// A pane whose terminal goes away hangs this process up rather
+			// than terminating it, and that is a pane closing just as much.
+			name:     "nor does a hangup",
+			half:     "during the watch",
+			signal:   "hangup",
+			wantSaid: "recorded",
+		},
+		{
+			name:     "nor does an interrupt",
+			half:     "during the watch",
+			signal:   "interrupt",
 			wantSaid: "recorded",
 		},
 	}
@@ -872,23 +931,24 @@ func TestAStopSignalEndsThisProcessAgainOnceTheWatchIsOver(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			child := exec.Command(os.Args[0],
 				"-test.run=^TestAStopSignalEndsThisProcessAgainOnceTheWatchIsOver$")
-			child.Env = append(os.Environ(), envStopWatch+"="+tt.half)
+			child.Env = append(os.Environ(),
+				envStopWatch+"="+tt.half, envStopSignal+"="+tt.signal)
 			said, err := child.CombinedOutput()
 
 			killed := false
 			var died *exec.ExitError
 			if errors.As(err, &died) {
 				if status, ok := died.Sys().(syscall.WaitStatus); ok {
-					killed = status.Signaled() && status.Signal() == syscall.SIGTERM
+					killed = status.Signaled() && status.Signal() == stopSignals[tt.signal]
 				}
 			}
 			if killed != tt.wantKilled {
-				t.Fatalf("a child signalled %s: ended by SIGTERM = %v, want %v "+
-					"(exit %v, said %q)", tt.half, killed, tt.wantKilled, err, said)
+				t.Fatalf("a child sent %s %s: ended by that signal = %v, want %v "+
+					"(exit %v, said %q)", tt.signal, tt.half, killed, tt.wantKilled, err, said)
 			}
 			if tt.wantSaid != "" && !strings.Contains(string(said), tt.wantSaid) {
-				t.Fatalf("a child signalled %s said %q, want it to say %q (exit %v)",
-					tt.half, said, tt.wantSaid, err)
+				t.Fatalf("a child sent %s %s said %q, want it to say %q (exit %v)",
+					tt.signal, tt.half, said, tt.wantSaid, err)
 			}
 		})
 	}

@@ -80,6 +80,12 @@ var stopped atomic.Bool
 
 // watchForStop forwards a termination signal to the bridge and remembers that
 // the exit was asked for. The returned function stops watching.
+//
+// Three signals, and each is registered for the same reason: whatever ends
+// this pane arrives here rather than at the ssh underneath it. A signal the
+// runtime still owns ends this process where it stands -- the ssh is left
+// running, a session on the machine nobody can see, and nothing records that
+// the pane was closed deliberately rather than having dropped.
 func watchForStop(proc *os.Process) func() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
