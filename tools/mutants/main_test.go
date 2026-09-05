@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -1244,5 +1245,98 @@ func TestOutputIsOnlyMarkedCutWhenSomethingWasCut(t *testing.T) {
 			t.Errorf("%s: %d lines kept to %d reads as cut = %v, want %v:\n%s",
 				tt.what, tt.have, tt.keep, cut, tt.cut, got)
 		}
+	}
+}
+
+// TestTheSweepSaysWhichMutationSurvivedAndWhere holds what the command prints
+// for a survivor, by building it and running it over a fixture module.
+//
+// Every helper in this file has a test of its own -- pointAt, survivorClass,
+// keepSurvivors, staleTriage, survivorNote -- and main is the 174 lines that
+// assemble them. That is exactly the shape this tool's own package comment
+// says it hunts, and it is what 5725bfe found in tools/deletions: the loop in
+// main held by nothing, so the tally could be printed above an empty list.
+// Nothing here built the command, and the word SURVIVED appeared nowhere in
+// these tests.
+//
+// The block below is the tool's whole per-item product: the ADDRESS somebody
+// opens, the mutation that was made, and the caret under the operator it was
+// made to. pointAt is held next door by TestTheCaretLandsOnTheOperatorThatChanged;
+// what was held by nothing is that main CALLS it, and that the address beside
+// it is the mutation's own file, line and column -- which is the half 2a1b192
+// found wrong in the sibling tool, where every bound with a blank line over it
+// was reported one line early.
+func TestTheSweepSaysWhichMutationSurvivedAndWhere(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "mutants")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("building the command: %v\n%s", err, out)
+	}
+
+	// Two identical lines, one pinned by its test both ways and one merely
+	// called. The pair is the control: a run that reported every mutation as a
+	// survivor would satisfy the block below and fail the last check.
+	work := t.TempDir()
+	if err := os.Mkdir(filepath.Join(work, "pkg"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := "package probe\n\n" +
+		"// Held is pinned by its test both ways.\n" +
+		"func Held(n int) bool { return n > 3 }\n\n" +
+		"// Loose is called by its test and nothing is asserted about it.\n" +
+		"func Loose(n int) bool { return n > 3 }\n"
+	for name, body := range map[string]string{
+		"go.mod":       "module probe\n\ngo 1.25\n",
+		"pkg/probe.go": source,
+		"pkg/probe_test.go": "package probe\n\nimport \"testing\"\n\n" +
+			"func TestHeld(t *testing.T) {\n\tif !Held(4) || Held(3) {\n\t\tt.Fatal(\"wrong\")\n\t}\n}\n\n" +
+			"func TestLoose(t *testing.T) {\n\t_ = Loose(4)\n}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run := exec.Command(bin, "./pkg")
+	run.Dir = work
+	// keepSurvivors writes beside os.TempDir(), so the run is pointed at a
+	// directory of its own: without this it writes /tmp/mutants-pkg.txt, which
+	// is a name a real sweep of a package called pkg would also use.
+	kept := t.TempDir()
+	run.Env = append(os.Environ(), "TMPDIR="+kept)
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("running the command: %v\n%s", err, out)
+	}
+	said := string(out)
+
+	// WHOLE, not a fragment of each line: the address alone appears in the file
+	// keepSurvivors writes too, and "SURVIVED" alone says nothing about where.
+	want := "SURVIVED  pkg/probe.go:7:35  > -> >=\n" +
+		"            func Loose(n int) bool { return n > 3 }\n" +
+		"                                              ^"
+	if !strings.Contains(said, want) {
+		t.Errorf("the sweep does not say where the survivor is:\nwant:\n%s\ngot:\n%s", want, said)
+	}
+	if !strings.Contains(said, "2 mutations: 1 caught, 1 survived, 0 would not build") {
+		t.Errorf("the summary does not count what it found:\n%s", said)
+	}
+	// The control. Held is on line 4 and was caught, so nothing about line 4
+	// belongs in a report of what survived.
+	if strings.Contains(said, "probe.go:4") {
+		t.Errorf("a mutation its test caught was reported anyway:\n%s", said)
+	}
+	// The tree it swept is the tree it left. main copies the tree first, and
+	// its comment says why: an interrupted run must not leave a mutation in
+	// the tree it was started from. Falsifying this needs BOTH halves gone --
+	// pointing try at the given tree still restores the file on its way out,
+	// and dropping that restore still only touches the copy -- so the
+	// mutation that models the hazard removes the copy and the restore
+	// together, and then this is the assertion that names the damage.
+	raw, err := os.ReadFile(filepath.Join(work, "pkg", "probe.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != source {
+		t.Errorf("the swept tree was left mutated:\n%s", raw)
 	}
 }
