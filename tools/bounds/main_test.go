@@ -469,8 +469,17 @@ func TestTheReportCountsWhatItFound(t *testing.T) {
 	_, gathered, found := strings.Cut(said, "Nothing noticed these growing a thousandfold")
 	if !found {
 		t.Errorf("the report does not gather what nothing holds:\n%s", said)
-	} else if !strings.Contains(gathered, "maxLoose") {
-		t.Errorf("the bound nothing holds is not named in that list:\n%s", said)
+	} else if want := "pkg/probe.go:5  maxLoose = 4"; !strings.Contains(gathered, want) {
+		// WHOLE, not Contains("maxLoose"), because both halves of this line
+		// were held by nothing and each was wrong in its own way. The ADDRESS
+		// is what somebody does something with -- the paragraph above it says
+		// to read each one and decide -- and maxLoose is on line 5 of the
+		// fixture while the report said 4, because the scanner's leading `\s*`
+		// began the match on the blank line above. The NAME is what they grep
+		// for, and without the "const " trimmed off it reads as part of it.
+		// "maxLoose" is contained by "const maxLoose" on any line at all, so
+		// the loose form was satisfied by both faults at once.
+		t.Errorf("the bound nothing holds is not listed as %q:\n%s", want, said)
 	}
 	// And the bound that is held is not in that list.
 	if found && strings.Contains(gathered, "maxHeld") {

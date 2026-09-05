@@ -47,7 +47,19 @@ import (
 // that carried one, so it walked past `const Max` in capped -- the tree's one
 // exported bound, and an unheld one -- and past a function-local `const max`
 // in herdrcli. A bound the scanner does not see reports as nothing at all.
-var bound = regexp.MustCompile(`(?m)^(\s*(?:const )?[Mm]ax[A-Za-z]*\s*=\s*)([^/\n]+?)(\s*(?://.*)?)$`)
+//
+// The LEADING class is `[ \t]` and not `\s`, which is what makes the reported
+// line the line the bound is on. `\s` matches a newline, so with `(?m)` the
+// match could begin at the empty line ABOVE the declaration and swallow it --
+// and the line is counted from where the match begins, so every bound with a
+// blank line over it was named one line early. Nothing in this tree shows it,
+// because every bound here has its doc comment directly above; the fixtures
+// have the blank line, and asserting on it is what found this.
+//
+// Only the leading one narrows. The `\s*` around the `=` still matches a
+// newline on purpose: a constant split across two lines is unusual and still a
+// bound, and one the scanner does not see reports as nothing at all.
+var bound = regexp.MustCompile(`(?m)^([ \t]*(?:const )?[Mm]ax[A-Za-z]*\s*=\s*)([^/\n]+?)(\s*(?://.*)?)$`)
 
 // raise is how much bigger the bound is made. Large enough that no realistic
 // input is bounded by it any more, so a test that still passes is a test that
