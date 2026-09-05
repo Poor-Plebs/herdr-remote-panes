@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/version"
 	"io"
 	"net"
 	"os"
@@ -1652,5 +1653,119 @@ func TestTheMenuTellsNoDaemonApartFromOneThatDidNotAnswer(t *testing.T) {
 	}
 	if !strings.Contains(elsewhere, "through Herdr") {
 		t.Errorf("the way to ask the question at all is not given: %q", elsewhere)
+	}
+}
+
+// TestTheMenuSaysWhenTheDaemonIsNotTheInstalledBuild holds the decision half of
+// the stale-daemon warning: that the menu asks the daemon which build it is
+// running and says so when that is not the one on disk.
+//
+// It hands the installed build in for the reason statusFor's comment gives.
+// version.Short answers "unknown" inside a test binary and "unknown" is the one
+// input that silences StaleMessageFor whatever the daemon reported, so the
+// decision was unfalsifiable by construction: dropping it left the whole gate
+// green, and so did passing no revision at all.
+//
+// The wording belongs to internal/version and is held there. What this holds is
+// that the daemon's revision and the installed build both reach it, which is
+// why it compares against what StaleMessageFor renders rather than against a
+// sentence written out again here -- and asserts that rendering is not itself
+// empty first, or a version that said nothing would agree with a menu that said
+// nothing and the row would hold neither.
+func TestTheMenuSaysWhenTheDaemonIsNotTheInstalledBuild(t *testing.T) {
+	for _, row := range []struct {
+		name      string
+		running   string
+		installed string
+		quiet     bool
+	}{
+		{"a daemon left over from before the update", "9fcc667", "abc1234", false},
+		{"a daemon that names no build at all", "", "abc1234", false},
+		// The control. Without a row where the two builds agree, a menu that
+		// warned whatever the daemon answered would pass both rows above.
+		{"a daemon running the installed build", "abc1234", "abc1234", true},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			answerWith(t, syncd.Reply{OK: true, Revision: row.running, Hosts: []syncd.HostInfo{
+				{Target: "bot", Connected: true},
+			}})
+
+			hosts, warning := statusFor(row.installed)
+			if len(hosts) != 1 || hosts[0].Target != "bot" {
+				t.Fatalf("the machines the daemon reported did not come through: %+v", hosts)
+			}
+			if row.quiet {
+				if warning != "" {
+					t.Errorf("warned about a daemon already running the installed build: %q", warning)
+				}
+				return
+			}
+			want := version.StaleMessageFor(row.running, row.installed)
+			if want == "" {
+				t.Fatalf("the fixture asks for no warning at all: running %q, installed %q",
+					row.running, row.installed)
+			}
+			if warning != want {
+				t.Errorf("the menu says %q, version says %q", warning, want)
+			}
+		})
+	}
+}
+
+// TestAStaleDaemonWarningJoinsTheOtherOneRatherThanReplacingIt holds the
+// delivery half of the same claim, which was a survivor of its own: the line in
+// collect that puts the stale warning on the menu's warning line could be
+// deleted with the gate green, for the same reason -- nothing could make the
+// stale half non-empty.
+//
+// Both warnings at once is the case that matters, because the menu has one line
+// for them and bothWarnings' own comment says it was never exercised. A build
+// that put the stale warning there by overwriting what was already on the line
+// is caught by every other warning test; a build that never put it there at all
+// was caught by nothing.
+func TestAStaleDaemonWarningJoinsTheOtherOneRatherThanReplacingIt(t *testing.T) {
+	for _, row := range []struct {
+		name      string
+		installed string
+		stale     bool
+	}{
+		{"an update on disk that is not running", "abc1234", true},
+		// The control: the same fixture with nothing to say about the build.
+		// Without it, a menu that appended something whatever the daemon
+		// answered would pass the row above.
+		{"the daemon already running the installed build", "9fcc667", false},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			answerWith(t, syncd.Reply{OK: true, Revision: "9fcc667"})
+			t.Setenv("HOME", t.TempDir())
+			dir := t.TempDir()
+			t.Setenv("HERDR_PLUGIN_CONFIG_DIR", dir)
+			if err := os.WriteFile(filepath.Join(dir, "config.json"),
+				[]byte("{\n  \"max_mirrors\": \"lots\"\n}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			_, warning := collectFor(row.installed)
+			if !strings.Contains(warning, "max_mirrors") {
+				t.Fatalf("the config complaint is not on the line at all: %q", warning)
+			}
+
+			stale := version.StaleMessageFor("9fcc667", row.installed)
+			if row.stale {
+				if stale == "" {
+					t.Fatal("the fixture asks for no stale warning at all")
+				}
+				if !strings.Contains(warning, stale) {
+					t.Errorf("the menu never says the daemon is not the installed build.\nline: %q\nwant it to carry: %q", warning, stale)
+				}
+				return
+			}
+			if stale != "" {
+				t.Fatalf("the control fixture has something to say after all: %q", stale)
+			}
+			if strings.Contains(warning, "installed") {
+				t.Errorf("warned about the build with nothing to warn about: %q", warning)
+			}
+		})
 	}
 }

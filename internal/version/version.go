@@ -73,22 +73,21 @@ func shortRevision(recorded string, modified bool) string {
 	return recorded
 }
 
-// StaleMessage describes a daemon running a different build from the installed
-// one, or "" when there is nothing worth saying.
+// StaleMessageFor describes a daemon running a different build from the
+// installed one, or "" when there is nothing worth saying.
 //
 // Installing an update replaces the files but leaves the running daemon alone,
 // so its fixes do nothing until Herdr restarts. A binary built outside a
 // checkout has no revision to compare and stays quiet rather than warning every
 // time and teaching people to ignore it.
-func StaleMessage(running string) string {
-	return StaleMessageFor(running, Short())
-}
-
-// StaleMessageFor is StaleMessage with the installed build handed to it, since
-// Short cannot be anything but "unknown" in a test binary -- which is the one
-// answer that makes this say nothing at all. Exported because the caller that
-// decides whether to say anything has the same problem: with Short answering
-// "unknown" underneath it, the decision reads as correct whether it is or not.
+//
+// The installed build is handed in, and there is deliberately no longer a
+// convenience form that reads Short here instead. Short cannot be anything but
+// "unknown" inside a test binary and "unknown" is the one input that silences
+// this whatever the daemon reported, so a caller deciding on the wrapper's
+// answer was unfalsifiable by construction -- and both callers that used one
+// turned out to be holding nothing, cli's status in 1593be8 and the menu after
+// it. Callers ask Short one step further out, where a test can hand a build in.
 func StaleMessageFor(running, installed string) string {
 	if installed == "" || installed == "unknown" || running == installed {
 		return ""

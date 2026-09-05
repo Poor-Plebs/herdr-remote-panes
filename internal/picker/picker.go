@@ -398,6 +398,14 @@ func configFault(err error) string {
 // collect merges the machines from the SSH config with those in the plugin
 // config, and marks which are already connected.
 func collect() ([]Entry, string) {
+	return collectFor(version.Short())
+}
+
+// collectFor is collect with the installed build handed through to statusFor,
+// for the reason written there. It is the delivery half of the same claim: the
+// decision that there is something to say is one thing, and the stale warning
+// reaching the line the menu draws is another, and both were held by nothing.
+func collectFor(installed string) ([]Entry, string) {
 	// A config that cannot be read would otherwise drop every machine that is
 	// only listed there, leaving the menu quietly incomplete.
 	warning := ""
@@ -484,7 +492,7 @@ func collect() ([]Entry, string) {
 		warning = bothWarnings(warning, "could not read "+sshconfig.Path()+": "+why)
 	}
 
-	hosts, stale := status()
+	hosts, stale := statusFor(installed)
 	// Worth saying where machines are picked: an update that has not taken
 	// effect looks exactly like a fix that did not work.
 	warning = bothWarnings(warning, stale)
@@ -596,6 +604,18 @@ func daemonTrouble(err error) string {
 // status reports the machines the daemon is tracking, and anything about the
 // daemon itself worth putting in front of someone opening the menu.
 func status() ([]syncd.HostInfo, string) {
+	return statusFor(version.Short())
+}
+
+// statusFor is status with the installed build handed to it, which is the only
+// way anything here can be held. Short answers "unknown" inside a test binary
+// and "unknown" is the one input that silences StaleMessageFor whatever the
+// daemon reported -- so with Short read underneath it, the stale warning read
+// as correct whether it was or not. It was not: it could be dropped entirely
+// with the whole gate green, and so could the line in collect that puts it on
+// the warning line. StaleMessageFor's own comment asks for exactly this, and
+// cli's reportStatus was given the same shape for the same reason.
+func statusFor(installed string) ([]syncd.HostInfo, string) {
 	reply, err := syncd.Ask(syncd.Command{Cmd: "status"})
 	if err != nil {
 		// Said here rather than left to be discovered by pressing enter. With
@@ -618,7 +638,7 @@ func status() ([]syncd.HostInfo, string) {
 	//
 	// It is not dead weight in the reply: `status` runs as its own process and
 	// prints it there, which is where the full list of problems goes.
-	return reply.Hosts, version.StaleMessage(reply.Revision)
+	return reply.Hosts, version.StaleMessageFor(reply.Revision, installed)
 }
 
 const (
