@@ -95,6 +95,14 @@ func TestTheScannerSeesEveryBoundThatIsOne(t *testing.T) {
 		{"unexported with a suffix", "const maxRetryLines = 4", "4"},
 		{"inside a const block, aligned", "\tmaxSaid      = 4 << 10", "4 << 10"},
 		{"a bound taken from another package", "const maxFrameBytes = capped.Max", "capped.Max"},
+		// A `/` in the value used to hide the whole declaration, because the
+		// value excluded it as well as newlines. Nothing in this tree divides
+		// today, which is why it went unnoticed; a bound derived from another
+		// is an ordinary thing to write.
+		{"a bound expressed as a division", "const maxHalf = maxWhole / 2", "maxWhole / 2"},
+		// And the control for that widening: the value is non-greedy and the
+		// group after it takes the comment, so stopping at ` //` is what a
+		// wider value must not cost. Greedy, this row reads "5 // why five".
 		{"a trailing comment is not the value", "const maxFoo = 5 // why five", "5"},
 
 		// Not bounds: a field and a literal key are neither declarations nor

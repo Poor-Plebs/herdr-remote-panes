@@ -59,7 +59,22 @@ import (
 // Only the leading one narrows. The `\s*` around the `=` still matches a
 // newline on purpose: a constant split across two lines is unusual and still a
 // bound, and one the scanner does not see reports as nothing at all.
-var bound = regexp.MustCompile(`(?m)^([ \t]*(?:const )?[Mm]ax[A-Za-z]*\s*=\s*)([^/\n]+?)(\s*(?://.*)?)$`)
+//
+// The VALUE excludes only newlines, not `/`. It used to exclude both, which
+// read as the way to stop it swallowing a trailing `// comment` -- and the
+// non-greedy repeat is what actually does that, since the group after it
+// takes the comment and `$` anchors the pair. Excluding `/` bought nothing
+// there and hid a whole shape: a bound expressed as a division, like
+// `maxHalf = maxWhole / 2`, matched nothing at all. Measured across internal/
+// when it widened: 29 bounds before and after, every line, value and raised
+// source byte-identical.
+//
+// The honest limit, since it is the same silence one step along: a `//` INSIDE
+// a string still splits the value early, so `const maxURL = "http://x"` is read
+// as `"http:`. That raise will not compile, and the run then counts it as
+// "would not build" -- which is a non-answer somebody is TOLD about, where the
+// old behaviour was to leave it out of the report entirely.
+var bound = regexp.MustCompile(`(?m)^([ \t]*(?:const )?[Mm]ax[A-Za-z]*\s*=\s*)([^\n]+?)(\s*(?://.*)?)$`)
 
 // raise is how much bigger the bound is made. Large enough that no realistic
 // input is bounded by it any more, so a test that still passes is a test that
