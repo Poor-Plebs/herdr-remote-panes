@@ -318,3 +318,87 @@ func TestPagesAreSeparatedEvenWhenOneDoesNotEndInANewline(t *testing.T) {
 		t.Errorf("one page's last line ran into the next page's heading:\n%q", text)
 	}
 }
+
+// TestDocumentationThatIsAllPlanSaysSoRatherThanComingBackEmpty holds the guard
+// that stops DocsText answering with nothing at all.
+//
+// It changes nothing today, which is what makes it worth writing down rather
+// than leaving -- the same reason the join above it is held. README.md is not a
+// plan, so what DocsText gathers is never empty here, and neutralising the
+// guard survives the whole tree.
+//
+// What it defends is the shape this repository keeps finding: something that
+// examined nothing passes by having looked at nothing. Nine files ask Contains
+// of what DocsText returns, and some of them ask whether a phrase is ABSENT --
+// TestAPlanIsNotDocumentationOfWhatThisDoes checks that "takeover war" reaches
+// the documentation from nowhere. Against ("", nil) that is satisfied by there
+// being no documentation for it to be in, which is a pass that says nothing at
+// all. The callers asking the other way fare no better: they report a phrase as
+// undocumented when the truth is that nothing was read.
+//
+// Against a repository of its own, since the point is a README this one does
+// not have.
+func TestDocumentationThatIsAllPlanSaysSoRatherThanComingBackEmpty(t *testing.T) {
+	const plan = "# Pairing\n\nStatus: **planned, nothing built.**\n"
+	const built = "# When something looks wrong\n\nnot much\n"
+
+	// The fixture says what it is before anything rests on it: a marker that
+	// stopped matching would make every case below a test of nothing.
+	if !Planned([]byte(plan)) {
+		t.Fatal("the fixture's plan is not read as one, so nothing here is skipped")
+	}
+	if Planned([]byte(built)) {
+		t.Fatal("the fixture's ordinary page is read as a plan, so nothing is left")
+	}
+
+	for _, tt := range []struct {
+		what      string
+		readme    string
+		page      string
+		wantError bool
+	}{
+		{"every page is a plan", plan, plan, true},
+		// The control, and it is what says the guard fires for having nothing
+		// rather than for finding a plan: one page here is skipped and the
+		// other is not, and that must come back as documentation.
+		{"one page is a plan and one is not", plan, built, false},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dir, "docs"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for name, body := range map[string]string{
+				"go.mod":                  "module probe\n\ngo 1.25\n",
+				"README.md":               tt.readme,
+				"docs/troubleshooting.md": tt.page,
+			} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Chdir(dir)
+
+			text, err := DocsText()
+			if tt.wantError {
+				// The ERROR is the whole of it. Coming back empty with nothing
+				// wrong is what makes an absence somebody asked about look
+				// answered.
+				if err == nil {
+					t.Errorf("documentation that is all plan came back with no error "+
+						"and %q, which every Contains asked of it is satisfied by", text)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a page that is not a plan was read as nothing at all: %v", err)
+			}
+			if !strings.Contains(text, "When something looks wrong") {
+				t.Errorf("the page that is not a plan is missing:\n%q", text)
+			}
+			if strings.Contains(text, "Pairing") {
+				t.Errorf("the page that is a plan was not skipped:\n%q", text)
+			}
+		})
+	}
+}
