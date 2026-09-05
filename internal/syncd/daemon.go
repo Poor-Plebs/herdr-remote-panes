@@ -575,6 +575,24 @@ func (d *Daemon) Run() error {
 	if err != nil {
 		return err
 	}
+	// Before anything else, and before saying we are up: from the moment
+	// listenControl binds until this runs, a termination signal takes the
+	// default disposition and kills the process where it stands, leaving the
+	// socket it just bound behind -- which is the whole of what this registration
+	// exists to prevent. That window used to span logConfig, the accept
+	// goroutine and restoreConnections, and the last of those reconnects
+	// machines over ssh, so it was seconds wide rather than theoretical.
+	// Herdr stops a plugin's STARTUP process with a signal, so it is exactly
+	// the window a signal arrives in.
+	//
+	// Not earlier than the bind, though: listenControl waits out a daemon it
+	// is replacing, and during that wait nothing of ours is bound, so dying at
+	// once is right and leaves nothing behind. The channel holds one, so a
+	// signal that arrives before the loop below starts is kept and read there.
+	stopping := make(chan os.Signal, 1)
+	signal.Notify(stopping, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(stopping)
+
 	// Where, and that it got that far. A healthy daemon says nothing else for
 	// the rest of its life, so without this a log holding "starting" and
 	// nothing after it read the same whether the socket was bound or the
@@ -602,16 +620,6 @@ func (d *Daemon) Run() error {
 	go d.serveControl(listener)
 
 	d.restoreConnections()
-
-	// Herdr stops a plugin's startup process with a signal, and the default
-	// action is to die on the spot: the deferred cleanup above never ran, so
-	// the control socket was left behind on every shutdown. When the state
-	// directory is deep enough that the socket lives in the temp directory
-	// instead, nothing tidies it afterwards either, because the path it was
-	// derived from has gone.
-	stopping := make(chan os.Signal, 1)
-	signal.Notify(stopping, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(stopping)
 
 	ticker := time.NewTicker(d.config().Interval())
 	defer ticker.Stop()

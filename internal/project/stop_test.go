@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -43,11 +44,39 @@ func TestADaemonAskedToStopTakesItsSocketWithIt(t *testing.T) {
 		t.Fatalf("building: %v\n%s", err, out)
 	}
 
-	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
-		t.Run(sig.String(), func(t *testing.T) {
+	for _, tt := range []struct {
+		what      string
+		sig       syscall.Signal
+		stillBusy bool // a machine to reach, and an ssh that takes its time
+	}{
+		{"interrupt", syscall.SIGINT, false},
+		{"terminated", syscall.SIGTERM, false},
+		{"interrupt while still starting", syscall.SIGINT, true},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			sig := tt.sig
+			config := t.TempDir()
 			t.Setenv("HERDR_PLUGIN_STATE_DIR", filepath.Join(t.TempDir(), "state"))
-			t.Setenv("HERDR_PLUGIN_CONFIG_DIR", t.TempDir())
+			t.Setenv("HERDR_PLUGIN_CONFIG_DIR", config)
 			t.Setenv("HERDR_SESSION", "stopping")
+
+			// The third row keeps the daemon inside the window the ordering
+			// is about. restoreConnections reaches every configured machine
+			// before the loop starts, so one machine and an ssh that sleeps
+			// holds it there -- and the margin runs the safe way round, since
+			// load keeps it there longer rather than less long.
+			if tt.stillBusy {
+				if err := os.WriteFile(filepath.Join(config, "config.json"),
+					[]byte(`{"hosts":[{"target":"slowbox"}]}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				bin := t.TempDir()
+				if err := os.WriteFile(filepath.Join(bin, "ssh"),
+					[]byte("#!/bin/sh\nsleep 1\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			}
 
 			// Where it will bind, ASKED of the code rather than worked out
 			// here: socketPathFor has two branches, and which one this state
@@ -67,23 +96,32 @@ func TestADaemonAskedToStopTakesItsSocketWithIt(t *testing.T) {
 			done := exits(daemon)
 			defer func() { _ = daemon.Process.Kill() }()
 
-			// The control, and the synchronisation in one: the socket has to
-			// be TAKEN before its absence afterwards means anything. A build
-			// that never bound would otherwise pass the check below by having
-			// nothing to leave behind.
-			taken := false
+			// Wait for the line the daemon writes once it is up, NOT for the
+			// socket to appear. Run installs the signal handler between
+			// binding and saying this, so "listening on" is the first moment
+			// a signal is certain to be handled rather than fatal; the socket
+			// exists a moment earlier, and signalling then raced the
+			// registration -- which is how this test failed CI on the slowest
+			// runner while passing everywhere else.
+			up := false
 			for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
-				if _, err := os.Stat(socket); err == nil {
-					taken = true
+				if strings.Contains(said.String(), "listening on") {
+					up = true
 					break
 				}
 				if gone(done) {
-					t.Fatalf("the daemon stopped before it bound anything:\n%s", said)
+					t.Fatalf("the daemon stopped before it was listening:\n%s", said)
 				}
 				time.Sleep(10 * time.Millisecond)
 			}
-			if !taken {
-				t.Fatalf("the daemon never bound %s:\n%s", socket, said)
+			if !up {
+				t.Fatalf("the daemon never said it was listening:\n%s", said)
+			}
+			// The control: the socket has to be TAKEN before its absence
+			// afterwards means anything, or a build that never bound passes
+			// the check below by having nothing to leave behind.
+			if _, err := os.Stat(socket); err != nil {
+				t.Fatalf("the daemon is listening and %s is not there: %v", socket, err)
 			}
 
 			if err := daemon.Process.Signal(sig); err != nil {
