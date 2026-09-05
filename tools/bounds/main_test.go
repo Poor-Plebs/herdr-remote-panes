@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/exec"
@@ -769,5 +770,72 @@ func TestARestoreThatCannotBeMadeSaysWhichFileIsStillRaised(t *testing.T) {
 	}
 	if !strings.Contains(string(still), "* 1000") {
 		t.Errorf("the file was put back after all, so nothing failed:\n%s", still)
+	}
+}
+
+// TestASweepThatCouldNotReadTheTreeSaysSoAndDoesNotLookClean holds what the
+// command does when the walk itself fails.
+//
+// The failure is the ordinary one: a root that names nothing -- a mistyped
+// argument, or a package that has since been renamed or moved. filepath.Walk
+// hands the lstat error to the walk function, which returns it, so Walk
+// returns it and main has an error to answer for.
+//
+// THE SHAPE OF THE HOLE IS THE POINT. With that guard removed the command
+// prints "0 held, 0 not, 0 would not build, 0 no answer" and exits nought
+// with nothing on stderr -- measured, and it is EXACTLY what a tree that
+// genuinely has no bounds looks like. A sweep that read nothing would be
+// indistinguishable from a sweep that found nothing, and every
+// deletion-sweep and bounds number this repository records was read off
+// output of this shape.
+//
+// Three claims, each failing on its own: dropping the exit leaves nought,
+// dropping the Fprintln leaves stderr empty, and removing the guard entirely
+// prints a tally for a tree it never opened. The other side -- that a root it
+// CAN read exits nought -- is already held next door by
+// TestTheReportCountsWhatItFound, which fails if the run returns an error.
+func TestASweepThatCouldNotReadTheTreeSaysSoAndDoesNotLookClean(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "bounds")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("building the command: %v\n%s", err, out)
+	}
+
+	// Run it somewhere the named directory certainly is not, and say so before
+	// relying on it: the whole test rests on that walk failing.
+	work := t.TempDir()
+	if _, err := os.Stat(filepath.Join(work, "nosuchdir")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the directory this test needs to be missing is not: %v", err)
+	}
+
+	run := exec.Command(bin, "nosuchdir")
+	run.Dir = work
+	// Apart, not combined: the tally and the complaint are separate claims and
+	// the whole defect is one appearing where the other should.
+	var out, said bytes.Buffer
+	run.Stdout, run.Stderr = &out, &said
+	err := run.Run()
+
+	// Read rather than asserted on, so that a run which exits nought reaches
+	// the two assertions below instead of stopping at this one.
+	code := 0
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		code = exit.ExitCode()
+	} else if err != nil {
+		t.Fatalf("running the command: %v", err)
+	}
+
+	if code != 2 {
+		t.Errorf("a sweep of a tree that is not there exited %d; 2 is the code "+
+			"for could not ask, and nought reads as a clean run", code)
+	}
+	if !strings.Contains(said.String(), "nosuchdir") {
+		t.Errorf("nothing said which tree could not be read:\n%s", said.String())
+	}
+	// The half that matters most. A tally of zeroes is what an empty tree
+	// prints, so printing one here is the tool answering a question it never
+	// asked.
+	if strings.Contains(out.String(), "held") {
+		t.Errorf("it counted what it never read:\n%s", out.String())
 	}
 }
