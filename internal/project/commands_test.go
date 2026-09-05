@@ -54,6 +54,7 @@ func TestEveryCommandTheDocsGiveStillWorks(t *testing.T) {
 	runs := regexp.MustCompile(`-run ([A-Za-z][A-Za-z0-9_]*)`)
 	fuzzes := regexp.MustCompile(`-fuzz ([A-Za-z][A-Za-z0-9_]*)`)
 	targets := regexp.MustCompile(`(?m)^\s*make ([a-z-]+)`)
+	quoted := regexp.MustCompile("`make ([a-z-]+)[^`]*`")
 	optIns := regexp.MustCompile(`\b(HRP_[A-Z0-9_]+)=`)
 	packages := regexp.MustCompile(`\./[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*/`)
 
@@ -77,7 +78,7 @@ func TestEveryCommandTheDocsGiveStillWorks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	checked, optional := 0, 0
+	checked, optional, targeted := 0, 0, 0
 	for _, page := range docs {
 		raw, err := os.ReadFile(page)
 		if err != nil {
@@ -108,11 +109,29 @@ func TestEveryCommandTheDocsGiveStillWorks(t *testing.T) {
 			}
 		}
 
-		for _, m := range targets.FindAllStringSubmatch(text, -1) {
+		// Both the commands a page sets out on a line of its own and the ones it
+		// names mid-sentence. NEITHER PATTERN IS THE OTHER'S SUPERSET, which is
+		// why both are read: of the five targets the pages give, `make bounds`
+		// is only ever described in a paragraph and `make mutants` only ever
+		// shown in a code block, so each pattern alone sees four. Renaming
+		// bounds in the Makefile SURVIVED the whole gate while renaming herdr,
+		// beside it in the same block, was caught.
+		//
+		// Backticks are what tell a command from ordinary English here, the same
+		// rule tools/herdrcheck reads messages by. Matching `make (\w+)`
+		// anywhere on a line instead would report "no input can make them" and
+		// "machine can make this write", both of which are in these pages.
+		named := map[string]bool{}
+		for _, m := range append(targets.FindAllStringSubmatch(text, -1),
+			quoted.FindAllStringSubmatch(text, -1)...) {
+			named[m[1]] = true
+		}
+		for target := range named {
 			checked++
-			if !strings.Contains(string(makefile), "\n"+m[1]+":") {
+			targeted++
+			if !strings.Contains(string(makefile), "\n"+target+":") {
 				t.Errorf("%s tells somebody to run `make %s`, which the Makefile "+
-					"does not have", page, m[1])
+					"does not have", page, target)
 			}
 		}
 
@@ -168,5 +187,9 @@ func TestEveryCommandTheDocsGiveStillWorks(t *testing.T) {
 	if optional < 3 {
 		t.Fatalf("found %d opt-in variables in the documentation, which is fewer "+
 			"than there are -- the pattern has stopped matching", optional)
+	}
+	if targeted < 5 {
+		t.Fatalf("found %d make targets in the documentation, which is fewer than "+
+			"there are; the prose ones are the easy half to stop matching", targeted)
 	}
 }
