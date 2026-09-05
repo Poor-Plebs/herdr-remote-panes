@@ -1486,9 +1486,13 @@ func TestWhichSessionOnTheMachineIsShared(t *testing.T) {
 		name    string
 		session string
 		want    string
+		// wantPane is what the pane bridging a terminal is told, which is the
+		// resolved session and not the setting: a machine's own default session
+		// is addressed by naming none.
+		wantPane string
 	}{
-		{"the machine's own default", "default", ""},
-		{"a session of its own", "remote-work", "HERDR_SESSION=remote-work"},
+		{"the machine's own default", "default", "", ""},
+		{"a session of its own", "remote-work", "HERDR_SESSION=remote-work", "remote-work"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			here := withFakeHerdr(t)
@@ -1536,8 +1540,19 @@ func TestWhichSessionOnTheMachineIsShared(t *testing.T) {
 
 			// And the pane that bridges a terminal is told the same, or it
 			// would attach to a different session than the one being listed.
-			if got := len(here().Panes); got != 1 {
-				t.Fatalf("%d panes here, want 1", got)
+			//
+			// Counting the panes was all this did, and a pane is opened
+			// whatever it is told: the terminal id handed to it means nothing
+			// outside the session it was listed in, so a pane told the wrong
+			// session -- or told none, which is the machine's own -- looks for
+			// a terminal that is not there. The count is kept as the guard
+			// that there is something to have been told.
+			mirrors := mirrorsHere(here(), "bot")
+			if len(mirrors) != 1 {
+				t.Fatalf("%d panes here, want 1", len(mirrors))
+			}
+			if got := envOf(mirrors[0])["HRP_SESSION"]; got != tt.wantPane {
+				t.Errorf("the pane was told to work in session %q, want %q", got, tt.wantPane)
 			}
 		})
 	}
@@ -2163,6 +2178,49 @@ func TestAMirrorIsToldWhichTerminalOnWhichMachineInWhichMode(t *testing.T) {
 	}
 	if got := env["HRP_NAME"]; !strings.HasSuffix(got, "@bot") {
 		t.Errorf("the pane was named %q, which does not say which machine it is on", got)
+	}
+}
+
+func TestAPlainTerminalIsToldWhichMachineAndThatItIsNotMirroring(t *testing.T) {
+	// The sibling of the test above, for the mode that is the default and so
+	// the one most people are running. A plain SSH terminal is told three
+	// things, and until now nothing looked at any of them: the test above
+	// covers the pane that mirrors, and the pane that does not was left out.
+	//
+	// The mode is the one that decides what the pane does at all. An empty
+	// HRP_MODE is not "ssh", so the bridge does not take the plain-SSH path;
+	// it goes on to look for which terminal on the machine to mirror, which a
+	// plain terminal is never given, and refuses with a sentence about being
+	// restored without its settings. Every terminal on the default setting
+	// would open, say that, and close.
+	//
+	// The two tests are each other's control: this one wants ssh and the one
+	// above wants observe, so no constant answers both.
+	here := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+
+	// mirrorsHere finds the panes here whose label names the machine, and a
+	// plain SSH terminal is labelled in the same shape as a mirror.
+	panes := mirrorsHere(here(), "bot")
+	if len(panes) != 1 {
+		t.Fatalf("%d terminals here, want 1", len(panes))
+	}
+	env := envOf(panes[0])
+
+	if got := env["HRP_TARGET"]; got != "bot" {
+		t.Errorf("the terminal was told to reach %q, not bot", got)
+	}
+	if got := env["HRP_MODE"]; got != "ssh" {
+		t.Errorf("the terminal was told mode %q, not ssh", got)
+	}
+	// What a failure announces itself as. Without it the pane names the
+	// machine instead, and a machine with several terminals open cannot say
+	// which of them went -- which is the defect the label was added for.
+	if got := env["HRP_NAME"]; !strings.HasSuffix(got, "@bot") {
+		t.Errorf("the terminal was named %q, which does not say which machine it is on", got)
 	}
 }
 
