@@ -269,8 +269,16 @@ func TestMirroringGivesOneTerminalForOneOnTheMachine(t *testing.T) {
 	}
 
 	// Mirrored, not a plain SSH terminal, which is the whole difference.
+	//
+	// Mirroring as well as SSHOnly, because they are not the same claim and
+	// only one of them was held: SSHOnly records what the connection turned
+	// out to be, Mirroring what the configuration asked for, and the listing
+	// in internal/cli reads the second to decide what to call a machine that
+	// is DOWN -- where the first is false whatever the setting says.
+	// Neutralising `Mirroring: d.config().Mirrors(state.host)` in status()
+	// left the whole gate green.
 	hosts := d.dispatch(Command{Cmd: "status"}).Hosts
-	if len(hosts) != 1 || hosts[0].SSHOnly {
+	if len(hosts) != 1 || hosts[0].SSHOnly || !hosts[0].Mirroring {
 		t.Fatalf("status = %+v, want the machine mirrored", hosts)
 	}
 	if hosts[0].Mirrors != 1 {

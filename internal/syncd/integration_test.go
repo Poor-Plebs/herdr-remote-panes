@@ -286,6 +286,28 @@ func TestClosingTheLastTerminalLeavesAWayBack(t *testing.T) {
 	d.reconcileAll()
 	terminalsAreRunning(t, held())
 
+	// What status says while the terminal is still open, which is the control
+	// for the "no terminals" assertion further down: without it, that one
+	// passes against a daemon that reports nought whatever is open. Both
+	// fields were measured unheld -- neutralising either `Terminals:
+	// len(state.shellPanes)` or `Mirroring: d.config().Mirrors(state.host)`
+	// in status() left the whole gate green, because every other reader of
+	// them is handed a reply built in a test.
+	//
+	// Mirroring is false here and true in TestMirroringGivesOneTerminalForOne
+	// OnTheMachine, and the pair is the point: neither constant answers both.
+	hosts := d.dispatch(Command{Cmd: "status"}).Hosts
+	if len(hosts) != 1 {
+		t.Fatalf("status came back with %d machines, want 1", len(hosts))
+	}
+	if open := len(held().Panes); hosts[0].Terminals != open || open == 0 {
+		t.Errorf("status says %d terminals for a machine holding %d", hosts[0].Terminals, open)
+	}
+	if hosts[0].Mirroring {
+		t.Error("a machine on plain ssh is reported as mirroring, so the listing " +
+			"would go on calling its terminals mirrors once it is down")
+	}
+
 	var pane string
 	for id := range held().Panes {
 		pane = id
