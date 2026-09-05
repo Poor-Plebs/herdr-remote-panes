@@ -96,6 +96,7 @@ func main() {
 	// Beside the tool rather than beside the package: one record for the whole
 	// tree, since a survivor is identified by its file anyway.
 	readPath := filepath.Join(root, "tools", "mutants", "read.tsv")
+	sweptPath := filepath.Join(root, "tools", "mutants", "swept.tsv")
 	read := readSurvivors(readPath)
 
 	covered, err := coveredLines(work, pkg)
@@ -129,6 +130,21 @@ func main() {
 				strings.Join(os.Args[2:], ", "))
 		default:
 			fmt.Println("nothing to mutate: no covered lines in that package")
+			// Written down anyway, because a sweep that found nothing is
+			// still a sweep and this is the silence the record exists to
+			// remove: with no row, a package looked at and found to have
+			// nothing to try reads exactly like one nobody has ever swept.
+			// It has already misled a reader here -- swept.tsv held against
+			// `go list ./...` named the root package as never visited, when
+			// it had been asked and had answered.
+			//
+			// Only where the whole package was swept. A restricted run that
+			// found nothing says nothing about the package, which is what
+			// this file is read for -- and where files were named, the case
+			// above is the reason: nothing here can tell a file with no
+			// covered lines from a name matching no file, so a row for it
+			// could record a sweep of something that is not there.
+			recordSweep(sweptPath, pkg, since, os.Args[2:], 0, 0, 0, 0)
 		}
 		return
 	}
@@ -198,8 +214,8 @@ func main() {
 	fmt.Printf("\n%d mutations: %d caught, %d survived, %d would not build, in %s\n",
 		len(muts), caught, len(survived), unusable, time.Since(started).Round(time.Second))
 
-	recordSweep(filepath.Join(root, "tools", "mutants", "swept.tsv"),
-		pkg, since, os.Args[2:], len(muts), caught, len(survived), unexplained)
+	recordSweep(sweptPath, pkg, since, os.Args[2:],
+		len(muts), caught, len(survived), unexplained)
 
 	// Kept where a terminal cannot lose them. A sweep of a large package is
 	// hours, and the survivors are the whole of what it produced -- piping it

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTheCaretLandsOnTheOperatorThatChanged(t *testing.T) {
@@ -1338,5 +1339,114 @@ func TestTheSweepSaysWhichMutationSurvivedAndWhere(t *testing.T) {
 	}
 	if string(raw) != source {
 		t.Errorf("the swept tree was left mutated:\n%s", raw)
+	}
+}
+
+// TestASweepIsRecordedWhetherOrNotItFoundAnything builds the command and reads
+// the record it leaves behind.
+//
+// recordSweep has three tests of its own and its call site had none: the whole
+// of the recording could be dropped with the gate green. And on the path where
+// there is nothing to mutate there was no call at all, so a package swept and
+// found to have nothing to try left the record exactly as silent as one nobody
+// had ever swept -- which is the confusion that function's own comment says it
+// exists to end, and it has already misled a reader here.
+func TestASweepIsRecordedWhetherOrNotItFoundAnything(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "mutants")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("building the command: %v\n%s", err, out)
+	}
+
+	const heldAndLoose = "package probe\n\n" +
+		"// Held is pinned by its test both ways.\n" +
+		"func Held(n int) bool { return n > 3 }\n\n" +
+		"// Loose is called by its test and nothing is asserted about it.\n" +
+		"func Loose(n int) bool { return n > 3 }\n"
+	const heldAndLooseTest = "package probe\n\nimport \"testing\"\n\n" +
+		"func TestHeld(t *testing.T) {\n\tif !Held(4) || Held(3) {\n\t\tt.Fatal(\"wrong\")\n\t}\n}\n\n" +
+		"func TestLoose(t *testing.T) {\n\t_ = Loose(4)\n}\n"
+
+	// Covered by its own test and holding no operator this knows how to flip,
+	// which is the whole of what "nothing to mutate" means here.
+	const nothingToFlip = "package probe\n\n" +
+		"// Add is covered, and addition is not an operator this flips.\n" +
+		"func Add(a, b int) int { return a + b }\n"
+	const nothingToFlipTest = "package probe\n\nimport \"testing\"\n\n" +
+		"func TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 {\n\t\tt.Fatal(\"wrong\")\n\t}\n}\n"
+
+	today := time.Now().Format("2006-01-02")
+	for _, tt := range []struct {
+		what   string
+		source string
+		tests  string
+		args   []string
+		want   string // empty for a run that must leave no row at all
+	}{
+		{
+			"a sweep that found something", heldAndLoose, heldAndLooseTest,
+			[]string{"./pkg"}, "./pkg\t" + today + "\t2\t1\t1\t1",
+		},
+		{
+			"a sweep with nothing to try", nothingToFlip, nothingToFlipTest,
+			[]string{"./pkg"}, "./pkg\t" + today + "\t0\t0\t0\t0",
+		},
+		// The control, and the exclusion main.go states in as many words: a
+		// restricted run that found nothing is not a fact about the package,
+		// and nothing here can tell a file with no covered lines from a name
+		// matching no file. Without this row, recording every run whatever it
+		// found passes both rows above.
+		{
+			"a sweep restricted to a file that is not there", heldAndLoose,
+			heldAndLooseTest, []string{"./pkg", "nosuch.go"}, "",
+		},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			// A tree apiece: a row left by one run answers for the next, and
+			// the control would pass by reading somebody else's row. The
+			// tools/mutants directory has to exist, because the command writes
+			// its record beside itself and only warns when it cannot.
+			work := t.TempDir()
+			for _, dir := range []string{"pkg", filepath.Join("tools", "mutants")} {
+				if err := os.MkdirAll(filepath.Join(work, dir), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for name, body := range map[string]string{
+				"go.mod":            "module probe\n\ngo 1.25\n",
+				"pkg/probe.go":      tt.source,
+				"pkg/probe_test.go": tt.tests,
+			} {
+				if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			run := exec.Command(bin, tt.args...)
+			run.Dir = work
+			// keepSurvivors writes beside os.TempDir(), so the run is pointed
+			// at a directory of its own rather than at /tmp/mutants-pkg.txt,
+			// a name a real sweep of a package called pkg would also use.
+			run.Env = append(os.Environ(), "TMPDIR="+t.TempDir())
+			out, err := run.CombinedOutput()
+			if err != nil {
+				t.Fatalf("running the command: %v\n%s", err, out)
+			}
+
+			raw, err := os.ReadFile(filepath.Join(work, "tools", "mutants", "swept.tsv"))
+			if tt.want == "" {
+				if err == nil && strings.Contains(string(raw), "./pkg") {
+					t.Errorf("a run that swept nothing was recorded as a sweep:\n%s\n%s", raw, out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("the sweep left no record of itself: %v\n%s", err, out)
+			}
+			// The whole row. "./pkg" alone passes for an entry saying anything
+			// at all about it, and the counts are what anybody reads it for.
+			if !strings.Contains(string(raw), tt.want+"\n") {
+				t.Errorf("the record does not say %q:\n%s\n%s", tt.want, raw, out)
+			}
+		})
 	}
 }

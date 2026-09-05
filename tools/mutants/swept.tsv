@@ -11,6 +11,7 @@
 # seventeen and have nothing whatever to answer for.
 #
 # package	swept	mutations	caught	survived	unexplained
+.	2026-09-05	0	0	0	0
 ./internal/capped	2026-09-01	5	4	1	0
 ./internal/cli	2026-08-28	56	52	4	0
 ./internal/cli (since v0.4.4)	2026-08-30	9	9	0	0
