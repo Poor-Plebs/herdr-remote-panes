@@ -84,6 +84,10 @@ func TestWhatCheckRunsIsWhatCIRuns(t *testing.T) {
 	// held it to anything: a step added to check would be run by nobody else,
 	// and a step added to CI would fail on a push after a green run here.
 	//
+	// That sentence has TWO halves and only one was held: which make targets
+	// each side runs, and that every CI step is a make target at all. Both are
+	// checked here now.
+	//
 	// The claim is about the first job. The second builds and tests on the
 	// oldest supported Go and deliberately skips gofmt and staticcheck, which
 	// are about the source rather than about the toolchain.
@@ -119,6 +123,31 @@ func TestWhatCheckRunsIsWhatCIRuns(t *testing.T) {
 	for _, m := range regexp.MustCompile(`(?m)^\s*run: make (.+)$`).FindAllStringSubmatch(first, -1) {
 		for _, step := range strings.Fields(m[1]) {
 			run[step] = true
+		}
+	}
+
+	// And EVERY step, not only the ones beginning with make. The comparison
+	// below reads `run: make ...` lines, so a step running anything else is
+	// invisible to it -- which is the failure this test exists to prevent,
+	// arriving by the one door it was not watching. Measured: adding `run: go
+	// run ./tools/bounds` to the first job survived the whole gate, and so did
+	// a block scalar running two commands. The workflow's own comment claims
+	// each step IS a Makefile target, and this is that half.
+	steps := regexp.MustCompile(`(?m)^\s*run: (.+)$`).FindAllStringSubmatch(first, -1)
+	if len(steps) < 3 {
+		t.Fatalf("the first job runs %d steps, which is fewer than it does; the "+
+			"pattern has stopped matching", len(steps))
+	}
+	for _, m := range steps {
+		switch what := strings.TrimSpace(m[1]); {
+		case what == "|" || what == ">":
+			t.Error("a CI step runs a block of several commands, so no single " +
+				"Makefile target is what it runs and `make check` cannot be the " +
+				"whole of it")
+		case !strings.HasPrefix(what, "make "):
+			t.Errorf("CI runs %q, which is not a Makefile target, so `make check` "+
+				"is no longer the whole of what CI does and a push can fail after "+
+				"a green run here", what)
 		}
 	}
 
