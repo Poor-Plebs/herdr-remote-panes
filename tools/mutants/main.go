@@ -135,7 +135,7 @@ func main() {
 			// here can tell a file with no covered lines from a name
 			// matching no file, so a row for it could record a sweep of
 			// something that is not there.
-			recordSweep(sweptPath, pkg, since, os.Args[2:], 0, 0, 0, 0)
+			recordSweep(sweptPath, pkg, since, os.Args[2:], sweepCounts{})
 		}
 		return
 	}
@@ -219,8 +219,14 @@ func main() {
 		}
 	}
 
-	recordSweep(sweptPath, pkg, since, os.Args[2:],
-		len(muts), caught, len(survived), unexplained)
+	recordSweep(sweptPath, pkg, since, os.Args[2:], sweepCounts{
+		mutations:   len(muts),
+		caught:      caught,
+		survived:    len(survived),
+		hung:        len(hung),
+		unbuildable: unusable,
+		unexplained: unexplained,
+	})
 
 	// Kept where a terminal cannot lose them. A sweep of a large package is
 	// hours, and the survivors are the whole of what it produced -- piping it
@@ -765,6 +771,21 @@ func nothingToMutate(pkg, since string, named []string, covered, skipped int) st
 	}
 }
 
+// sweepCounts is what one sweep found, named rather than passed in order.
+//
+// Four of these were positional and adding two more would have made six ints
+// in a row at a call site that has already had two of them swapped -- which
+// compiles, and which only the built-command rows caught. Naming them is the
+// same fix menuActions got, for the same reason.
+type sweepCounts struct {
+	mutations   int
+	caught      int
+	survived    int
+	hung        int
+	unbuildable int
+	unexplained int
+}
+
 // recordSweep writes down that this package was looked at.
 //
 // read.tsv holds the survivors somebody read and left, so a package with no
@@ -776,7 +797,7 @@ func nothingToMutate(pkg, since string, named []string, covered, skipped int) st
 // One line per package, replaced each time, so this says what is true now
 // rather than growing a history. The date is the useful part: a package swept
 // before the work that changed it has not really been swept.
-func recordSweep(path, pkg, since string, files []string, mutations, caught, survived, unexplained int) {
+func recordSweep(path, pkg, since string, files []string, c sweepCounts) {
 	// A partial sweep is not the package, and recording it as though it were
 	// claims more than was done. Both ways of restricting one say so: the file
 	// list, and the revision only changes since which were tried.
@@ -795,8 +816,8 @@ func recordSweep(path, pkg, since string, files []string, mutations, caught, sur
 	case since != "":
 		what = pkg + " (since " + since + ")"
 	}
-	line := fmt.Sprintf("%s\t%s\t%d\t%d\t%d\t%d", what, time.Now().Format("2006-01-02"),
-		mutations, caught, survived, unexplained)
+	line := fmt.Sprintf("%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d", what, time.Now().Format("2006-01-02"),
+		c.mutations, c.caught, c.survived, c.hung, c.unbuildable, c.unexplained)
 
 	const header = "# What has been swept, and when. One line per package or\n" +
 		"# partial sweep, replaced each time it runs.\n" +
@@ -810,7 +831,16 @@ func recordSweep(path, pkg, since string, files []string, mutations, caught, sur
 		"# Herdr for a living those are most of the list -- a package can survive\n" +
 		"# seventeen and have nothing whatever to answer for.\n" +
 		"#\n" +
-		"# package\tswept\tmutations\tcaught\tsurvived\tunexplained\n"
+		"# The four outcome columns account for every mutation, so a row that\n" +
+		"# does not add up to its own first number is a row to distrust. They\n" +
+		"# used to be two, and mutations minus caught minus survived was an\n" +
+		"# unnamed remainder that could be either of the others.\n" +
+		"#\n" +
+		"# Rows dated before 2026-09-06 have no hung column and counted a suite\n" +
+		"# that ran out of time as caught, so their caught is an upper bound.\n" +
+		"# Re-sweep before reading one closely.\n" +
+		"#\n" +
+		"# package\tswept\tmutations\tcaught\tsurvived\thung\tno-build\tunexplained\n"
 
 	kept := []string{}
 	if raw, err := os.ReadFile(path); err == nil {

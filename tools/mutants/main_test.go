@@ -752,7 +752,8 @@ func TestARestrictedSweepIsNotRecordedAsThePackage(t *testing.T) {
 		{"only what changed", "v1.2.3", nil, "./internal/thing (since v1.2.3)"},
 		{"both at once", "v1.2.3", []string{"one.go"}, "./internal/thing (one.go, since v1.2.3)"},
 	} {
-		recordSweep(path, "./internal/thing", tt.since, tt.files, 7, 6, 1, 0)
+		recordSweep(path, "./internal/thing", tt.since, tt.files,
+			sweepCounts{mutations: 7, caught: 6, survived: 1})
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -781,15 +782,59 @@ func TestARestrictedSweepIsNotRecordedAsThePackage(t *testing.T) {
 	}
 }
 
+func TestTheRecordedRowAccountsForEveryMutation(t *testing.T) {
+	// The row used to carry two of the four outcomes, so mutations minus
+	// caught minus survived was an unnamed remainder -- a build failure, or,
+	// once hangs stopped being folded into caught, a hang. A reader could not
+	// tell which, and could not check the row against itself.
+	//
+	// Every count is different here on purpose. A sum would be satisfied by
+	// any two of them swapped, and this function's call site has already had
+	// exactly that happen; the whole line is asserted instead.
+	path := filepath.Join(t.TempDir(), "swept.tsv")
+	recordSweep(path, "./internal/thing", "", nil, sweepCounts{
+		mutations: 21, caught: 11, survived: 5, hung: 3, unbuildable: 2, unexplained: 4,
+	})
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "./internal/thing\t" + time.Now().Format("2006-01-02") + "\t21\t11\t5\t3\t2\t4"
+	if !strings.Contains(string(raw), want) {
+		t.Errorf("the row is not what was counted:\nwant a line %q\ngot:\n%s", want, raw)
+	}
+
+	// And the header names exactly the columns the row has, which is the half
+	// that goes stale: the names are written in one string and filled in by
+	// another, and nothing tied the two together.
+	var names, row string
+	for _, line := range strings.Split(string(raw), "\n") {
+		switch {
+		case strings.HasPrefix(line, "# package\t"):
+			names = strings.TrimPrefix(line, "# ")
+		case strings.HasPrefix(line, "./internal/thing\t"):
+			row = line
+		}
+	}
+	if names == "" || row == "" {
+		t.Fatalf("no header line or no entry to compare:\n%s", raw)
+	}
+	if got, want := len(strings.Split(row, "\t")), len(strings.Split(names, "\t")); got != want {
+		t.Errorf("the row has %d columns and the header names %d:\n  %s\n  %s",
+			got, want, names, row)
+	}
+}
+
 func TestTheRecordKeepsItsHeaderAsAHeader(t *testing.T) {
 	// Rewriting the file means reading back what is in it and keeping the
 	// lines that are entries. Getting the test for "not an entry" wrong turns
 	// the explanation at the top into data: every comment and blank line
 	// written back as though it were a package that had been swept.
 	path := filepath.Join(t.TempDir(), "swept.tsv")
-	recordSweep(path, "./internal/one", "", nil, 5, 5, 0, 0)
-	recordSweep(path, "./internal/two", "", nil, 3, 3, 0, 0)
-	recordSweep(path, "./internal/one", "", nil, 6, 6, 0, 0)
+	recordSweep(path, "./internal/one", "", nil, sweepCounts{mutations: 5, caught: 5})
+	recordSweep(path, "./internal/two", "", nil, sweepCounts{mutations: 3, caught: 3})
+	recordSweep(path, "./internal/one", "", nil, sweepCounts{mutations: 6, caught: 6})
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -814,10 +859,22 @@ func TestTheRecordKeepsItsHeaderAsAHeader(t *testing.T) {
 		t.Errorf("%d blank lines were written back as entries:\n%s", blanks, raw)
 	}
 	// The header is written fresh each time, so it must not also be kept from
-	// the last one.
-	if comments < 5 || comments > 20 {
-		t.Errorf("%d comment lines: the header is being kept as well as written:\n%s",
-			comments, raw)
+	// the last one. Measured against one run rather than against a range
+	// written down here: a bound like "between 5 and 20" is a number that goes
+	// stale the moment the header is a paragraph longer, and it did.
+	fresh := filepath.Join(t.TempDir(), "swept.tsv")
+	recordSweep(fresh, "./internal/one", "", nil, sweepCounts{mutations: 5, caught: 5})
+	once, err := os.ReadFile(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Count(string(once), "\n#")
+	if want == 0 {
+		t.Fatal("one run wrote no header at all, so this compares nothing")
+	}
+	if got := strings.Count(string(raw), "\n#"); got != want {
+		t.Errorf("three runs left %d header lines and one run leaves %d: the "+
+			"header is being kept as well as written:\n%s", got, want, raw)
 	}
 }
 
@@ -1420,14 +1477,21 @@ func TestASweepIsRecordedWhetherOrNotItFoundAnything(t *testing.T) {
 		t.Fatalf("building the command: %v\n%s", err, out)
 	}
 
+	// TWO held and one loose, not one of each. With a single caught mutation
+	// beside a single survivor the two counts are equal, and every assertion
+	// about which column is which passes with them swapped -- measured, by
+	// swapping them at the call site and watching this test stay green.
 	const heldAndLoose = "package probe\n\n" +
 		"// Held is pinned by its test both ways.\n" +
 		"func Held(n int) bool { return n > 3 }\n\n" +
 		"// Loose is called by its test and nothing is asserted about it.\n" +
-		"func Loose(n int) bool { return n > 3 }\n"
+		"func Loose(n int) bool { return n > 3 }\n\n" +
+		"// AlsoHeld is pinned both ways as well, so caught and survived differ.\n" +
+		"func AlsoHeld(n int) bool { return n > 3 }\n"
 	const heldAndLooseTest = "package probe\n\nimport \"testing\"\n\n" +
 		"func TestHeld(t *testing.T) {\n\tif !Held(4) || Held(3) {\n\t\tt.Fatal(\"wrong\")\n\t}\n}\n\n" +
-		"func TestLoose(t *testing.T) {\n\t_ = Loose(4)\n}\n"
+		"func TestLoose(t *testing.T) {\n\t_ = Loose(4)\n}\n\n" +
+		"func TestAlsoHeld(t *testing.T) {\n\tif !AlsoHeld(4) || AlsoHeld(3) {\n\t\tt.Fatal(\"wrong\")\n\t}\n}\n"
 
 	// Covered by its own test and holding no operator this knows how to flip,
 	// which is the whole of what "nothing to mutate" means here.
@@ -1447,11 +1511,11 @@ func TestASweepIsRecordedWhetherOrNotItFoundAnything(t *testing.T) {
 	}{
 		{
 			"a sweep that found something", heldAndLoose, heldAndLooseTest,
-			[]string{"./pkg"}, "./pkg\t" + today + "\t2\t1\t1\t1",
+			[]string{"./pkg"}, "./pkg\t" + today + "\t3\t2\t1\t0\t0\t1",
 		},
 		{
 			"a sweep with nothing to try", nothingToFlip, nothingToFlipTest,
-			[]string{"./pkg"}, "./pkg\t" + today + "\t0\t0\t0\t0",
+			[]string{"./pkg"}, "./pkg\t" + today + "\t0\t0\t0\t0\t0\t0",
 		},
 		// The control, and the exclusion main.go states in as many words: a
 		// restricted run that found nothing is not a fact about the package,
@@ -1507,6 +1571,14 @@ func TestASweepIsRecordedWhetherOrNotItFoundAnything(t *testing.T) {
 			}
 			// The whole row. "./pkg" alone passes for an entry saying anything
 			// at all about it, and the counts are what anybody reads it for.
+			//
+			// HONEST LIMIT: hung and no-build are both nought here, because a
+			// fixture that hangs costs the full budget and an operator flip
+			// that will not compile is hard to write on purpose. Swapping
+			// those two at the call site is not caught by this row -- what
+			// stands behind that pair is that the fields are named rather
+			// than positional, and TestTheRecordedRowAccountsForEveryMutation,
+			// which gives all six different values.
 			if !strings.Contains(string(raw), tt.want+"\n") {
 				t.Errorf("the record does not say %q:\n%s\n%s", tt.want, raw, out)
 			}
