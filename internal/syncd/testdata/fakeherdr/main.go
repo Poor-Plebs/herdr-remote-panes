@@ -474,8 +474,27 @@ func main() {
 			fail("pane_not_found", "pane "+id+" not found")
 		}
 		if args[1] == "release-agent" {
-			delete(pane, "agent")
-			delete(pane, "agent_status")
+			// A release gives up ONE claim: the one this source made for this
+			// agent. Clearing whatever was there regardless made both
+			// arguments invisible -- the daemon could release an agent it
+			// never reported, or name none at all, and the pane still came out
+			// clean, which is the thing a release is for.
+			//
+			// It succeeds either way rather than refusing, so nothing here
+			// invents an error code Herdr may not send. A release that matches
+			// nothing simply clears nothing, and the claim stands.
+			//
+			// HONEST LIMIT: this models the PLUGIN'S OWN BELIEF and not a
+			// verified Herdr behaviour, which is a question only Herdr
+			// answers. The daemon remembers what it reported so that it can
+			// name it again here, and that design only means anything if the
+			// name is matched -- so what the test holds is that it releases
+			// the agent it reported rather than the one it is looking at now.
+			if flag("--agent") == pane["agent"] && flag("--source") == pane["agent_source"] {
+				delete(pane, "agent")
+				delete(pane, "agent_status")
+				delete(pane, "agent_source")
+			}
 		} else {
 			pane["agent"] = flag("--agent")
 			pane["agent_status"] = flag("--state")

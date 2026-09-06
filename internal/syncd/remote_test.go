@@ -1154,6 +1154,14 @@ func TestAnAgentOnTheMachineAppearsHereAsItself(t *testing.T) {
 
 	// It finishes: the pane stops claiming an agent rather than showing a
 	// stale one for the rest of the session.
+	//
+	// Which agent the release names is the whole of this. The daemon keeps
+	// what it reported for each pane so that it can name that again here --
+	// state.reportedAgents exists for no other reason -- and it went unheld:
+	// releasing an agent that was never reported, and releasing none at all,
+	// both survived the whole gate, because the stand-in cleared whatever was
+	// there whatever it was told. It clears only a matching claim now, so this
+	// assertion rests on the daemon naming the right one.
 	for id, pane := range there().Panes {
 		if agent, _ := pane["agent"].(string); agent == "claude" {
 			clearAgentOn(t, machineState, id)
