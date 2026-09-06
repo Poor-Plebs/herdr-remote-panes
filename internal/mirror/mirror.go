@@ -739,7 +739,11 @@ func streamOnce(client *remote.Client, terminal string, cols, rows int, winch <-
 // finished, and a child that outlived it inherits those pipes -- so a stream
 // given up on could still be waited for as long as whatever the far side left
 // running. The same value and the same reason as the one in the remote client.
-const waitDelay = 2 * time.Second
+// A variable rather than a constant, as it is in internal/remote and
+// internal/herdrcli for the same reason: the policy is what matters and not
+// the seconds, and a test that has to wait them out pays for them on every
+// push. This one is the last of the three to get the seam.
+var waitDelay = 2 * time.Second
 
 // maxFrameBytes bounds one frame from the stream. Terminal output arrives in
 // small pieces; anything approaching this is a stream that has gone wrong.

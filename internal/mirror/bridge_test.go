@@ -767,8 +767,8 @@ func TestThePaneSaysWhichWayTheMarkFailed(t *testing.T) {
 func streamingSSH(t *testing.T, frames int) {
 	t.Helper()
 	dir := t.TempDir()
-	// One frame per line, base64 as the far side sends it, and then something
-	// left running that outlives the shell and holds the pipes open.
+	// Something left running that outlives the shell and holds the pipes open,
+	// and then one frame per line, base64 as the far side sends it.
 	//
 	// The background child is the point. Killing what was started is not the
 	// same as being done waiting for it: Wait returns once nothing holds the
@@ -777,17 +777,26 @@ func streamingSSH(t *testing.T, frames int) {
 	// a foreground command this passed on Linux, where the shell replaces
 	// itself with its last command and dies with it, and hung on macOS, where
 	// it does not. Backgrounded, both behave the way the far side might.
+	//
+	// IT IS STARTED BEFORE THE FRAMES, and that ordering is the whole fixture.
+	// After them it is a race the fixture usually loses: the reader gives up on
+	// the FIRST frame, kills this, and the kill often lands before the shell
+	// reaches the background line -- so nothing ever holds the pipes and Wait
+	// returns at once whether the code bounds it or not. Measured with the
+	// bound deleted and this run alone eight times: two failures and six
+	// passes. A test that catches its defect a quarter of the time reads as one
+	// that holds it.
 	script := "#!/bin/sh\n" +
 		"last=\"\"; for a in \"$@\"; do last=\"$a\"; done\n" +
 		"case \"$last\" in\n" +
 		"  *command\\ -v\\ herdr*) echo /usr/bin/herdr; exit 0;;\n" +
 		"esac\n" +
+		"sleep 30 &\n" +
 		"i=0\n" +
 		"while [ $i -lt " + strconv.Itoa(frames) + " ]; do\n" +
 		"  printf '{\"bytes\":\"aGVsbG8=\"}\\n'\n" +
 		"  i=$((i+1))\n" +
 		"done\n" +
-		"sleep 30 &\n" +
 		"exit 0\n"
 	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -808,6 +817,13 @@ func TestAnObservedStreamWithNowhereToGoIsGivenUpOnRatherThanWaitedFor(t *testin
 	streamingSSH(t, 4)
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	t.Setenv("HERDR_SESSION", "hub")
+
+	// Shortened, as the two other packages with this bound already do: what is
+	// being held is that the wait is bounded at all, and two seconds of it on
+	// every push buys nothing. The window below is still a hundred times this.
+	restore := waitDelay
+	waitDelay = 200 * time.Millisecond
+	defer func() { waitDelay = restore }()
 
 	// Somewhere to write that is already closed, which is the pane going.
 	read, write, err := os.Pipe()
