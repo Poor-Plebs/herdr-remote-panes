@@ -958,16 +958,33 @@ func TestTheWordsBecomeTheCommandsTheDaemonIsSent(t *testing.T) {
 	// a case and differ only in the placement they ask for, and that argument
 	// once went nowhere -- so the new-tab action opened whatever a new
 	// terminal would have.
+	//
+	// The space is the field beside it and it went the same way: three of the
+	// four this builds were checked here and the workspace was not, so
+	// `contextWorkspace()` could stop reaching the daemon with the whole gate
+	// green. What that costs is not an error. With no machine named and no
+	// space, resolveOpenTarget answers "not a mirrored workspace" and the
+	// daemon opens an ordinary LOCAL pane and calls it success -- a plain
+	// shell inside somebody's remote space, which the comment beside that
+	// branch calls the one outcome worse than failing. Every action in the
+	// manifest invokes these with no argument, so that is the ordinary case
+	// rather than an edge of it.
+	//
+	// The commands that must NOT carry a space are the control: the variable
+	// is set for every row, so a build that put it on everything fails the
+	// three that ask for nothing.
+	t.Setenv("HERDR_WORKSPACE_ID", "w7")
 	for _, tt := range []struct {
 		command   string
 		args      []string
 		wantCmd   string
 		wantHost  string
 		wantPlace string
+		wantSpace string
 	}{
-		{command: "open-tab", wantCmd: "open", wantPlace: "tab"},
-		{command: "open", wantCmd: "open", wantPlace: ""},
-		{command: "open-tab", args: []string{"bot"}, wantCmd: "open", wantHost: "bot", wantPlace: "tab"},
+		{command: "open-tab", wantCmd: "open", wantPlace: "tab", wantSpace: "w7"},
+		{command: "open", wantCmd: "open", wantPlace: "", wantSpace: "w7"},
+		{command: "open-tab", args: []string{"bot"}, wantCmd: "open", wantHost: "bot", wantPlace: "tab", wantSpace: "w7"},
 		{command: "connect", args: []string{"bot"}, wantCmd: "connect", wantHost: "bot"},
 		{command: "disconnect", args: []string{"bot"}, wantCmd: "disconnect", wantHost: "bot"},
 		{command: "refresh", wantCmd: "refresh"},
@@ -991,6 +1008,12 @@ func TestTheWordsBecomeTheCommandsTheDaemonIsSent(t *testing.T) {
 				t.Errorf("%q sent placement %q, want %q -- which is the whole "+
 					"difference between a new terminal and a new tab",
 					tt.command, sent[0].Placement, tt.wantPlace)
+			}
+			if sent[0].Workspace != tt.wantSpace {
+				t.Errorf("%q sent space %q, want %q -- with no machine named "+
+					"this is the only thing that says which machine the "+
+					"terminal belongs on",
+					tt.command, sent[0].Workspace, tt.wantSpace)
 			}
 		})
 	}
