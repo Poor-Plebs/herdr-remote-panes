@@ -874,6 +874,88 @@ func TestAttachAsksToTakeOverAStaleClient(t *testing.T) {
 	}
 }
 
+// TestAMirroringPaneIsJoinedToTheMachineBothWays is the sibling of the test
+// below, for the mode this plugin exists for.
+//
+// The same blindness, one function along and for the same reason: attach is
+// driven by four tests here, and the stand-in ssh they use records the argv it
+// was given and never touches its own streams. Its stdout and its stderr turn
+// out to be held anyway -- by the mouse gate and by what a refusal records --
+// and its STDIN by nothing at all. Deleting it survives the whole gate.
+//
+// What that costs is the difference between the two mirroring modes. A pane
+// that shows the far side and takes nothing typed is observe; attach is the
+// one you work in. So the mode would read as attach everywhere -- in the
+// config, in the menu, in the status listing -- and behave as observe, with
+// nothing anywhere saying why the keys do nothing.
+func TestAMirroringPaneIsJoinedToTheMachineBothWays(t *testing.T) {
+	dir := t.TempDir()
+	typed := filepath.Join(dir, "reached-the-machine")
+
+	// A machine that prints something and keeps whatever it was told. The
+	// attach client's output arrives through the pty in earnest; here it is
+	// ssh's own stdout, which is the same file for this purpose.
+	script := "#!/bin/sh\n" +
+		"case \"$*\" in *'command -v herdr'*) echo /usr/bin/herdr; exit 0;; esac\n" +
+		"echo 'what the terminal showed'\n" +
+		"cat > " + typed + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+	t.Setenv("HERDR_PANE_ID", "w1:p2")
+	t.Setenv(EnvTarget, "bot")
+	t.Setenv(EnvMode, "attach")
+	t.Setenv(EnvTerminal, "term_1")
+
+	seen, err := os.Create(filepath.Join(dir, "the-pane"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer seen.Close()
+	if err := os.WriteFile(filepath.Join(dir, "keystrokes"),
+		[]byte("what somebody typed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := os.Open(filepath.Join(dir, "keystrokes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer keys.Close()
+
+	savedOut, savedErr, savedIn := os.Stdout, os.Stderr, os.Stdin
+	os.Stdout, os.Stderr, os.Stdin = seen, seen, keys
+	runErr := bridge()
+	os.Stdout, os.Stderr, os.Stdin = savedOut, savedErr, savedIn
+
+	if runErr != nil {
+		t.Fatalf("bridge: %v", runErr)
+	}
+
+	// The control, and it is not decoration: without it a build that connected
+	// to nothing at all would pass the assertion below by leaving the file
+	// empty for a different reason.
+	shown, err := os.ReadFile(filepath.Join(dir, "the-pane"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(shown), "what the terminal showed") {
+		t.Fatalf("the pane never showed what the terminal printed, so nothing "+
+			"here says anything about typing: %q", shown)
+	}
+
+	got, err := os.ReadFile(typed)
+	if err != nil {
+		t.Fatalf("nothing typed reached the machine at all: %v", err)
+	}
+	if !strings.Contains(string(got), "what somebody typed") {
+		t.Errorf("the machine was sent %q, and a mirror you cannot type into "+
+			"is observe rather than attach", got)
+	}
+}
+
 // TestAPlainSSHPaneIsJoinedToTheMachineBothWays holds the three lines that
 // make a plain SSH pane a terminal rather than a window onto nothing.
 //

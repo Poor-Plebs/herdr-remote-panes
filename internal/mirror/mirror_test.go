@@ -583,6 +583,59 @@ func TestAPaneThatWillNotGoRawIsLeftAsItIs(t *testing.T) {
 	}
 }
 
+// TestAMirrorAsksTheTerminalItIsDrawnOn holds the stdin that stty is given.
+//
+// The third of three: internal/cli and internal/picker each hand their own
+// standard input to stty and each hold that they do, and this one did not.
+// stty reports on the terminal at its standard input, so handing over the
+// pane's is the whole of how a mirror learns how wide it is -- and of how
+// `stty raw -echo` reaches the pane at all, which is what stops every
+// keystroke being echoed and held until a newline.
+//
+// Nothing checked it, and the shape of the miss is the same in all three
+// places: under `go test` there is no terminal either way, so the call fails
+// and windowSize falls back to 120x40 whichever input it was handed, which is
+// also what every other test here renders at.
+//
+// The stand-in answers only when it was actually given the pane's input, so
+// the size below is the assertion rather than the fallback.
+func TestAMirrorAsksTheTerminalItIsDrawnOn(t *testing.T) {
+	dir := t.TempDir()
+	ran := filepath.Join(dir, "stty-ran")
+	script := "#!/bin/sh\n" +
+		"echo ran >> " + ran + "\n" +
+		"if grep -q 'the terminal the mirror is in'; then echo '48 132'; fi\n"
+	if err := os.WriteFile(filepath.Join(dir, "stty"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if err := os.WriteFile(filepath.Join(dir, "tty"),
+		[]byte("the terminal the mirror is in\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tty, err := os.Open(filepath.Join(dir, "tty"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tty.Close()
+
+	saved := os.Stdin
+	os.Stdin = tty
+	cols, rows := windowSize()
+	os.Stdin = saved
+
+	// Reached at all, or the size below says nothing about stdin.
+	if _, err := os.Stat(ran); err != nil {
+		t.Fatalf("stty was never run, so this is measuring the fallback: %v", err)
+	}
+	if cols != 132 || rows != 48 {
+		t.Errorf("the mirror measured %dx%d, want 132x48: stty was not given the "+
+			"terminal to ask about, so the stream is opened at a guessed size "+
+			"and raw mode never reaches the pane", cols, rows)
+	}
+}
+
 func TestTheSizeAMirrorOpensAt(t *testing.T) {
 	// The remote stream is opened at whatever size is asked for, and the far
 	// end wraps its output to that. Ask for the wrong one and every line in a
