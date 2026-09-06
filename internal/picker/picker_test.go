@@ -1207,6 +1207,126 @@ func TestEverythingTheDaemonSaysAboutAMachineReachesTheMenu(t *testing.T) {
 	}
 }
 
+func TestEachThingTheDaemonSaysAboutAMachineReachesItsOwnField(t *testing.T) {
+	// The daemon's answer is copied into a menu entry one field at a time,
+	// twelve assignments of the same shape in a row. Two of them exchanged
+	// compiles, leaves the count of them unchanged, and is a mutation neither
+	// sweep here proposes: the deletion sweep removes a statement and the
+	// mutation sweep flips an operator, and a swap is neither.
+	//
+	// Measured before this was written. Of the twenty-seven same-typed pairs
+	// in that block, ELEVEN could be exchanged with internal/picker green:
+	// every pair among ssh_only, no_herdr, at_capacity, shared_name and
+	// mirroring, and outside_shared with unmirrored. The daemon's own side of
+	// those same fields survives none of its twenty-eight, so this is the
+	// menu's half of a boundary already held at the other end.
+	//
+	// What it costs is a menu that says the wrong thing about a machine:
+	// "no herdr on the machine" for one that is merely at the mirror limit
+	// sends somebody to install Herdr where it already is. The last pair is
+	// the sharpest, because Entry's own comment draws the distinction --
+	// Unmirrored is "the only one of these that is a failure rather than a
+	// setting doing what it says", and OutsideShared is one of the settings.
+	//
+	// ONE MACHINE PER FLAG, because five booleans cannot all differ from one
+	// another inside one entry: what tells them apart is a machine where
+	// exactly one is set. The whole vector is asserted each time rather than
+	// the flag the row is named for, so a swap fails on the other end of it.
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"),
+		[]byte(`{"hosts":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", configDir)
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+
+	flagsOf := func(e Entry) map[string]bool {
+		return map[string]bool{
+			"ssh_only":    e.SSHOnly,
+			"no_herdr":    e.NoHerdr,
+			"at_capacity": e.AtCapacity,
+			"shared_name": e.SharedName,
+			"mirroring":   e.Mirroring,
+		}
+	}
+	only := func(set string) map[string]bool {
+		want := map[string]bool{}
+		for name := range flagsOf(Entry{}) {
+			want[name] = name == set
+		}
+		return want
+	}
+
+	// Connected throughout: a machine the daemon reports and neither file
+	// names is only listed when there is something the menu can do about it.
+	hosts := []syncd.HostInfo{
+		{Target: "only-ssh", Connected: true, SSHOnly: true},
+		{Target: "only-noherdr", Connected: true, NoHerdr: true},
+		{Target: "only-capacity", Connected: true, AtCapacity: true},
+		{Target: "only-shared", Connected: true, SharedName: true},
+		{Target: "only-mirroring", Connected: true, Mirroring: true},
+		// The counts, all four different, so no two of them can be exchanged
+		// without one of these numbers landing where another belongs.
+		{Target: "counted", Connected: true, Mirrors: 5, OutsideShared: 3,
+			Terminals: 7, Unmirrored: 2},
+	}
+	answerWith(t, syncd.Reply{OK: true, Hosts: hosts})
+
+	entries, _ := collect()
+	found := map[string]Entry{}
+	for _, entry := range entries {
+		found[entry.Target] = entry
+	}
+	if len(found) != len(hosts) {
+		t.Fatalf("the menu lists %d machines and the daemon named %d: %v",
+			len(found), len(hosts), found)
+	}
+
+	for _, tt := range []struct {
+		target string
+		set    string
+	}{
+		{"only-ssh", "ssh_only"},
+		{"only-noherdr", "no_herdr"},
+		{"only-capacity", "at_capacity"},
+		{"only-shared", "shared_name"},
+		{"only-mirroring", "mirroring"},
+	} {
+		got := flagsOf(found[tt.target])
+		want := only(tt.set)
+		for name, wanted := range want {
+			if got[name] != wanted {
+				t.Errorf("the daemon said %s of %s and the menu reads %v, want %v",
+					tt.set, tt.target, got, want)
+				break
+			}
+		}
+	}
+
+	counted := found["counted"]
+	for _, tt := range []struct {
+		what string
+		got  int
+		want int
+	}{
+		{"mirrors", counted.Mirrors, 5},
+		{"terminals outside the shared space", counted.OutsideShared, 3},
+		{"plain terminals", counted.Terminals, 7},
+		{"terminals given up on", counted.Unmirrored, 2},
+	} {
+		if tt.got != tt.want {
+			t.Errorf("the menu reads %d %s and the daemon said %d", tt.got, tt.what, tt.want)
+		}
+	}
+}
+
 func TestAMachineConnectedWithoutBeingWrittenDownIsStillInTheMenu(t *testing.T) {
 	// connect falls back to whatever text is selected, so a machine can be
 	// reached without appearing in either file. It was then connected, mirrors
