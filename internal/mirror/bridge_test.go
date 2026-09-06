@@ -838,6 +838,50 @@ func TestAnObservedStreamWithNowhereToGoIsGivenUpOnRatherThanWaitedFor(t *testin
 	}
 }
 
+// TestABridgeDoesNotConfuseTheSessionWithWhereHerdrLives holds the receiving
+// end of what the daemon puts in front of a mirror pane.
+//
+// The sending end is held: the daemon sets HRP_SESSION and HRP_BIN and a test
+// in internal/syncd reads them back off the pane it opened. Nothing held this
+// end. The bridge reads all three of the machine, the session and the binary
+// and hands them to one call -- remote.NewWithBin(target, session, bin) --
+// where the last two are both strings, so exchanging them compiles. It
+// survived the whole package.
+//
+// The same call in internal/syncd is caught by a test of its own, which is
+// what makes this the shape to look for: one thing done in two places and held
+// in one.
+//
+// Swapped, the machine is asked to work in a session named after a file path
+// and told to run a program named after a session, so neither half of the
+// connection is what it should be -- and the control socket, whose name is
+// hashed from the target and the session together, moves with it.
+func TestABridgeDoesNotConfuseTheSessionWithWhereHerdrLives(t *testing.T) {
+	ssh := recordingSSH(t)
+	t.Setenv(EnvTarget, "bot")
+	t.Setenv(EnvMode, "attach")
+	t.Setenv(EnvTerminal, "term_1")
+	// Two values nothing could mistake for each other, and neither of them the
+	// shape of the other: a session is a name, and a binary is a path.
+	t.Setenv(EnvSession, "agents")
+	t.Setenv(EnvBin, "/opt/herdr/bin/herdr")
+
+	_ = bridge()
+
+	sent := ssh.ranOnMachine()
+	if sent == "" {
+		t.Fatal("nothing was run on the machine, so this says nothing about either")
+	}
+	if !strings.Contains(sent, "HERDR_SESSION=agents") {
+		t.Errorf("the machine was asked to work in something other than the session "+
+			"this pane was told to mirror:\n  %s", sent)
+	}
+	if !strings.Contains(sent, "/opt/herdr/bin/herdr ") {
+		t.Errorf("the machine was told to run something other than the herdr it was "+
+			"told about:\n  %s", sent)
+	}
+}
+
 func TestAttachAsksToTakeOverAStaleClient(t *testing.T) {
 	// A direct attach is exclusive, and the remote client does not always die
 	// with its SSH channel: a mirror pane that is killed can leave `herdr
