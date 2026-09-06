@@ -241,6 +241,95 @@ func docPagesFor(t *testing.T) []string {
 	return append(pages, "README.md")
 }
 
+// TestTheLogsTheDocsNameAreTheLogsThisWrites holds the file names the
+// troubleshooting page sends somebody to against the files this actually
+// opens.
+//
+// The name is written in three places: the code that opens the file, that
+// package's own tests, and the pages. Renaming it in the code fails those
+// tests -- so a rename means changing both, which is what anybody would do --
+// and then the pages are left. Measured: renaming daemon.log in
+// internal/cli and its tests together, and mirror.log in internal/mirror and
+// its tests together, each SURVIVED the whole gate, with every page still
+// saying `cat daemon.log`.
+//
+// Where that lands is the point. The troubleshooting page is what somebody
+// reads when nothing works, and its first instruction is to cat these two
+// files; a name that has moved sends them to nothing at the moment they
+// already cannot see what is wrong. The test below this one has the same names
+// hardcoded in a map, so it would go on checking samples against a file the
+// code no longer writes.
+//
+// Both directions, because they fail differently. A page naming a file nothing
+// writes is the stale rename. A file written and named on no page is a log
+// nobody is told to read, which is the same as not keeping it.
+func TestTheLogsTheDocsNameAreTheLogsThisWrites(t *testing.T) {
+	inRoot(t)
+
+	// What the shipping code opens. Test files are left out because a fixture
+	// writes logs of its own -- asked.log, dialled.log, rotating.log -- and
+	// those are nobody's to document.
+	name := regexp.MustCompile(`"([A-Za-z0-9_-]+\.log)"`)
+	written := map[string]bool{}
+	err := filepath.Walk("internal", func(path string, info os.FileInfo, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case info.IsDir(), !strings.HasSuffix(path, ".go"),
+			strings.HasSuffix(path, "_test.go"),
+			strings.Contains(path, string(filepath.Separator)+"testdata"+string(filepath.Separator)):
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range name.FindAllStringSubmatch(string(raw), -1) {
+			written[m[1]] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(written) == 0 {
+		t.Fatal("nothing under internal/ opens a log file, so this checks nothing")
+	}
+
+	pages, err := DocPages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inProse := regexp.MustCompile(`\b[A-Za-z0-9_-]+\.log\b`)
+	named := map[string]bool{}
+	for _, page := range pages {
+		raw, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range inProse.FindAllString(string(raw), -1) {
+			named[m] = true
+		}
+	}
+	if len(named) == 0 {
+		t.Fatal("no page names a log file at all, so this checks nothing")
+	}
+
+	for file := range named {
+		if !written[file] {
+			t.Errorf("the pages send somebody to %s and nothing under internal/ "+
+				"opens it, so the one instruction somebody follows when nothing "+
+				"works finds no file", file)
+		}
+	}
+	for file := range written {
+		if !named[file] {
+			t.Errorf("this writes %s and no page names it, so nobody is told to "+
+				"read it, which is the same as not keeping it", file)
+		}
+	}
+}
+
 // TestALogSampleIsShownAsComingFromTheLogThatHasIt holds the documentation's
 // examples of log output to the process that writes them.
 //
