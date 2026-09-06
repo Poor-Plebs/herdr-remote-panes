@@ -55,29 +55,53 @@ func TestTheREADMEDocumentsTheRealDefaults(t *testing.T) {
 	t.Logf("checked %d documented defaults against the code", checked)
 }
 
-func TestEverySettingWithADefaultIsInTheTable(t *testing.T) {
+func TestEveryGlobalSettingIsInTheTableAndNoOthersAre(t *testing.T) {
 	// The other direction: a setting this fills in and never mentions is one
 	// somebody cannot know about.
+	//
+	// This used to ask a narrower question than its name did. It marshalled
+	// Defaults() and looked up whatever came back, so a setting whose default
+	// is the zero value was dropped by `omitempty` and never asked about at
+	// all -- `herdr_bin` and `workspace`, the two whose default is "nothing
+	// set". Both are documented, which is exactly why nothing noticed: a check
+	// that cannot see a case reads the same as one that looked and was
+	// satisfied. The fields are read by reflection now, as the per-machine
+	// half below already does, so what is asked about does not depend on what
+	// a setting's default happens to be.
+	//
+	// And the other way round, which that half's comment calls the worse of
+	// the two: a row for something that is not a setting reads as an
+	// instruction, the file accepts the key, and it does nothing. Rows are
+	// matched anchored to the start of a line -- the default column holds
+	// `ssh` and `false` in the same backticks and neither is a setting -- and
+	// the per-machine rows fall out on their own, since `hosts[].target` is
+	// not a word.
 	readme, err := os.ReadFile(repoFile(t, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	raw, err := json.Marshal(Defaults().normalized())
-	if err != nil {
-		t.Fatal(err)
+	fields := jsonNames(reflect.TypeOf(Config{}))
+	if len(fields) == 0 {
+		t.Fatal("no fields found on the configuration; the reflection has moved")
 	}
-	var actual map[string]any
-	if err := json.Unmarshal(raw, &actual); err != nil {
-		t.Fatal(err)
-	}
-
-	for name := range actual {
+	for name := range fields {
 		if name == "hosts" {
 			continue // documented a row at a time as hosts[].something
 		}
-		if !strings.Contains(string(readme), "| `"+name+"` |") {
+		if !strings.Contains(string(readme), "\n| `"+name+"` |") {
 			t.Errorf("the settings table does not mention %q", name)
+		}
+	}
+
+	rows := regexp.MustCompile(`(?m)^\| `+"`"+`(\w+)`+"`"+` \|`).FindAllStringSubmatch(string(readme), -1)
+	if len(rows) == 0 {
+		t.Fatal("no global rows found in the README; the table has moved")
+	}
+	for _, row := range rows {
+		if !fields[row[1]] {
+			t.Errorf("the settings table offers %q, which the configuration does not "+
+				"take -- so it is accepted, ignored, and looks like it worked", row[1])
 		}
 	}
 }
