@@ -65,6 +65,27 @@ func TestAVerdictIsNotInventedFromAnExitCode(t *testing.T) {
 			failed, "would not build",
 		},
 		{
+			// A suite stopped by its own deadline. There is no `--- FAIL:`
+			// line anywhere in this, because no test failed: the binary
+			// panicked with the run half done. Read as "held" it says a test
+			// stands behind the bound, when what happened is that raising the
+			// bound made the package take longer than the deadline.
+			"the suite never finished, which says nothing about the bound",
+			"panic: test timed out after 10m0s\n\ngoroutine 1 [running]:\n" +
+				"FAIL\tinternal/mirror\t600.005s\nFAIL\n",
+			failed, "timed out",
+		},
+		{
+			// A test that fails while SAYING something about a timeout is
+			// still a test objecting. Go's panic prefix is what separates the
+			// two, so match on that and not on the words.
+			"a test that failed talking about a timeout",
+			"--- FAIL: TestTheStreamGivesUp (0.00s)\n" +
+				"    mirror_test.go:9: test timed out waiting for the pane\n" +
+				"FAIL\tinternal/mirror\t0.010s\nFAIL\n",
+			failed, "held",
+		},
+		{
 			// The exit code is not what decides a kill. A run stopped after
 			// its output was already written can still come back zero, and
 			// "NOT HELD" would be a claim about a test that never finished.

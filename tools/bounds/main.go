@@ -22,6 +22,13 @@
 // one verdict it must never invent. Killed is now its own answer, and the
 // tests run under a memory ceiling where the machine can impose one.
 //
+// Time is the same cost in the other currency, and it read as held for
+// longer. maxObserveAttempts raised a thousandfold makes a retry loop wait
+// out four thousand attempts, so internal/mirror never finishes -- and a
+// suite stopped by its own deadline prints a panic and no failing test at
+// all, which is non-zero like everything else. Timed out is its own answer
+// now too.
+//
 // Not part of `make check`: it builds and tests each package once per bound,
 // which is minutes rather than seconds. An unheld bound is something to read
 // rather than a failure -- some are not observable at all, and a report that
@@ -187,7 +194,7 @@ func main() {
 				held++
 			case "would not build":
 				unbuildable++
-			case "killed", "could not write":
+			case "killed", "timed out", "could not write":
 				noAnswer++
 				unanswered = append(unanswered,
 					fmt.Sprintf("%s:%d  %s = %s  -- %s", path, line, name, value, verdict))
@@ -215,10 +222,11 @@ func main() {
 		}
 	}
 	if len(unanswered) > 0 {
-		fmt.Print("\nThese answered nothing: the process was killed rather than failed, so\n" +
+		fmt.Print("\nThese answered nothing: the run was stopped rather than failed, so\n" +
 			"whether anything holds the bound is still unknown. A test that sizes its\n" +
-			"own input from the constant allocates a thousandfold along with it -- read\n" +
-			"the test, and raise these by hand by a little rather than by a lot.\n\n")
+			"own input from the constant allocates a thousandfold along with it, and one\n" +
+			"that waits a step per attempt waits a thousandfold too -- read the test, and\n" +
+			"raise these by hand by a little rather than by a lot.\n\n")
 		for _, one := range unanswered {
 			fmt.Println("  " + one)
 		}
@@ -300,15 +308,26 @@ func check(path, original string, m []int, value, pkg string) (verdict string) {
 // The order is the point. "held" is the verdict never to invent, since it is
 // the one claiming a test stands behind the bound, so everything that ends a
 // run without a test having failed is answered before it -- a build that never
-// ran, and a process the kernel stopped. capped.Max raised to eight gigabytes
-// was killed at twenty and read as held, which is how the tree's one unheld
-// bound reported clean.
+// ran, a process the kernel stopped, and a suite that never finished.
+// capped.Max raised to eight gigabytes was killed at twenty and read as held,
+// which is how the tree's one unheld bound reported clean.
+//
+// The third of those was found the same way, by reading which tests actually
+// objected: maxObserveAttempts raised a thousandfold makes the retry loop wait
+// out four thousand attempts, so internal/mirror never finishes, and a suite
+// stopped by its own deadline prints a panic and no `--- FAIL:` line at all.
+// It exits non-zero like everything else, and that was enough to be called
+// held. Matched on Go's own panic prefix rather than on the words alone, so a
+// test whose failure message happens to talk about timing out is still read as
+// the objection it is.
 func verdictFor(out string, err error) string {
 	switch {
 	case strings.Contains(out, "build failed"):
 		return "would not build"
 	case strings.Contains(out, "signal: killed"):
 		return "killed"
+	case strings.Contains(out, "panic: test timed out"):
+		return "timed out"
 	case err != nil:
 		return "held"
 	}
