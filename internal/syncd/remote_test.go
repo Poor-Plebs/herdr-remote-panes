@@ -2179,6 +2179,20 @@ func TestAMirrorIsToldWhichTerminalOnWhichMachineInWhichMode(t *testing.T) {
 	if got := env["HRP_NAME"]; !strings.HasSuffix(got, "@bot") {
 		t.Errorf("the pane was named %q, which does not say which machine it is on", got)
 	}
+
+	// And opened AS this plugin's mirror pane. PluginID and paneEntrypoint are
+	// adjacent constants of the same type at the call, and exchanging them
+	// compiles: Herdr would then own the pane to a plugin that does not exist
+	// and run an entrypoint nothing declares, so nothing opens at all. The
+	// whole gate stayed green on that swap, in both places a pane is opened,
+	// because the stand-in read --entrypoint only to pick a default placement
+	// and never read --plugin.
+	if got, _ := mirrors[0]["plugin_id"].(string); got != PluginID {
+		t.Errorf("the pane was opened for plugin %q, want %q", got, PluginID)
+	}
+	if got, _ := mirrors[0]["entrypoint"].(string); got != paneEntrypoint {
+		t.Errorf("the pane was opened as entrypoint %q, want %q", got, paneEntrypoint)
+	}
 }
 
 func TestAPlainTerminalIsToldWhichMachineAndThatItIsNotMirroring(t *testing.T) {
@@ -2221,6 +2235,20 @@ func TestAPlainTerminalIsToldWhichMachineAndThatItIsNotMirroring(t *testing.T) {
 	// which of them went -- which is the defect the label was added for.
 	if got := env["HRP_NAME"]; !strings.HasSuffix(got, "@bot") {
 		t.Errorf("the terminal was named %q, which does not say which machine it is on", got)
+	}
+
+	// And opened AS this plugin's mirror pane. PluginID and paneEntrypoint are
+	// adjacent constants of the same type at the call, and exchanging them
+	// compiles: Herdr would then own the pane to a plugin that does not exist
+	// and run an entrypoint nothing declares, so nothing opens at all. The
+	// whole gate stayed green on that swap, in both places a pane is opened,
+	// because the stand-in read --entrypoint only to pick a default placement
+	// and never read --plugin.
+	if got, _ := panes[0]["plugin_id"].(string); got != PluginID {
+		t.Errorf("the pane was opened for plugin %q, want %q", got, PluginID)
+	}
+	if got, _ := panes[0]["entrypoint"].(string); got != paneEntrypoint {
+		t.Errorf("the pane was opened as entrypoint %q, want %q", got, paneEntrypoint)
 	}
 }
 

@@ -429,6 +429,15 @@ func main() {
 			"pane_id": id, "tab_id": tab, "workspace_id": workspace,
 			"terminal_id": state.id("term_"), "label": "", "focused": focused,
 			"env": env,
+			// WHICH plugin, and which of its panes. Both were thrown away, and
+			// they are adjacent constants of the same type at the call: sent
+			// the wrong way round the real Herdr owns the pane to a plugin
+			// that does not exist and runs an entrypoint that is not declared,
+			// so nothing opens and nothing here noticed. --entrypoint was read
+			// for the default placement below and never kept; --plugin was not
+			// read at all.
+			"plugin_id":  flag("--plugin"),
+			"entrypoint": flag("--entrypoint"),
 		}
 		save()
 		ok(map[string]any{"plugin_pane": map[string]any{"pane": state.Panes[id]}})

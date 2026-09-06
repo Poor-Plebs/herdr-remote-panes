@@ -274,6 +274,36 @@ func TestTheVersionIsTheSameInBothPlacesItIsWritten(t *testing.T) {
 	}
 }
 
+func TestThePaneTheDaemonOpensIsOneTheManifestDeclares(t *testing.T) {
+	// The sibling of the test below, which was never written. PluginID is held
+	// to the manifest's id; paneEntrypoint -- the other half of every pane this
+	// opens -- was held to nothing at all.
+	//
+	// Herdr runs the command of the pane named by --entrypoint. Rename the pane
+	// in the manifest and the daemon goes on asking for the old name, so every
+	// mirror and every terminal fails to open, with the plugin still loading
+	// and the manifest still valid. Nothing outside Herdr can say the name is
+	// right; the two places it is written can be held to each other.
+	manifest, err := os.ReadFile(repoFile(t, "herdr-plugin.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := regexp.MustCompile(`(?m)^\[\[panes\]\]\nid = "([^"]+)"`).
+		FindAllStringSubmatch(string(manifest), -1)
+	if len(declared) == 0 {
+		t.Fatal("the manifest declares no panes at all, so this checks nothing")
+	}
+	names := make([]string, 0, len(declared))
+	for _, pane := range declared {
+		names = append(names, pane[1])
+		if pane[1] == paneEntrypoint {
+			return
+		}
+	}
+	t.Errorf("the daemon opens panes as %q and the manifest declares %v",
+		paneEntrypoint, names)
+}
+
 func TestThePluginIDIsTheSameEverywhereItIsWritten(t *testing.T) {
 	// PluginID carries a comment saying it must match the id in the manifest,
 	// which is a note to whoever reads it rather than anything that would stop
