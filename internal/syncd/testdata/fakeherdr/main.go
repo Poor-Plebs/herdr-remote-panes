@@ -242,6 +242,8 @@ func main() {
 			if tokens == nil {
 				tokens = map[string]any{}
 			}
+			// And who marked it, for the same reason as the agent above.
+			state.Workspaces[id]["metadata_source"] = flag("--source")
 			// Cleared first and set after, which is the order the arguments
 			// mean: a call clears the token for the other state and sets its
 			// own, and doing it the other way round would clear what it just
@@ -472,6 +474,11 @@ func main() {
 		} else {
 			pane["agent"] = flag("--agent")
 			pane["agent_status"] = flag("--state")
+			// WHO is claiming the agent. Herdr attributes a reported agent to
+			// the plugin named here, and a release has to name the same one.
+			// It was dropped, so the daemon could report every agent under
+			// another plugin's name, or under none, with nothing to say so.
+			pane["agent_source"] = flag("--source")
 		}
 		save()
 		ok(map[string]any{"pane_id": id})

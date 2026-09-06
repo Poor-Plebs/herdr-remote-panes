@@ -1143,6 +1143,14 @@ func TestAnAgentOnTheMachineAppearsHereAsItself(t *testing.T) {
 	if got, _ := mirror["agent_status"].(string); got != "working" {
 		t.Errorf("the agent shows as %q here, want it working", got)
 	}
+	// And claimed by THIS plugin. --source is what Herdr attributes the agent
+	// to and what a release has to name again to match; the daemon could send
+	// another plugin's id, or an empty one, and the whole gate stayed green,
+	// because the stand-in recorded the agent and its state and dropped who
+	// was speaking.
+	if got, _ := mirror["agent_source"].(string); got != PluginID {
+		t.Errorf("the agent is reported by %q, want %q", got, PluginID)
+	}
 
 	// It finishes: the pane stops claiming an agent rather than showing a
 	// stale one for the rest of the session.
@@ -3304,6 +3312,20 @@ func TestAPlainSSHMachineReportsNoAgents(t *testing.T) {
 	}
 }
 
+// markedBy is the plugin that put the marker on a machine's space. Herdr keeps
+// workspace metadata per source, so this is the other half of markerOn: the
+// token says what is drawn and this says on whose authority.
+func markedBy(t *testing.T, held fakeHerdr, label string) string {
+	t.Helper()
+	for _, ws := range held.Workspaces {
+		if name, _ := ws["label"].(string); strings.Contains(name, label) {
+			source, _ := ws["metadata_source"].(string)
+			return source
+		}
+	}
+	return ""
+}
+
 // markerOn is the state token a machine's space carries here: "remote_up" when
 // the machine is answering, "remote_down" when it is not. It is what the glyph
 // beside the name in the sidebar is drawn from.
@@ -3348,6 +3370,13 @@ func TestTheMarkerOnASpaceFollowsWhetherTheMachineAnswers(t *testing.T) {
 	}
 	settle(t, d, here, 2, there)
 
+	// Marked by THIS plugin. The source is what Herdr keeps the metadata
+	// under, and the daemon could send another plugin's id or an empty one
+	// with the whole gate green, because the stand-in recorded the token and
+	// dropped who set it.
+	if got := markedBy(t, here(), "bot"); got != PluginID {
+		t.Errorf("the space is marked by %q, want %q", got, PluginID)
+	}
 	if got := markerOn(t, here(), "bot"); got != "remote_up" {
 		t.Fatalf("a machine that answers wears %q, want remote_up", got)
 	}
