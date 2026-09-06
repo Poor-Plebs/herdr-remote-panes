@@ -153,7 +153,7 @@ func main() {
 	}
 	fmt.Println()
 
-	var survived []mutation
+	var survived, hung []mutation
 	caught, unusable := 0, 0
 	started := time.Now()
 	lastReport := started
@@ -172,6 +172,10 @@ func main() {
 				m.file, m.line, m.column, m.old, m.new, why, pointAt(m))
 		case "caught":
 			caught++
+		case "hung":
+			hung = append(hung, m)
+			fmt.Printf("HUNG      %s:%d:%d  %s -> %s\n%s\n",
+				m.file, m.line, m.column, m.old, m.new, pointAt(m))
 		default:
 			unusable++
 		}
@@ -202,8 +206,18 @@ func main() {
 	}
 	unexplained := len(survived) - onErrors - onClamps - onRead
 
-	fmt.Printf("\n%d mutations: %d caught, %d survived, %d would not build, in %s\n",
-		len(muts), caught, len(survived), unusable, time.Since(started).Round(time.Second))
+	fmt.Printf("\n%d mutations: %d caught, %d survived, %d hung, %d would not build, in %s\n",
+		len(muts), caught, len(survived), len(hung), unusable,
+		time.Since(started).Round(time.Second))
+	if len(hung) > 0 {
+		fmt.Print("\nThese answered nothing: the suite ran out of time rather than\n" +
+			"failing, so whether anything holds the line is still unknown. A flip\n" +
+			"that makes the code wait for something that never comes looks exactly\n" +
+			"like one a test objected to -- read each, and run it by hand.\n\n")
+		for _, m := range hung {
+			fmt.Printf("  %s:%d:%d  %s -> %s\n", m.file, m.line, m.column, m.old, m.new)
+		}
+	}
 
 	recordSweep(sweptPath, pkg, since, os.Args[2:],
 		len(muts), caught, len(survived), unexplained)
@@ -278,13 +292,43 @@ func try(work, pkg string, m mutation) (string, error) {
 		_ = out
 		return "unusable", nil
 	}
-	// Bounded: a mutation can make the code loop rather than fail, and a sweep
-	// that waits for it tells you nothing while looking busy. Hanging counts as
-	// caught -- the test would never have finished.
-	if _, err := run(work, "go", "test", pkg, "-count=1", "-timeout", "120s"); err != nil {
-		return "caught", nil
+	out, err := run(work, "go", "test", pkg, "-count=1", "-timeout", testBudget)
+	return verdictFor(out, err), nil
+}
+
+// testBudget bounds one mutation's test run. A mutation can make the code loop
+// rather than fail, and a sweep that waits for it tells you nothing while
+// looking busy.
+const testBudget = "120s"
+
+// verdictFor reads what `go test` made of a mutation.
+//
+// Apart from try so that it can be read without building anything, and because
+// this judgement is the whole of what the tool produces. "caught" claims a test
+// stands behind the line, so a run that ended without one having objected has
+// to be answered before it.
+//
+// Hanging used to count as caught, on the reasoning that "the test would never
+// have finished". That is an inference about WHY the run stopped, which a
+// deadline cannot support, and it was wrong here: a sweep of mirror.go read 56
+// of 58 caught, and two of those were the suite running out of time. One was
+// `!timer.Stop()` losing its `!`, which enters a drain that blocks for ever --
+// a line held by nothing at all, reported as though a test stood behind it.
+//
+// A panic is still caught, and deliberately: the run finished, badly, and the
+// mutation is not surviving. Two more of that same 58 were panics with no test
+// failing -- a nil process signalled, and an error branch entered with no error
+// -- so "caught" there means the suite crashed rather than that a test objected.
+// That is a weaker claim than it looks, and worth remembering when a package
+// reports nearly everything caught.
+func verdictFor(out []byte, err error) string {
+	switch {
+	case err == nil:
+		return "survived"
+	case strings.Contains(string(out), "panic: test timed out"):
+		return "hung"
 	}
-	return "survived", nil
+	return "caught"
 }
 
 // mutationsIn lists what can be changed in a package's own files.

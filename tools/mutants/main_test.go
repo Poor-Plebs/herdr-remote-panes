@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -1250,6 +1251,67 @@ func TestOutputIsOnlyMarkedCutWhenSomethingWasCut(t *testing.T) {
 	}
 }
 
+// TestARunThatEndedWithoutATestObjectingIsNotCaught holds the one verdict this
+// tool must never invent.
+//
+// "caught" says a test stands behind the line. Every way a run can end badly
+// exits non-zero, and only one of them means a test objected -- so a suite that
+// ran out of time has to be answered first. It was not: a sweep of mirror.go
+// read 56 of 58 caught with two of those being the deadline, one of them a
+// drain that blocks for ever and is held by nothing.
+func TestARunThatEndedWithoutATestObjectingIsNotCaught(t *testing.T) {
+	failed := errors.New("exit status 1")
+
+	for _, tt := range []struct {
+		what string
+		out  string
+		err  error
+		want string
+	}{
+		{
+			"a test objected, which is the whole point",
+			"--- FAIL: TestTheLoopEnds (0.00s)\nFAIL\tinternal/mirror\t0.02s\n",
+			failed, "caught",
+		},
+		{
+			"everything passed, so nothing holds the line",
+			"ok  \tinternal/mirror\t2.47s\n", nil, "survived",
+		},
+		{
+			// No `--- FAIL:` line anywhere in this: no test failed, the binary
+			// panicked with the run half done. Read as caught it says a test
+			// stands behind the line, when what happened is that the mutation
+			// made the suite wait for something that never came.
+			"the suite ran out of time, which says nothing about the line",
+			"panic: test timed out after 120s\n\ngoroutine 1 [running]:\n" +
+				"FAIL\tinternal/mirror\t120.01s\n",
+			failed, "hung",
+		},
+		{
+			// A test that fails while SAYING something about a timeout is
+			// still a test objecting. Go's panic prefix separates the two.
+			"a test that failed talking about a timeout",
+			"--- FAIL: TestTheStreamGivesUp (0.00s)\n" +
+				"    mirror_test.go:9: test timed out waiting for the pane\n" +
+				"FAIL\tinternal/mirror\t0.01s\n",
+			failed, "caught",
+		},
+		{
+			// Deliberate, and a weaker claim than the word suggests: the run
+			// finished, badly, and the mutation is not surviving -- but no
+			// test objected either. Two of mirror.go's 58 are this.
+			"a panic with no test failing is still not a survivor",
+			"panic: runtime error: invalid memory address\n\ngoroutine 7:\n" +
+				"FAIL\tinternal/mirror\t0.03s\n",
+			failed, "caught",
+		},
+	} {
+		if got := verdictFor([]byte(tt.out), tt.err); got != tt.want {
+			t.Errorf("%s: verdict %q, want %q", tt.what, got, tt.want)
+		}
+	}
+}
+
 // TestTheSweepSaysWhichMutationSurvivedAndWhere holds what the command prints
 // for a survivor, by building it and running it over a fixture module.
 //
@@ -1319,7 +1381,7 @@ func TestTheSweepSaysWhichMutationSurvivedAndWhere(t *testing.T) {
 	if !strings.Contains(said, want) {
 		t.Errorf("the sweep does not say where the survivor is:\nwant:\n%s\ngot:\n%s", want, said)
 	}
-	if !strings.Contains(said, "2 mutations: 1 caught, 1 survived, 0 would not build") {
+	if !strings.Contains(said, "2 mutations: 1 caught, 1 survived, 0 hung, 0 would not build") {
 		t.Errorf("the summary does not count what it found:\n%s", said)
 	}
 	// The control. Held is on line 4 and was caught, so nothing about line 4
