@@ -274,7 +274,7 @@ func TestNormalizedClampsNonsense(t *testing.T) {
 	}
 }
 
-func TestUnknownModeFallsBackToSSH(t *testing.T) {
+func TestEveryModeTheConfigAcceptsResolvesAndTheRestFallBack(t *testing.T) {
 	// Treating anything that is not "ssh" as mirroring meant a mode spelled
 	// wrong silently turned on the experimental feature — the opposite of what
 	// someone who made a typo wants.
@@ -298,14 +298,33 @@ func TestUnknownModeFallsBackToSSH(t *testing.T) {
 		}
 	}
 
-	// The two real mirroring modes still work.
-	for _, mode := range []Mode{ModeAttach, ModeObserve} {
+	// And every mode the config accepts resolves to itself, swept from the
+	// list the complaints are built from rather than written out again.
+	//
+	// This was a hand-written pair, and the fallback above is what makes that
+	// dangerous: a mode added to the list but given no case here is accepted
+	// by the file, complained about by nothing, and quietly run as a plain
+	// terminal. Measured -- a fourth mode added to the list survives the whole
+	// gate once the page quoting the complaint is updated too, which is what
+	// anybody adding one would do. The only thing that had caught it was a
+	// test holding that page word for word, which is a tripwire and not a
+	// guard: it fires on the sentence changing, not on the mode being ignored.
+	//
+	// The sibling for placements is TestEveryPlacementTheConfigAcceptsIsOneThisPackageHandles
+	// in internal/syncd, which is why Placements() is exported and this list
+	// need not be: what acts on a mode is EffectiveMode, in this package.
+	if len(modes) < 2 {
+		t.Fatal("the config accepts almost no modes, so this sweep checks nothing")
+	}
+	for _, mode := range modes {
 		host := Host{Target: "bot", Mode: mode}
-		if !cfg.Mirrors(host) {
-			t.Errorf("mode %q should mirror", mode)
-		}
 		if got := cfg.EffectiveMode(host); got != mode {
-			t.Errorf("EffectiveMode(%q) = %q, want it unchanged", mode, got)
+			t.Errorf("the config accepts mode %q and EffectiveMode gives %q, so it is "+
+				"taken, not complained about, and run as something else", mode, got)
+		}
+		// ssh is in that list too, and it is the one that does not mirror.
+		if want := mode != ModeSSH; cfg.Mirrors(host) != want {
+			t.Errorf("mode %q: Mirrors = %v, want %v", mode, cfg.Mirrors(host), want)
 		}
 	}
 }
@@ -1847,7 +1866,8 @@ func TestALabelThatIsAnotherMachinesTargetIsReported(t *testing.T) {
 // replaces the top-level mode instead of being checked against it, so a
 // misspelling does not fall back to what the rest of the machines use.
 //
-// TestUnknownModeFallsBackToSSH already holds that a misspelling gives ssh,
+// TestEveryModeTheConfigAcceptsResolvesAndTheRestFallBack already holds that
+// a misspelling gives ssh,
 // but it runs on Defaults(), whose mode is ssh -- so a build that resolved a
 // machine's mode by ignoring the machine and reading the top level would pass
 // it. The top level here is attach, which is what makes the two answers
