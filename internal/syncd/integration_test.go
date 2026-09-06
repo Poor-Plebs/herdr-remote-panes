@@ -37,6 +37,8 @@ type fakeHerdr struct {
 	Next       int                       `json:"next"`
 	Focused    []string                  `json:"focused_spaces"`
 	Calls      map[string]int            `json:"calls"`
+	// Splits is the direction each `pane split` asked for, in order.
+	Splits []string `json:"splits"`
 }
 
 // withFakeHerdr points the plugin at the stand-in and at an ssh that answers,
@@ -940,6 +942,23 @@ func TestOutsideAMachinesSpaceNewTerminalIsAnOrdinaryOne(t *testing.T) {
 	if got := panesFor(held(), "bot"); got != 0 {
 		t.Errorf("%d terminals were opened on a machine nobody was looking at", got)
 	}
+	// And a pane was actually asked for. The message was the whole of what
+	// this checked, and "opened a local pane" is a sentence the daemon can say
+	// without having asked Herdr anything -- removing the split call
+	// altogether left both arms of this green.
+	//
+	// The direction with it, because an empty one is not the same as not
+	// sending the flag: Herdr reads `--direction ""` as an instruction to use
+	// "", so the key that is meant to work everywhere does nothing in exactly
+	// the case this branch exists for. Both "left" and "" survived the whole
+	// gate before this line.
+	if got := held().Calls["pane split"]; got != 1 {
+		t.Errorf("`pane split` was asked for %d times, want once: %v",
+			got, held().Calls)
+	}
+	if got := held().Splits; len(got) != 1 || got[0] != "right" {
+		t.Errorf("the pane was split %v, want one to the right", got)
+	}
 
 	tab := d.dispatch(Command{Cmd: "open", Workspace: "w-elsewhere", Placement: "tab"})
 	if !tab.OK {
@@ -947,6 +966,15 @@ func TestOutsideAMachinesSpaceNewTerminalIsAnOrdinaryOne(t *testing.T) {
 	}
 	if !strings.Contains(tab.Message, "tab") {
 		t.Errorf("open-tab said %q, which does not read as an ordinary tab", tab.Message)
+	}
+	// The same for this arm, and it is the one that says the two are not the
+	// same call: a tab is made here rather than a second pane split.
+	if got := held().Calls["tab create"]; got != 1 {
+		t.Errorf("`tab create` was asked for %d times, want once: %v", got, held().Calls)
+	}
+	if got := held().Calls["pane split"]; got != 1 {
+		t.Errorf("`pane split` was asked for %d times over both actions, want the one "+
+			"the terminal above made: %v", got, held().Calls)
 	}
 }
 

@@ -26,6 +26,11 @@ type fakeHerdr struct {
 	Next       int                       `json:"next"`
 	// Focused is every space that was brought to the front, in order.
 	Focused []string `json:"focused_spaces"`
+	// Splits is the direction each `pane split` asked for, in order. The call
+	// used to fall through to the catch-all, which succeeds at anything and
+	// keeps none of it -- so which way the pane opened, and whether it was
+	// asked for at all rather than merely counted, were both invisible.
+	Splits []string `json:"splits"`
 	// Calls counts what was asked for, by the verb rather than the whole
 	// command. Several things this plugin does are promises not to make a call
 	// -- not to rename a pane that already carries the name, not to report an
@@ -482,6 +487,16 @@ func main() {
 		}
 		save()
 		ok(map[string]any{"pane_id": id})
+
+	case strings.HasPrefix(join, "pane split"):
+		// The direction and nothing else. Herdr makes a pane here; this does
+		// not, because nothing in the plugin reads the result -- it splits the
+		// pane somebody is looking at and hands back an id that is thrown
+		// away. Recording a pane would put one in every listing that follows,
+		// which is a difference from the real thing in the other direction.
+		state.Splits = append(state.Splits, flag("--direction"))
+		save()
+		ok(map[string]any{})
 
 	case strings.HasPrefix(join, "pane rename"):
 		id := args[2]
