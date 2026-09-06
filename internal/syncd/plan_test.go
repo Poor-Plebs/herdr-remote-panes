@@ -4902,7 +4902,19 @@ func TestAPlacementHerdrWillNotTakeOpensATabAsPromised(t *testing.T) {
 	if len(accepted) == 0 {
 		t.Fatal("no placements are listed for `plugin pane open`, so this checks nothing")
 	}
-	for _, placement := range []string{"follow", "split", "tab", "zoomed", "overlay", "popup", "nonsense", ""} {
+
+	// Every placement the config accepts, asked for rather than written out
+	// again -- which is the second-copy mistake the paragraph above is about,
+	// one step further in. The accepted set was already read from the list
+	// `make herdr` checks; the values PUT THROUGH the planner were a third
+	// copy, so a placement added to the config and given a case here would
+	// never have been tried against what Herdr takes. Plus the ones the config
+	// refuses, because the fallback they reach is passed to Herdr too.
+	tried := append(config.Placements(), "popup", "nonsense", "")
+	if len(tried) < 4 {
+		t.Fatal("the config offers almost no placements, so this sweep checks nothing")
+	}
+	for _, placement := range tried {
 		if got := planPaneTarget(placement, "w1", "w1:p1"); !accepted[got.Placement] {
 			t.Errorf("placement %q is planned as %q, which is not one Herdr's "+
 				"--placement takes: %v", placement, got.Placement, accepted)
