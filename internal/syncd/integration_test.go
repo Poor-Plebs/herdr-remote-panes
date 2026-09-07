@@ -2071,7 +2071,7 @@ func TestTheDaemonDoesNotLeaveFilesOpen(t *testing.T) {
 		return len(entries) - 1
 	}
 
-	withFakeHerdr(t)
+	held := withFakeHerdr(t)
 	d := New(machineConfig("bot", "prod"))
 
 	// A first round, so that anything opened once is open before counting.
@@ -2079,6 +2079,9 @@ func TestTheDaemonDoesNotLeaveFilesOpen(t *testing.T) {
 	d.reconcileAll()
 	d.dispatch(Command{Cmd: "disconnect", Host: "bot"})
 	before := open()
+	// What the warm round asked Herdr for, so the rounds below can be shown
+	// to have asked for more.
+	asked := herdrCalls(held)
 
 	for i := 0; i < 15; i++ {
 		d.dispatch(Command{Cmd: "connect"})
@@ -2095,6 +2098,28 @@ func TestTheDaemonDoesNotLeaveFilesOpen(t *testing.T) {
 		t.Errorf("fifteen rounds left %d files open, up from %d: something is "+
 			"not being closed", after, before)
 	}
+
+	// The control that the rounds happened at all. A daemon that connected to
+	// nothing would open nothing, leak nothing, and pass the count above by
+	// comparing an idle process with itself -- so the count is only worth
+	// reading once the work behind it is known to have run.
+	if ran := herdrCalls(held) - asked; ran == 0 {
+		t.Error("the fifteen rounds asked Herdr for nothing at all, so the " +
+			"descriptor count above compared an idle process with itself: " +
+			"either connect stopped reaching the fake Herdr, or a round no " +
+			"longer runs any command")
+	}
+}
+
+// herdrCalls totals every command the fake Herdr has been asked for. The
+// descriptor test reads it before and after its rounds, because "nothing was
+// left open" is the same answer whether the work ran or never started.
+func herdrCalls(held func() fakeHerdr) int {
+	total := 0
+	for _, n := range held().Calls {
+		total += n
+	}
+	return total
 }
 
 func TestARestartBringsBackAMachineNobodyNamesAgain(t *testing.T) {

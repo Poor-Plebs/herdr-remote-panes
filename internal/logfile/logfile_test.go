@@ -560,4 +560,20 @@ func TestRotatingDoesNotLeaveTheReplacedGenerationOpen(t *testing.T) {
 		t.Errorf("%d rotations left %d more descriptors open (%d, was %d): the "+
 			"generation being replaced is not closed", rotations, after-before, after, before)
 	}
+
+	// The control that the rotations happened. Writes that stopped rotating
+	// would open no second generation, leave no descriptor behind, and pass the
+	// count above -- and the file would grow without bound, which is the whole
+	// thing the bound exists to stop. Rotation moves each generation aside, so
+	// the live log holds one line and not everything written.
+	wrote := int64(len(line) * (rotations + 1))
+	st, err := os.Stat(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Size() >= wrote {
+		t.Errorf("the live log holds %d bytes of the %d written, so nothing "+
+			"rotated and the descriptor count above compared a file that was "+
+			"only ever appended to with itself", st.Size(), wrote)
+	}
 }
