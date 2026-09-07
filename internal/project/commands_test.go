@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 )
 
 // TestEveryCommandTheDocsGiveStillWorks holds the commands in the
@@ -191,5 +193,84 @@ func TestEveryCommandTheDocsGiveStillWorks(t *testing.T) {
 	if targeted < 5 {
 		t.Fatalf("found %d make targets in the documentation, which is fewer than "+
 			"there are; the prose ones are the easy half to stop matching", targeted)
+	}
+}
+
+// TestEveryPlacementThePluginSendsIsAccountedFor holds the --placement values
+// written as literals, which is the sender internal/syncd's own check cannot
+// see.
+//
+// That one holds every placement planPaneTarget produces against
+// herdrcli.Dependencies, which is the list `make herdr` asks Herdr about. It
+// covers the mirror path and nothing else: internal/cli's menu calls
+// herdrcli.Run directly with "--placement", "popup", so a second sender exists
+// outside the chain that is held, and a placement changed there would reach
+// Herdr with nothing having looked at it.
+//
+// popup is ACCOUNTED FOR HERE rather than declared in Dependencies, and the
+// reason is written out because an exception with no reason rots. `make herdr`
+// checks a declared value against Herdr's own `--help`, which lists overlay,
+// split, tab and zoomed and does not mention popup -- while the binary ACCEPTS
+// popup: measured against 0.8.2 on 2026-09-07, where an unknown value is
+// refused by name ("invalid pane placement: banana") and popup is not.
+// Declaring it would make `make herdr` report drift that is not there. Leaving
+// it unaccounted for is how a menu sending it went unnoticed.
+func TestEveryPlacementThePluginSendsIsAccountedFor(t *testing.T) {
+	inRoot(t)
+
+	accounted := map[string]string{}
+	for _, dep := range herdrcli.Dependencies {
+		if len(dep.Command) == 3 && dep.Command[2] == "open" {
+			for _, value := range dep.Values["--placement"] {
+				accounted[value] = "declared in herdrcli.Dependencies, where `make herdr` checks it"
+			}
+		}
+	}
+	if len(accounted) == 0 {
+		t.Fatal("no placements are declared for `plugin pane open`, so this holds nothing")
+	}
+	accounted["popup"] = "sent by the menu; Herdr 0.8.2 takes it though its --help omits it"
+
+	sends := regexp.MustCompile(`"--placement",\s*"([a-zA-Z]+)"`)
+	found := 0
+	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if name := info.Name(); path != "." && (strings.HasPrefix(name, ".") ||
+				name == "bin" || name == "vendor" || name == "testdata") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range sends.FindAllStringSubmatch(string(source), -1) {
+			found++
+			if why, ok := accounted[m[1]]; !ok {
+				t.Errorf("%s sends --placement %q, and nothing accounts for it. Either "+
+					"add it to herdrcli.Dependencies, where `make herdr` will check it "+
+					"against Herdr, or account for it here with what you measured against "+
+					"the binary. Accounted for now: %v", path, m[1], accounted)
+			} else if why == "" {
+				t.Errorf("%s sends --placement %q with an empty reason", path, m[1])
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	// Self-verifying: the walk has to have found the menu's literal, or a
+	// renamed flag would leave this passing over a tree it read nothing in.
+	if found == 0 {
+		t.Fatal("no --placement literal was found in the tree, so this holds nothing: " +
+			"the flag has been renamed, or it is no longer written as a literal")
 	}
 }
