@@ -529,6 +529,32 @@ func TestEverySSHCommandPutsTheDestinationAfterADash(t *testing.T) {
 			"this test is looking for the wrong shape", found)
 	}
 
+	// And remote.go is the only file that builds one, which the count above
+	// does not say: it counts what is here and is silent about everywhere
+	// else. Checked rather than assumed, as
+	// TestNothingNewTalksToHerdrHoldingTheDaemonsLock checks its own scope in
+	// internal/syncd -- a sibling assembling an ssh command is a file this
+	// says nothing whatever about, and the failure would be silence rather
+	// than a test going red. exec.go is where that would most plausibly land:
+	// runCommand already takes an argv somebody else put together.
+	siblings, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range siblings {
+		if name == "remote.go" || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), `[]string{"ssh"`) {
+			t.Errorf("%s builds an ssh command and this reads only remote.go, so "+
+				"nothing here says whether its destination is behind a \"--\"", name)
+		}
+	}
+
 	// And the thing they all lean on actually does it, in both modes.
 	for _, tty := range []bool{true, false} {
 		args := New("bot", "").SSHArgs(tty)
