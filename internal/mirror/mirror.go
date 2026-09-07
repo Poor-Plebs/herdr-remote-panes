@@ -214,6 +214,10 @@ func reportFailure(err error) {
 	time.Sleep(holdOpen)
 }
 
+// bridge is the pane's entrypoint: it reads what the daemon told it through the
+// environment and decides which of the three things to be. Getting that wrong
+// is not a crash but a pane doing the wrong thing quietly -- a plain SSH
+// session where a mirror was meant, or a mirror of nothing.
 func bridge() error {
 	// Record liveness so the daemon can tell a running mirror from a pane that
 	// Herdr restored without its command.

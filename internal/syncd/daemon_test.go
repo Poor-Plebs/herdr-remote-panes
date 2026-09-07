@@ -598,7 +598,7 @@ func TestACallHerdrRefusedIsNotRememberedAsApplied(t *testing.T) {
 // space it did not go to, immediately under the error saying why.
 //
 // Three of the other guard returns in this file were measured and left alone.
-// Falling through the marshal failure in saveSnapshot cannot happen at all --
+// Falling through the marshal failure in marshalSnapshot cannot happen at all --
 // a snapshot is strings, ints and maps of them, which json.MarshalIndent has
 // no way to refuse. Falling through the workspace lookup above only reaches
 // the "no space of its own to go to" line, which says the same thing. Both are

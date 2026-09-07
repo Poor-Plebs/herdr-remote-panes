@@ -112,6 +112,113 @@ func TestEveryDocCommentNamesItsOwnFunction(t *testing.T) {
 	t.Logf("checked %d documented functions", checked)
 }
 
+func TestNoDocCommentIsStrandedAwayFromWhatItDocuments(t *testing.T) {
+	// A comment separated from what it documents by a blank line is attached
+	// to nothing at all, and the check above cannot see it: that one reads
+	// each declaration's own doc comment, and a stranded comment is nobody's.
+	// `go doc` will not show it either, which is the whole reason it was
+	// written where it was.
+	//
+	// Both instances in this tree were the same shape -- an explanation
+	// written as documentation, filed where the thing it explains is not. One
+	// opened with saveSnapshot, a function that had been split in two and no
+	// longer existed anywhere; the other explained the pane's entrypoint from
+	// inside its test file, while the entrypoint itself carried no comment at
+	// all.
+	//
+	// HONEST LIMIT: this sees only a comment opening with a LOWERCASE word. Go
+	// names unexported things that way and an English sentence does not begin
+	// that way, which is what separates a stranded doc comment from the
+	// ordinary paragraphs of prose this repository keeps at file level. A
+	// stranded comment for an EXPORTED name opens with a capital and cannot be
+	// told from prose here, so it is not caught.
+	inRoot(t)
+
+	examined := 0
+	err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if name := entry.Name(); path != "." && (strings.HasPrefix(name, ".") || name == "bin" || name == "vendor") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+
+		attached := map[*ast.CommentGroup]bool{file.Doc: true}
+		for _, decl := range file.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				attached[d.Doc] = true
+			case *ast.GenDecl:
+				attached[d.Doc] = true
+			}
+		}
+
+		for _, group := range file.Comments {
+			if attached[group] {
+				continue
+			}
+			// A comment that does not start its own line is a remark about
+			// that line, and one inside a declaration is commentary on the
+			// code around it. Neither is documentation of anything.
+			if fset.Position(group.Pos()).Column != 1 {
+				continue
+			}
+			within := false
+			for _, decl := range file.Decls {
+				if group.Pos() > decl.Pos() && group.End() < decl.End() {
+					within = true
+					break
+				}
+			}
+			if within {
+				continue
+			}
+			examined++
+
+			opening := strings.Fields(strings.TrimPrefix(group.List[0].Text, "//"))
+			if len(opening) == 0 {
+				continue
+			}
+			first := strings.TrimRight(opening[0], ",.:")
+			if first == "" || first[0] < 'a' || first[0] > 'z' {
+				continue
+			}
+			if strings.ContainsAny(first, "`\"'()[]{}*/;!?") {
+				continue
+			}
+			t.Errorf("%s: this comment opens with %q and is attached to nothing.\n"+
+				"A blank line between a doc comment and its declaration leaves the "+
+				"comment documenting nothing: go doc will not show it, and what it "+
+				"describes reads as undocumented. Move it against what it documents, "+
+				"or reword it so it does not open with a name.",
+				fset.Position(group.Pos()), first)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	// Guards against the walk finding no free-floating comments at all, which
+	// is how a check like this stops meaning anything.
+	if examined < 10 {
+		t.Fatalf("only %d file-level comments stand apart from a declaration; "+
+			"the walk is not reaching the source", examined)
+	}
+	t.Logf("examined %d file-level comments attached to no declaration", examined)
+}
+
 func TestEveryPackageSaysWhatItIsFor(t *testing.T) {
 	// A package comment is the first thing anybody reads about a package, and
 	// the only part of it `go doc` shows without being asked for a name. It has

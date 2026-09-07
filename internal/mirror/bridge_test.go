@@ -13,11 +13,6 @@ import (
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/remote"
 )
 
-// bridge is the pane's entrypoint: it reads what the daemon told it through the
-// environment and decides which of the three things to be. Getting that wrong
-// is not a crash but a pane doing the wrong thing quietly -- a plain SSH
-// session where a mirror was meant, or a mirror of nothing.
-
 // recordingSSH puts an ssh on PATH that writes down how it was called and
 // exits, so a test can see which of the three was run and with what.
 func recordingSSH(t *testing.T) fakeSSH {
