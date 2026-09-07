@@ -409,6 +409,35 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 		t.Errorf("nothing answers after upgrading from %s.\nnew daemon said:\n%s\n%s daemon said:\n%s",
 			previous, replacingSaid, previous, oldSaid)
 	}
+
+	// And a socket of the shape the check above looks for was actually made,
+	// which is what stops that check passing by finding nothing.
+	//
+	// It only lands in the temp directory when the direct path is too long to
+	// bind: socketPathFor falls back to a hashed short name past 100 bytes.
+	// Measured here at 101 to 104 -- a margin of ONE byte, made up of this
+	// test's own name, the "state" directory under it and the session called
+	// "upgrade-across". Rename the test three characters shorter, or the
+	// session, and every daemon binds inside its state directory instead: the
+	// glob then matches nothing, the difference between nothing and nothing is
+	// empty, and a check written because three hundred and fifty sockets once
+	// piled up in /tmp goes on passing while it watches the wrong directory.
+	//
+	// So this is not decoration about a path. It is the control for the
+	// assertion in the defer, and it fails saying which way it went.
+	made := 0
+	for path := range sockets() {
+		if !before[path] {
+			made++
+		}
+	}
+	if made == 0 {
+		t.Errorf("no socket named hrp-*.sock appeared in %s, so the check that "+
+			"the daemons leave none behind is comparing nothing with nothing -- "+
+			"either the name has changed, or the path to a daemon's state "+
+			"directory is now short enough to bind directly and this test needs "+
+			"a longer one", os.TempDir())
+	}
 }
 
 func TestEveryVersionTheDocsNameIsOneThatExists(t *testing.T) {
