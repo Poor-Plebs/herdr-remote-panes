@@ -10,7 +10,16 @@
 # Herdr for a living those are most of the list -- a package can survive
 # seventeen and have nothing whatever to answer for.
 #
-# package	swept	mutations	caught	survived	unexplained
+# The four outcome columns account for every mutation, so a row that
+# does not add up to its own first number is a row to distrust. They
+# used to be two, and mutations minus caught minus survived was an
+# unnamed remainder that could be either of the others.
+#
+# Rows dated before 2026-09-06 have no hung column and counted a suite
+# that ran out of time as caught, so their caught is an upper bound.
+# Re-sweep before reading one closely.
+#
+# package	swept	mutations	caught	survived	hung	no-build	unexplained
 .	2026-09-05	0	0	0	0
 ./internal/capped	2026-09-01	5	4	1	0
 ./internal/cli	2026-08-28	56	52	4	0
@@ -43,6 +52,7 @@
 ./internal/syncd (since v0.4.1)	2026-08-28	1	1	0	0
 ./internal/syncd (since v0.4.5)	2026-08-30	3	3	0	0
 ./internal/syncd (since v0.4.8)	2026-08-31	7	6	1	0
+./internal/syncd (state.go)	2026-09-07	29	29	0	0	0	0
 ./internal/text	2026-08-28	60	55	5	0
 ./internal/text (since v0.4.6)	2026-08-31	3	3	0	0
 ./internal/version	2026-08-28	9	7	2	0

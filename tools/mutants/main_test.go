@@ -1726,3 +1726,56 @@ func TestTheCommandSaysWhichNothingItFound(t *testing.T) {
 		})
 	}
 }
+
+// TestTheSweepRecordDescribesItself holds the checked-in swept.tsv against the
+// header this tool writes over it.
+//
+// The header is rewritten on every run, so the copy in git carries whatever the
+// last committed sweep wrote -- and it has already drifted. The columns went
+// from six to eight when the hung column was added, and the record in the
+// repository went on describing six while its newest rows had eight, until a
+// sweep was next run and committed. Nothing outside this tool parses that file,
+// so the reader it misleads is a person opening it to find out what was looked
+// at and what the numbers mean.
+func TestTheSweepRecordDescribesItself(t *testing.T) {
+	raw, err := os.ReadFile("swept.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+
+	if !strings.HasPrefix(body, sweptHeader) {
+		head := body
+		if i := strings.LastIndex(body, "#"); i >= 0 {
+			head = body[:i]
+		}
+		t.Errorf("the checked-in swept.tsv does not open with the header this tool "+
+			"writes, so it describes itself wrongly. Any sweep rewrites it: run one "+
+			"and commit the file.\n\nchecked in:\n%s\nwritten by this tool:\n%s",
+			head, sweptHeader)
+	}
+
+	// The control: there are rows under it, and they have the shape the header
+	// names. A file holding nothing but a header would pass the check above by
+	// having nothing to disagree with.
+	rows, widths := 0, map[int]int{}
+	for _, line := range strings.Split(strings.TrimPrefix(body, sweptHeader), "\n") {
+		if line == "" {
+			continue
+		}
+		rows++
+		widths[len(strings.Split(line, "\t"))]++
+	}
+	if rows < 10 {
+		t.Errorf("only %d rows under the header, so this holds almost nothing", rows)
+	}
+	// Eight is what the header names; six is a row written before the hung
+	// column existed, which the header says to expect and to re-sweep before
+	// reading closely. Anything else is a row nothing can account for.
+	for width, count := range widths {
+		if width != 8 && width != 6 {
+			t.Errorf("%d row(s) have %d columns, and the header accounts for 8 or "+
+				"the older 6", count, width)
+		}
+	}
+}

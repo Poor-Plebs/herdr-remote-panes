@@ -786,6 +786,36 @@ type sweepCounts struct {
 	unexplained int
 }
 
+// sweptHeader is what the record says about itself, and it is written out
+// on every run. It lives here rather than inside recordSweep so a test can
+// hold the CHECKED-IN swept.tsv against it: the file in git carries whatever
+// the last committed sweep wrote, and this text has already drifted from it
+// once -- the columns went from six to eight and the record in the repository
+// went on describing six for a day, over rows that had eight. Nothing outside
+// this tool parses that file, so the reader it misleads is a person.
+const sweptHeader = "# What has been swept, and when. One line per package or\n" +
+	"# partial sweep, replaced each time it runs.\n" +
+	"#\n" +
+	"# read.tsv says why a survivor was left. This says what was looked at,\n" +
+	"# which read.tsv cannot: a clean package leaves nothing in it.\n" +
+	"#\n" +
+	"# The last column is the one to read: survivors nobody has explained.\n" +
+	"# Survived counts the error branches and the bounds that hold a value\n" +
+	"# to itself as well, and on anything that lays out a screen or talks to\n" +
+	"# Herdr for a living those are most of the list -- a package can survive\n" +
+	"# seventeen and have nothing whatever to answer for.\n" +
+	"#\n" +
+	"# The four outcome columns account for every mutation, so a row that\n" +
+	"# does not add up to its own first number is a row to distrust. They\n" +
+	"# used to be two, and mutations minus caught minus survived was an\n" +
+	"# unnamed remainder that could be either of the others.\n" +
+	"#\n" +
+	"# Rows dated before 2026-09-06 have no hung column and counted a suite\n" +
+	"# that ran out of time as caught, so their caught is an upper bound.\n" +
+	"# Re-sweep before reading one closely.\n" +
+	"#\n" +
+	"# package\tswept\tmutations\tcaught\tsurvived\thung\tno-build\tunexplained\n"
+
 // recordSweep writes down that this package was looked at.
 //
 // read.tsv holds the survivors somebody read and left, so a package with no
@@ -819,29 +849,6 @@ func recordSweep(path, pkg, since string, files []string, c sweepCounts) {
 	line := fmt.Sprintf("%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d", what, time.Now().Format("2006-01-02"),
 		c.mutations, c.caught, c.survived, c.hung, c.unbuildable, c.unexplained)
 
-	const header = "# What has been swept, and when. One line per package or\n" +
-		"# partial sweep, replaced each time it runs.\n" +
-		"#\n" +
-		"# read.tsv says why a survivor was left. This says what was looked at,\n" +
-		"# which read.tsv cannot: a clean package leaves nothing in it.\n" +
-		"#\n" +
-		"# The last column is the one to read: survivors nobody has explained.\n" +
-		"# Survived counts the error branches and the bounds that hold a value\n" +
-		"# to itself as well, and on anything that lays out a screen or talks to\n" +
-		"# Herdr for a living those are most of the list -- a package can survive\n" +
-		"# seventeen and have nothing whatever to answer for.\n" +
-		"#\n" +
-		"# The four outcome columns account for every mutation, so a row that\n" +
-		"# does not add up to its own first number is a row to distrust. They\n" +
-		"# used to be two, and mutations minus caught minus survived was an\n" +
-		"# unnamed remainder that could be either of the others.\n" +
-		"#\n" +
-		"# Rows dated before 2026-09-06 have no hung column and counted a suite\n" +
-		"# that ran out of time as caught, so their caught is an upper bound.\n" +
-		"# Re-sweep before reading one closely.\n" +
-		"#\n" +
-		"# package\tswept\tmutations\tcaught\tsurvived\thung\tno-build\tunexplained\n"
-
 	kept := []string{}
 	if raw, err := os.ReadFile(path); err == nil {
 		for _, existing := range strings.Split(string(raw), "\n") {
@@ -857,7 +864,7 @@ func recordSweep(path, pkg, since string, files []string, c sweepCounts) {
 	kept = append(kept, line)
 	sort.Strings(kept)
 
-	if err := os.WriteFile(path, []byte(header+strings.Join(kept, "\n")+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(sweptHeader+strings.Join(kept, "\n")+"\n"), 0o644); err != nil {
 		// Worth saying and not worth failing over: the sweep itself is done
 		// and its answer is on the screen.
 		fmt.Fprintf(os.Stderr, "could not record the sweep in %s: %v\n", path, err)
