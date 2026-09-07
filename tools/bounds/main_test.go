@@ -860,3 +860,77 @@ func TestASweepThatCouldNotReadTheTreeSaysSoAndDoesNotLookClean(t *testing.T) {
 		t.Errorf("it counted what it never read:\n%s", out.String())
 	}
 }
+
+// theSmallRaise is what the second factor in raises is expected to be, written
+// out rather than read from it, for the reason theFrameLimit is in the mirror
+// package: a test that says raises[1] says nothing about what raises[1] should
+// be.
+const theSmallRaise = 2
+
+// TestABoundThatStopsTheRunIsAskedAgainSmaller holds the pair of raises and the
+// rule that decides when the second one is used.
+//
+// The thousandfold settles almost everything at once and cannot settle a bound
+// whose COST grows with its value: a retry count raised that far does not make
+// a test disagree, it makes the suite wait, and the run is stopped rather than
+// failed. That reported as a non-answer, and the report's own advice was to
+// "raise these by hand by a little rather than by a lot" -- which nobody
+// automated. Measured on the tree: internal/mirror's maxObserveAttempts read
+// "timed out" before this and reads "held" after, which is the whole point.
+func TestABoundThatStopsTheRunIsAskedAgainSmaller(t *testing.T) {
+	if len(raises) != 2 || raises[0] != raise || raises[1] != theSmallRaise {
+		t.Errorf("raises = %v, want the thousandfold first and %d after it: the "+
+			"big raise is the strong signal and the small one is what answers a "+
+			"bound that only costs time", raises, theSmallRaise)
+	}
+
+	for _, tt := range []struct {
+		verdict string
+		left    int
+		want    bool
+	}{
+		// The one verdict that says nothing, with a raise still to try.
+		{"timed out", 1, true},
+		// The same verdict with nothing left to ask with.
+		{"timed out", 0, false},
+		// Answers, which are not worth asking again however many raises remain.
+		{"held", 1, false},
+		{"not held", 1, false},
+		// An answer about the source rather than the tests: raising by less
+		// will not make it compile.
+		{"would not build", 1, false},
+		{"could not write", 1, false},
+	} {
+		if got := askAgain(tt.verdict, tt.left); got != tt.want {
+			t.Errorf("askAgain(%q, %d) = %v, want %v", tt.verdict, tt.left, got, tt.want)
+		}
+	}
+}
+
+// TestARaisedBoundCarriesTheFactorItWasGiven holds that the second attempt
+// raises by the smaller factor rather than repeating the first.
+func TestARaisedBoundCarriesTheFactorItWasGiven(t *testing.T) {
+	const src = "package p\n\nconst maxThing = 4\n"
+	m := bound.FindAllStringSubmatchIndex(src, -1)
+	if len(m) != 1 {
+		t.Fatalf("the scanner found %d bounds in the fixture, want 1", len(m))
+	}
+	value := strings.TrimSpace(src[m[0][4]:m[0][5]])
+
+	// Whole files rather than a Contains, so the factor is the only thing that
+	// differs and nothing else can have been carried in. A Contains would pass
+	// on a helper that raised by the factor AND by something else.
+	if got, want := raisedSourceBy(src, m[0], value, raise),
+		"package p\n\nconst maxThing = (4) * 1000\n"; got != want {
+		t.Errorf("the thousandfold raise reads %q, want %q", got, want)
+	}
+	if got, want := raisedSourceBy(src, m[0], value, theSmallRaise),
+		"package p\n\nconst maxThing = (4) * 2\n"; got != want {
+		t.Errorf("the small raise reads %q, want %q", got, want)
+	}
+	// HONEST LIMIT: this holds the helper, which takes the ORIGINAL source and
+	// a factor, so it cannot compound by itself. That check calls it with the
+	// original on every attempt rather than with the last mutation is a
+	// property of check, which runs a suite and is held by the built-command
+	// test instead.
+}

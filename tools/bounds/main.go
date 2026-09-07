@@ -88,6 +88,20 @@ var bound = regexp.MustCompile(`(?m)^([ \t]*(?:const )?[Mm]ax[A-Za-z]*\s*=\s*)([
 // was never about the bound.
 const raise = 1000
 
+// raises are the factors tried, in order, until one of them answers.
+//
+// The thousandfold is the strong signal and settles all but a few at once. It
+// cannot settle a bound whose COST grows with its value: a retry count raised
+// a thousandfold does not make a test disagree, it makes the suite wait, and
+// the run is then stopped rather than failed -- a non-answer, and the report
+// has always said to "raise these by hand by a little rather than by a lot".
+// This does that little raise instead of asking somebody else to.
+//
+// Doubling is enough to break a test that pins the value and cheap enough that
+// a quadratic wait stays small: maxObserveAttempts at eight is thirty-six
+// steps, where at four thousand it is eight million.
+var raises = []int{raise, 2}
+
 // inFlight is the file a mutation is applied to right now, kept so that a
 // signal can put it back. check clears it once it has restored the file.
 var inFlight struct {
@@ -269,7 +283,13 @@ func testCmd(pkg string) *exec.Cmd {
 //
 // Apart from check so it can be read without writing to anybody's tree.
 func raisedSource(original string, m []int, value string) string {
-	return original[:m[3]] + "(" + value + ") * " + fmt.Sprint(raise) +
+	return raisedSourceBy(original, m, value, raise)
+}
+
+// raisedSourceBy is raisedSource with the factor named, so a bound the
+// thousandfold could not settle can be tried again by a little.
+func raisedSourceBy(original string, m []int, value string, factor int) string {
+	return original[:m[3]] + "(" + value + ") * " + fmt.Sprint(factor) +
 		original[m[6]:m[7]] + original[m[1]:]
 }
 
@@ -277,16 +297,12 @@ func raisedSource(original string, m []int, value string) string {
 // file is put back whatever happens, since a run that is interrupted has left
 // a mutation behind before.
 func check(path, original string, m []int, value, pkg string) (verdict string) {
-	raised := raisedSource(original, m, value)
 	// Recorded before the file is touched, so an interrupt between the write
 	// and the defer below still knows what to put back.
 	inFlight.Lock()
 	inFlight.path, inFlight.original = path, original
 	inFlight.Unlock()
 
-	if err := os.WriteFile(path, []byte(raised), 0o644); err != nil {
-		return "could not write"
-	}
 	defer func() {
 		if put, err := putBack(); err != nil {
 			fmt.Fprintf(os.Stderr, "could not put %s back: %v\n", put, err)
@@ -294,8 +310,36 @@ func check(path, original string, m []int, value, pkg string) (verdict string) {
 		}
 	}()
 
-	out, err := testCmd(pkg).CombinedOutput()
-	return verdictFor(string(out), err)
+	for i, factor := range raises {
+		// Written from the original every time rather than from the last
+		// mutation, so a second attempt raises the bound once and not twice.
+		if err := os.WriteFile(path, []byte(raisedSourceBy(original, m, value, factor)), 0o644); err != nil {
+			return "could not write"
+		}
+		out, err := testCmd(pkg).CombinedOutput()
+		verdict = verdictFor(string(out), err)
+		if !askAgain(verdict, len(raises)-1-i) {
+			return verdict
+		}
+	}
+	return verdict
+}
+
+// askAgain reports whether a verdict is worth asking again with a smaller
+// raise, and how many raises are left to ask with.
+//
+// Only a run that was STOPPED is worth a second question. "held" and "not
+// held" are answers; "would not build" is an answer about the source rather
+// than about the tests, and raising by less will not make it compile. A
+// stopped run is the one verdict that says nothing at all -- and for a bound
+// whose cost grows with its value, a thousandfold always stops the run, so
+// without this the tool could never answer that class however many times it
+// was pointed at it.
+//
+// Apart from check so the decision can be read without running a suite, which
+// is the same reason verdictFor is apart from it.
+func askAgain(verdict string, raisesLeft int) bool {
+	return verdict == "timed out" && raisesLeft > 0
 }
 
 // verdictFor reads what `go test` made of a raised bound.
