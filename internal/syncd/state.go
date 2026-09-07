@@ -221,9 +221,12 @@ func loadSnapshot() snapshot {
 	}
 	var loaded snapshot
 	if err := json.Unmarshal(raw, &loaded); err != nil {
-		// Written whole or not at all -- a temporary file and a rename -- so
-		// this is a disk that has lost something rather than a write caught
-		// half done. Worth a line for the same reason.
+		// Each write goes to a temporary file of its own and is renamed into
+		// place, so this is a disk that has lost something rather than a write
+		// caught half done. That was not true while the temporary had a fixed
+		// name and two writers could share it, which is what
+		// TestASnapshotIsNeverWrittenHalfWay now holds. Worth a line for the
+		// same reason.
 		log.Printf("could not make sense of %s, starting without it: %v", path, err)
 		return empty
 	}
@@ -247,9 +250,37 @@ func writeSnapshot(raw []byte) error {
 	if err != nil {
 		return err
 	}
-	temp := path + ".tmp"
-	if err := os.WriteFile(temp, append(raw, '\n'), 0o600); err != nil {
+	// A name of its own per write, as internal/config's writeFileAtomically
+	// does, and not <snapshot>.tmp. Two writers share this path: two daemons
+	// during an upgrade have the same state directory and session, and within
+	// one daemon persist releases d.mu before writing so two passes can be
+	// here at once. On a fixed name they truncate and fill the same file and
+	// whichever renames first moves whatever is in it -- measured at 46 of 200
+	// rounds leaving a snapshot that does not parse.
+	temp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(temp, path)
+	tempName := temp.Name()
+	defer os.Remove(tempName) // No-op once the rename below succeeds.
+
+	// Written as two calls rather than append(raw, '\n'): append scribbles the
+	// newline into the CALLER's backing array whenever the slice has spare
+	// capacity, so a function handed a snapshot to write would quietly modify
+	// memory its caller still holds. Two writes to a file nothing else has
+	// open are the same bytes with none of that.
+	if _, err := temp.Write(raw); err != nil {
+		temp.Close()
+		return err
+	}
+	if _, err := temp.WriteString("\n"); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	// CreateTemp makes it 0600 already, which is what this file was written
+	// with before and what it holds: the machines somebody connects to.
+	return os.Rename(tempName, path)
 }

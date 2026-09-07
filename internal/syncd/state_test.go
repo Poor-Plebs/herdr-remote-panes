@@ -1,10 +1,13 @@
 package syncd
 
 import (
+	"bytes"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -329,5 +332,95 @@ func TestEachSessionGetsItsOwnSocket(t *testing.T) {
 	if unnamed != named {
 		t.Errorf("with no session named the socket is %q, but the default session's "+
 			"is %q, so the two would not find each other", unnamed, named)
+	}
+}
+
+// TestASnapshotIsNeverWrittenHalfWay holds that two writers cannot leave a
+// torn snapshot behind.
+//
+// Two daemons share a state directory and a session during an upgrade: the
+// replacement starts while the old one is still reconciling, which is the
+// handover TestAnUpgradeHandsTheSocketOver in internal/project is written for.
+// Within one daemon it is the same story -- persist releases d.mu before
+// calling writeSnapshot, deliberately, so that a failed write cannot be
+// recorded as a saved one, and two passes can be inside the write at once.
+//
+// While the temporary had a fixed name both writers truncated and filled the
+// same file, and whichever renamed first moved whatever was in it: 46 of these
+// 200 rounds left a snapshot that does not parse. What that costs is not the
+// file but what reads it -- an unparseable snapshot is one the next daemon
+// starts without, and the machines that live only there are the ones picked
+// out of ~/.ssh/config, which the config file never names.
+func TestASnapshotIsNeverWrittenHalfWay(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "handover")
+
+	// Both valid, and far enough apart in length that a mixture of the two
+	// cannot be mistaken for either.
+	small, err := marshalSnapshot(snapshot{Hosts: map[string]hostSnapshot{"bot": {}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	many := map[string]hostSnapshot{}
+	for i := 0; i < 400; i++ {
+		many[fmt.Sprintf("machine-%03d", i)] = hostSnapshot{}
+	}
+	large, err := marshalSnapshot(snapshot{Hosts: many})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(large) < 10*len(small) {
+		t.Fatalf("the two payloads are %d and %d bytes, which is not far enough "+
+			"apart for a mixture of them to be obvious", len(small), len(large))
+	}
+
+	path, err := snapshotPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const rounds = 200
+	landed := map[string]int{}
+	for round := 0; round < rounds; round++ {
+		var wg sync.WaitGroup
+		for i := 0; i < 6; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				raw := small
+				if i%2 == 0 {
+					raw = large
+				}
+				if err := writeSnapshot(raw); err != nil {
+					t.Errorf("writeSnapshot: %v", err)
+				}
+			}(i)
+		}
+		wg.Wait()
+
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		switch {
+		case bytes.Equal(got, append(append([]byte{}, small...), '\n')):
+			landed["small"]++
+		case bytes.Equal(got, append(append([]byte{}, large...), '\n')):
+			landed["large"]++
+		default:
+			t.Fatalf("round %d: the snapshot is neither of the two things written "+
+				"to it (%d bytes, small is %d and large is %d): a writer moved a "+
+				"file another was still filling, and the next daemon starts "+
+				"without its bookkeeping", round, len(got), len(small), len(large))
+		}
+	}
+
+	// The control that the writers really contend. If one of them always won
+	// -- the fixture serialising them by accident, or writeSnapshot growing a
+	// lock -- every round above would pass without two writers ever having
+	// been in it together, which is the whole hazard.
+	if landed["small"] == 0 || landed["large"] == 0 {
+		t.Errorf("across %d rounds only one of the two payloads ever landed (%v), "+
+			"so the writers were not overlapping and this held nothing", rounds, landed)
 	}
 }
