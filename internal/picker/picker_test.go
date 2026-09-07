@@ -920,7 +920,7 @@ func TestTheMenuShowsWhatARunningDaemonAnswersWith(t *testing.T) {
 		{Target: "deploy@vm", Label: "vm", Connected: true, Mirrors: 3},
 	}})
 
-	hosts, warning := status()
+	hosts, warning := statusFor(version.Short())
 	if len(hosts) != 1 || hosts[0].Target != "deploy@vm" || hosts[0].Mirrors != 3 {
 		t.Errorf("the machines the daemon reported did not come through: %+v", hosts)
 	}
@@ -936,7 +936,7 @@ func TestStatusWarnsWhenNothingIsAnswering(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	t.Setenv("HERDR_SESSION", "no-daemon-here")
 
-	hosts, warning := status()
+	hosts, warning := statusFor(version.Short())
 	if hosts != nil {
 		t.Errorf("machines came back with nothing to report them: %+v", hosts)
 	}

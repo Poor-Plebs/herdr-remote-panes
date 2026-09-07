@@ -599,16 +599,15 @@ func daemonTrouble(err error) string {
 		"still be working through a slow machine." + hint
 }
 
-// status asks the daemon what it is currently mirroring. A daemon that is not
-// running is not an error here: every machine simply shows as unconnected.
-// status reports the machines the daemon is tracking, and anything about the
-// daemon itself worth putting in front of someone opening the menu.
-func status() ([]syncd.HostInfo, string) {
-	return statusFor(version.Short())
-}
-
-// statusFor is status with the installed build handed to it, which is the only
-// way anything here can be held. Short answers "unknown" inside a test binary
+// statusFor asks the daemon what it is currently mirroring, with the installed
+// build handed to it.
+//
+// A daemon that is not running is not an error here: every machine simply shows
+// as unconnected. What comes back is the machines the daemon is tracking, and
+// anything about the daemon itself worth putting in front of someone opening
+// the menu.
+//
+// Handing the build in is the only way anything here can be held. Short answers "unknown" inside a test binary
 // and "unknown" is the one input that silences StaleMessageFor whatever the
 // daemon reported -- so with Short read underneath it, the stale warning read
 // as correct whether it was or not. It was not: it could be dropped entirely
