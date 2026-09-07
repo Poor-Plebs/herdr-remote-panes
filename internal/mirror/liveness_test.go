@@ -802,3 +802,66 @@ func TestASessionThatDoesNotNameItselfKeepsItsMarks(t *testing.T) {
 			"replaced; panes/ holds %v", names)
 	}
 }
+
+// TestTheMarksAreCreatedPrivate holds the mode of the two files this package
+// leaves in the state directory.
+//
+// mirror.log has been held since TestFailureLogIsCreatedPrivate and the marks
+// beside it had not, which is what made them look covered. Measured: with
+// either write at 0644 the whole gate is green.
+//
+// The failure mark is the one that matters. It holds what a mirror died of --
+// the sanitised text of err.Error() -- so it carries the machine's name, and
+// can carry whatever the far side chose to put in its banner. A liveness mark
+// is thinner, a pid and a terminal id, and is held here because it is the same
+// decision written a few lines above and would be the same mistake to lose.
+//
+// A row each, because they are two writes: one case cannot fail for the other.
+func TestTheMarksAreCreatedPrivate(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+
+	for _, tt := range []struct {
+		name  string
+		write func(t *testing.T)
+		path  func() string
+	}{
+		{
+			name:  "a liveness mark",
+			write: func(t *testing.T) { markLive("w1:p2", "term_x") },
+			path:  func() string { return livenessPath("w1:p2") },
+		},
+		{
+			name: "a failure mark",
+			write: func(t *testing.T) {
+				if err := MarkFailed("w1:p3", "bot: no herdr on the remote host"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			path: func() string { return failurePath("w1:p3") },
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.write(t)
+
+			path := tt.path()
+			if path == "" {
+				t.Fatal("no path for the mark, so nothing was written to look at")
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The control that the write happened: an empty file would be
+			// stat-ed as happily as a full one, and its mode would say nothing
+			// about a write that never put anything there.
+			if info.Size() == 0 {
+				t.Fatalf("%s is empty, so its mode says nothing about what wrote it", path)
+			}
+			if perm := info.Mode().Perm(); perm != 0o600 {
+				t.Errorf("%s is mode %o, want 600: it sits in the state directory "+
+					"and says which machines were being reached and why they failed",
+					filepath.Base(path), perm)
+			}
+		})
+	}
+}
