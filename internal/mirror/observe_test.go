@@ -565,3 +565,59 @@ func TestAResizeDuringTheWaitBetweenAttemptsReconnectsAtOnce(t *testing.T) {
 		t.Errorf("the stream was opened %d times, want the failure and one reconnect", got)
 	}
 }
+
+// theRetryLimit and theRetryStep are what maxObserveAttempts and
+// observeRetryStep are expected to be, written out rather than read from them,
+// for the reason theFrameLimit is written out above.
+//
+// Every other test here takes its expectation FROM the constant --
+// attempts() == maxObserveAttempts+1, and the table's maxObserveAttempts-1 --
+// so the value and what is checked against it move together and the cases pass
+// for any value it could take. Measured: 1, 2 and 40 each pass the whole gate.
+//
+// The bounds tool cannot answer this one either. It RAISES a bound and reruns
+// the suite, and raising this one makes the retries wait longer rather than
+// disagree with anything, so the run times out and is reported as a non-answer.
+// A bound whose tests are sized from it has to be falsified DOWNWARD, and by
+// hand.
+const (
+	theRetryLimit = 4
+	theRetryStep  = time.Second
+)
+
+// TestHowLongABrokenStreamIsPickedUpAgain pins that pair, because a number here
+// is not a preference -- the ssh options in internal/remote carry the same note
+// for the same reason.
+//
+// It decides how long a mirrored pane survives a link that keeps dropping. At
+// one attempt a single blip takes the pane away from somebody who was using it.
+// The wait grows by a step each time, so the total is quadratic in the count:
+// four attempts is ten seconds, and forty would hold a pane open on a machine
+// that is gone for nearly a quarter of an hour.
+//
+// What planObserveNext DOES at the bound is held by TestWhatAStreamEndingMeans,
+// which reads maxObserveAttempts; that table is what says the number is obeyed,
+// and this says what the number is.
+func TestHowLongABrokenStreamIsPickedUpAgain(t *testing.T) {
+	if maxObserveAttempts != theRetryLimit {
+		t.Errorf("maxObserveAttempts = %d, want %d: fewer closes a pane on a "+
+			"link that blipped, more holds one open on a machine that has gone",
+			maxObserveAttempts, theRetryLimit)
+	}
+	if observeRetryStep != theRetryStep {
+		t.Errorf("observeRetryStep = %v, want %v: it is the unit the wait between "+
+			"attempts grows by, so it scales everything below",
+			observeRetryStep, theRetryStep)
+	}
+
+	// And what the pair costs, which is the half somebody would notice: the
+	// waits are (attempt+1) * step, so a stream that never comes back is
+	// retried across this much before the pane closes itself.
+	total := time.Duration(0)
+	for attempt := 0; attempt < theRetryLimit; attempt++ {
+		total += time.Duration(attempt+1) * theRetryStep
+	}
+	if total != 10*time.Second {
+		t.Errorf("a stream that never comes back is retried over %v, want 10s", total)
+	}
+}
