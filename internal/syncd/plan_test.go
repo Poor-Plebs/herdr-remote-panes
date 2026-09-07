@@ -4862,10 +4862,15 @@ func TestAPlacementHerdrWillNotTakeOpensATabAsPromised(t *testing.T) {
 	// value reached the default and did that -- except "popup", which had a
 	// case of its own and was passed to Herdr as --placement popup.
 	//
-	// Herdr takes overlay, split, tab and zoomed there and refuses the rest.
 	// popup is a placement a manifest may declare -- this plugin's own picker
-	// is declared that way -- so it is an easy thing to write in a config, and
-	// what it did was open nothing at all while the warning promised a tab.
+	// is declared that way -- so it is an easy thing to write in a config.
+	// What it did was open nothing at all while the warning promised a tab.
+	//
+	// Measured against Herdr 0.8.2: the FLAG takes popup, and the menu sends
+	// exactly that. What it will not take is popup carrying a workspace or a
+	// target pane, because a popup targets the active pane -- and a mirror
+	// always has one of those, which is why nothing opened. The name of this
+	// test is about that combination and not about the value alone.
 	for _, placement := range []string{"popup", "sideways", "", "POPUP"} {
 		got := planPaneTarget(placement, "w1", "w1:p1")
 		if got.Placement != placementTab {
