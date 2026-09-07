@@ -5194,13 +5194,17 @@ func TestTheMachineIsStrippedBeforeTheLineIsShortened(t *testing.T) {
 // package: summarizeErrorFor was held by its own test and by nothing else, so
 // every line in the daemon could have gone back to saying the machine twice
 // without a single failure. A message helper is only as held as its callers.
+// It reads every non-test file in the package rather than daemon.go by name,
+// which is where it used to look. All five call sites are in daemon.go today,
+// but summarizeError is DEFINED in plan.go, so plan.go is exactly where the
+// next one would be written -- and measured, the identical statement fails
+// this from daemon.go and was invisible from plan.go.
+//
+// HONEST LIMIT: what marks a line as naming the machine is the list below, so
+// a line naming it some other way is still not seen. That list is the tell
+// this defect actually took, not a claim about every way one could be written.
 func TestEveryLineNamingTheMachineStripsItFromTheCause(t *testing.T) {
-	source, err := os.ReadFile("daemon.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "daemon.go", source, 0)
+	sources, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5211,38 +5215,62 @@ func TestEveryLineNamingTheMachineStripsItFromTheCause(t *testing.T) {
 	names := []string{".Target", "changed +"}
 
 	checked := 0
-	ast.Inspect(file, func(n ast.Node) bool {
-		// The leaf statements only. Taking every ast.Stmt reported the same
-		// call once per enclosing block, and a whole function body counts as
-		// one statement that mentions everything inside it.
-		var stmt ast.Stmt
-		switch s := n.(type) {
-		case *ast.ExprStmt:
-			stmt = s
-		case *ast.ReturnStmt:
-			stmt = s
-		case *ast.AssignStmt:
-			stmt = s
-		default:
-			return true
+	read := 0
+	for _, path := range sources {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
 		}
-		text := string(source[fset.Position(stmt.Pos()).Offset:fset.Position(stmt.End()).Offset])
-		if !strings.Contains(text, "summarizeError(") {
-			return true
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
 		}
-		checked++
-		for _, name := range names {
-			if strings.Contains(text, name) {
-				t.Errorf("this line names the machine and does not strip it from the "+
-					"cause, so it says it twice — use summarizeErrorFor:\n%s", text)
-				break
-			}
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, path, source, 0)
+		if err != nil {
+			t.Fatal(err)
 		}
-		return true
-	})
+		read++
 
-	// Self-verifying: if the walk stopped matching statements at all, every
-	// check above would pass by looking at nothing.
+		ast.Inspect(file, func(n ast.Node) bool {
+			// The leaf statements only. Taking every ast.Stmt reported the
+			// same call once per enclosing block, and a whole function body
+			// counts as one statement that mentions everything inside it.
+			var stmt ast.Stmt
+			switch s := n.(type) {
+			case *ast.ExprStmt:
+				stmt = s
+			case *ast.ReturnStmt:
+				stmt = s
+			case *ast.AssignStmt:
+				stmt = s
+			default:
+				return true
+			}
+			text := string(source[fset.Position(stmt.Pos()).Offset:fset.Position(stmt.End()).Offset])
+			if !strings.Contains(text, "summarizeError(") {
+				return true
+			}
+			checked++
+			for _, name := range names {
+				if strings.Contains(text, name) {
+					t.Errorf("%s: this line names the machine and does not strip it "+
+						"from the cause, so it says it twice — use summarizeErrorFor:\n%s",
+						path, text)
+					break
+				}
+			}
+			return true
+		})
+	}
+
+	// Self-verifying, both ways. A walk that stopped matching statements would
+	// pass by looking at nothing, and one that fell back to a single file
+	// would pass by looking at the one place a new call site is least likely
+	// to be added.
+	if read < 2 {
+		t.Fatalf("only %d source file was read, so this is back to checking one "+
+			"file by name", read)
+	}
 	if checked == 0 {
 		t.Fatal("no call to summarizeError was examined, so this holds nothing")
 	}
