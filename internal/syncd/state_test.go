@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestSocketPathFor(t *testing.T) {
@@ -379,11 +380,16 @@ func TestASnapshotIsNeverWrittenHalfWay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const rounds = 200
-	landed := map[string]int{}
+	const rounds, writers = 200, 6
+	overlapped := false
 	for round := 0; round < rounds; round++ {
 		var wg sync.WaitGroup
-		for i := 0; i < 6; i++ {
+		// When each call was inside writeSnapshot. One slot per writer, each
+		// written by its own goroutine and read after they have all finished,
+		// so nothing here needs a lock of its own.
+		type span struct{ in, out time.Time }
+		spans := make([]span, writers)
+		for i := 0; i < writers; i++ {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
@@ -391,12 +397,24 @@ func TestASnapshotIsNeverWrittenHalfWay(t *testing.T) {
 				if i%2 == 0 {
 					raw = large
 				}
-				if err := writeSnapshot(raw); err != nil {
+				spans[i].in = time.Now()
+				err := writeSnapshot(raw)
+				spans[i].out = time.Now()
+				if err != nil {
 					t.Errorf("writeSnapshot: %v", err)
 				}
 			}(i)
 		}
 		wg.Wait()
+
+		for i := 0; i < writers && !overlapped; i++ {
+			for j := i + 1; j < writers; j++ {
+				if spans[i].in.Before(spans[j].out) && spans[j].in.Before(spans[i].out) {
+					overlapped = true
+					break
+				}
+			}
+		}
 
 		got, err := os.ReadFile(path)
 		if err != nil {
@@ -404,9 +422,7 @@ func TestASnapshotIsNeverWrittenHalfWay(t *testing.T) {
 		}
 		switch {
 		case bytes.Equal(got, append(append([]byte{}, small...), '\n')):
-			landed["small"]++
 		case bytes.Equal(got, append(append([]byte{}, large...), '\n')):
-			landed["large"]++
 		default:
 			t.Fatalf("round %d: the snapshot is neither of the two things written "+
 				"to it (%d bytes, small is %d and large is %d): a writer moved a "+
@@ -415,13 +431,22 @@ func TestASnapshotIsNeverWrittenHalfWay(t *testing.T) {
 		}
 	}
 
-	// The control that the writers really contend. If one of them always won
-	// -- the fixture serialising them by accident, or writeSnapshot growing a
-	// lock -- every round above would pass without two writers ever having
-	// been in it together, which is the whole hazard.
-	if landed["small"] == 0 || landed["large"] == 0 {
-		t.Errorf("across %d rounds only one of the two payloads ever landed (%v), "+
-			"so the writers were not overlapping and this held nothing", rounds, landed)
+	// The control that the writers really were inside at once, which is the
+	// whole hazard: serialise them -- by accident in the fixture, or by
+	// writeSnapshot growing a lock -- and every round above passes with
+	// nothing ever having been contended.
+	//
+	// This used to assert that BOTH payloads landed at least once across the
+	// rounds, and that is a scheduling OUTCOME rather than the claim. Under
+	// the load of the whole gate, where `go test ./...` runs the packages in
+	// parallel, the larger writer finished last every single time and one
+	// payload won all two hundred rounds -- a test failing against working
+	// code. Overlap is what the fixture needs, so overlap is what is measured,
+	// and load can only make it likelier.
+	if !overlapped {
+		t.Errorf("no two of the %d writers were ever inside writeSnapshot at the "+
+			"same time across %d rounds, so nothing here was contended and the "+
+			"check above holds nothing", writers, rounds)
 	}
 }
 
