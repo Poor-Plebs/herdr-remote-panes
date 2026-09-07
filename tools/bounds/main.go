@@ -272,8 +272,8 @@ func testCmd(pkg string) *exec.Cmd {
 	return exec.Command("go", "test", pkg, "-count=1")
 }
 
-// raisedSource returns the file with the one bound at m multiplied by raise,
-// and everything else exactly as it was.
+// raisedSourceBy returns the file with the one bound at m multiplied by the
+// factor given, and everything else exactly as it was.
 //
 // The value is bracketed because it is an expression and not always a literal.
 // `4 << 10` multiplied without brackets is `4 << 10 * 1000`, which is `4 <<
@@ -281,13 +281,10 @@ func testCmd(pkg string) *exec.Cmd {
 // tree would report "would not build" and be quietly skipped, which is the
 // answer that means nothing was tested.
 //
+// The factor is a parameter rather than the raise constant because a bound the
+// thousandfold cannot settle is asked again by a little; raises is the list.
+//
 // Apart from check so it can be read without writing to anybody's tree.
-func raisedSource(original string, m []int, value string) string {
-	return raisedSourceBy(original, m, value, raise)
-}
-
-// raisedSourceBy is raisedSource with the factor named, so a bound the
-// thousandfold could not settle can be tried again by a little.
 func raisedSourceBy(original string, m []int, value string, factor int) string {
 	return original[:m[3]] + "(" + value + ") * " + fmt.Sprint(factor) +
 		original[m[6]:m[7]] + original[m[1]:]

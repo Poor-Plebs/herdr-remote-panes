@@ -198,7 +198,7 @@ func TestTheRaiseIsSomethingGoWillStillCompile(t *testing.T) {
 			continue
 		}
 		value := strings.TrimSpace(tt.src[m[4]:m[5]])
-		if got := raisedSource(tt.src, m, value); got != tt.want {
+		if got := raisedSourceBy(tt.src, m, value, raise); got != tt.want {
 			t.Errorf("%s:\n got %q\nwant %q", tt.what, got, tt.want)
 		}
 	}
