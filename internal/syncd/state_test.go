@@ -477,3 +477,72 @@ func TestTheSnapshotIsNotReadableByAnybodyElse(t *testing.T) {
 			"says nothing about that write", path)
 	}
 }
+
+// TestAFailedSnapshotWriteLeavesNoTemporaryBehind holds the removal behind the
+// temporary, on the only path where it removes anything.
+//
+// Every write that succeeds carries its temporary off in the rename, so the
+// line reads as exercised while being a no-op -- exactly the gap
+// internal/config had until 1522955, and this line was copied from there at
+// 2ec4892 without the test that holds it.
+//
+// It costs more here than it did there. internal/config's temporary is written
+// when somebody toggles a machine; this one is written on every pass that
+// changed anything, and the name is unique per write, so what is left behind
+// is not one stale file but one PER FAILED WRITE. A state directory that
+// cannot be renamed into therefore fills at the poll interval. Measured with
+// the removal gone: five failed writes leave five.
+func TestAFailedSnapshotWriteLeavesNoTemporaryBehind(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("HERDR_SESSION", "handover")
+
+	path, err := snapshotPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A directory where the file goes. Everything works until the rename,
+	// which is late enough to have made the temporary -- unlike a directory
+	// nothing can write into, where there would be nothing to leave behind.
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := marshalSnapshot(snapshot{Hosts: map[string]hostSnapshot{"bot": {}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const writes = 5
+	for i := 0; i < writes; i++ {
+		err := writeSnapshot(raw)
+		if err == nil {
+			t.Fatalf("write %d over a directory reported success", i)
+		}
+		// The control that a temporary was taken before asking whether it was
+		// given back, and it has to name the RENAME: a write refused earlier
+		// reports the open, and would leave nothing behind whatever this line
+		// did.
+		if !strings.Contains(err.Error(), "rename") {
+			t.Fatalf("write %d failed before the rename, so it never made a "+
+				"temporary and this is not the path the removal is for: %v", i, err)
+		}
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left := []string{}
+	for _, e := range entries {
+		if e.Name() != filepath.Base(path) {
+			left = append(left, e.Name())
+		}
+	}
+	if len(left) != 0 {
+		t.Errorf("%d of %d failed writes left a temporary in the state directory "+
+			"(%v): the name is unique per write, so these do not replace one "+
+			"another -- one arrives per pass the daemon cannot save",
+			len(left), writes, left)
+	}
+}
