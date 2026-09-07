@@ -304,7 +304,11 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 	older := build(previous, "older")
 	current := build("", "current")
 
-	state := filepath.Join(dir, "state")
+	// Named for its length, not for tidiness: the check in the defer scans the
+	// temp directory, and the socket only lands there when the direct path is
+	// too long to bind. See the control at the end of this test for the
+	// arithmetic.
+	state := filepath.Join(dir, "state-long-enough-to-hash-the-socket")
 	config := filepath.Join(dir, "config")
 	if err := os.MkdirAll(config, 0o755); err != nil {
 		t.Fatal(err)
@@ -415,13 +419,19 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 	//
 	// It only lands in the temp directory when the direct path is too long to
 	// bind: socketPathFor falls back to a hashed short name past 100 bytes.
-	// Measured here at 101 to 104 -- a margin of ONE byte, made up of this
-	// test's own name, the "state" directory under it and the session called
-	// "upgrade-across". Rename the test three characters shorter, or the
-	// session, and every daemon binds inside its state directory instead: the
-	// glob then matches nothing, the difference between nothing and nothing is
-	// empty, and a check written because three hundred and fifty sockets once
-	// piled up in /tmp goes on passing while it watches the wrong directory.
+	// With the state directory called plainly "state" the path came to 101
+	// bytes -- a margin of ONE, made up of this test's own name, that
+	// directory and the session called "upgrade-across".
+	//
+	// One byte is not a margin, because t.TempDir()'s random component is not
+	// a fixed width. A shorter one puts the path at exactly 100, the daemon
+	// binds inside its state directory, the glob matches nothing, and a check
+	// written because three hundred and fifty sockets once piled up in /tmp
+	// goes on passing while it watches the wrong directory. That is not
+	// hypothetical: this control fired on the oldest-Go job on 2026-09-07 and
+	// said so, which is the whole reason it exists. The state directory is
+	// named for its length now and buys 31 bytes, so even the shortest temp
+	// directory Go can hand out overruns the bound.
 	//
 	// So this is not decoration about a path. It is the control for the
 	// assertion in the defer, and it fails saying which way it went.
