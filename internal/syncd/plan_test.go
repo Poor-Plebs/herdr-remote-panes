@@ -69,11 +69,11 @@ func TestPlanPaneTarget(t *testing.T) {
 			want: paneTarget{Placement: placementOverlay},
 		},
 		{
-			// Not passed on, though it targets nothing either. Herdr takes
-			// overlay, split, tab and zoomed on --placement and refuses the
-			// rest: popup is a placement a manifest declares -- this plugin
-			// declares its own picker that way -- and not one that flag
-			// accepts. Sent, it opened nothing. See the constant.
+			// Not passed on, though the flag would take it: measured against
+			// Herdr 0.8.2, `--placement popup` is accepted. What a popup
+			// cannot carry is a workspace or a target pane, and a mirror
+			// always has one of those, so planning one as a popup is what
+			// opened nothing. See the constant.
 			name:      "popup is not a placement this may ask for",
 			placement: placementPopup, workspace: "w1", paneInWorkspace: "w1:p1",
 			want: paneTarget{Placement: placementTab, Workspace: "w1"},

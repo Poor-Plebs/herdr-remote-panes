@@ -29,10 +29,20 @@ const (
 	placementTab     = "tab"
 	placementOverlay = "overlay"
 	// placementPopup is what the manifest declares for the picker, which is
-	// how Herdr places a pane opened with no --placement at all. It is not a
-	// value `plugin pane open --placement` accepts: Herdr 0.8.2 takes overlay,
-	// split, tab and zoomed there and refuses the rest. Passing it opened
-	// nothing, while the config warning about it promised a tab.
+	// how Herdr places a pane opened with no --placement at all. The menu
+	// sends it explicitly as well, and that works.
+	//
+	// MEASURED against Herdr 0.8.2 on 2026-09-07, because this comment said
+	// the opposite for a long time: `plugin pane open --placement popup` is
+	// ACCEPTED. Its --help lists only overlay, split, tab and zoomed as
+	// possible values, which is what the old note was read from, but the flag
+	// takes popup -- an actually invalid one is refused before anything else
+	// happens, with "invalid pane placement: banana".
+	//
+	// What is true, and what the mirror path is really avoiding, is the rule
+	// below it: a popup targets the active pane, exactly as an overlay does,
+	// so it cannot take a workspace or a target pane. A mirror always has one
+	// or the other, so planning one as a popup is what opened nothing.
 	placementPopup = "popup"
 )
 
