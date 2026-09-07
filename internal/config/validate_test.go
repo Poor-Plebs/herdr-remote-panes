@@ -369,6 +369,50 @@ func TestSaveNeverLeavesAPartialFile(t *testing.T) {
 		}
 		t.Errorf("directory holds %v, want only config.json", names)
 	}
+
+	// Every save above succeeded, and a rename that succeeds takes the
+	// temporary with it -- so the check above holds "nothing abandoned beside
+	// it" in exactly the case where there is nothing to abandon. The removal
+	// earns its keep on the other path: a write that fails once the temporary
+	// already exists. Otherwise every toggle from the menu that cannot save
+	// leaves another config.json.<digits> beside the file somebody edits by
+	// hand, and they accumulate silently, one per attempt.
+	failing := t.TempDir()
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", failing)
+	// A directory where the file goes. Everything up to the rename works and
+	// the rename cannot replace a directory, which fails late enough to have
+	// made the temporary first -- unlike a directory nothing can write to,
+	// where there is nothing to leave behind.
+	if err := os.Mkdir(filepath.Join(failing, "config.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	saveErr := Save(cfg)
+	if saveErr == nil {
+		t.Fatal("saving over a directory reported success")
+	}
+	// The control that the resource was taken before asking whether it was
+	// given back, and it has to name the RENAME rather than the temporary: a
+	// write refused earlier reports "open <dir>/config.json.<digits>: permission
+	// denied", which names a temporary that was never created. Only a failure
+	// at the rename says one exists to be cleaned up, so a fixture that stopped
+	// failing there would fail here rather than pass by having made nothing.
+	if !strings.Contains(saveErr.Error(), "rename") {
+		t.Fatalf("the write failed before the rename, so it never made a "+
+			"temporary and this is not the path the removal is for: %v", saveErr)
+	}
+	left, err := os.ReadDir(failing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 1 || left[0].Name() != "config.json" {
+		names := make([]string, 0, len(left))
+		for _, e := range left {
+			names = append(names, e.Name())
+		}
+		t.Errorf("a failed save left %v behind, want only config.json: the copy "+
+			"it could not put in place stays beside the file somebody edits by "+
+			"hand, and another arrives every time a toggle cannot save", names)
+	}
 }
 
 func TestSaveKeepsThePermissionsPrivate(t *testing.T) {
