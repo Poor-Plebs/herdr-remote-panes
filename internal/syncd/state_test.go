@@ -424,3 +424,56 @@ func TestASnapshotIsNeverWrittenHalfWay(t *testing.T) {
 			"so the writers were not overlapping and this held nothing", rounds, landed)
 	}
 }
+
+// TestTheSnapshotIsNotReadableByAnybodyElse holds the mode of the file the
+// daemon keeps its bookkeeping in.
+//
+// It names the machines somebody connects to and the terminals mirrored from
+// each, which is exactly what internal/config's
+// TestSaveKeepsThePermissionsPrivate exists for one file over. The two are the
+// same claim about the same kind of content, and only one of them was held.
+//
+// There is no line in writeSnapshot to point at: os.CreateTemp makes its file
+// 0600 and the rename carries that mode to the destination. That is the reason
+// to assert it rather than a reason not to -- the mode is a property of the
+// call that was chosen, so a switch to os.Create, which takes 0666 through the
+// umask, turns the file world-readable with nothing in the diff that so much
+// as mentions permissions.
+func TestTheSnapshotIsNotReadableByAnybodyElse(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "private")
+
+	raw, err := marshalSnapshot(snapshot{Hosts: map[string]hostSnapshot{"bot": {}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSnapshot(raw); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := snapshotPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("the snapshot is mode %o, want 600: it names the machines "+
+			"somebody connects to, and anyone with an account on this machine "+
+			"can read it", perm)
+	}
+
+	// The control that the mode above belongs to this write. A file left by
+	// something else at that path would be stat-ed just as happily, and the
+	// state directory is fresh, so what is there has to be what was written.
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, append(append([]byte{}, raw...), '\n')) {
+		t.Fatalf("the file at %s is not what writeSnapshot wrote, so its mode "+
+			"says nothing about that write", path)
+	}
+}
