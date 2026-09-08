@@ -6,8 +6,11 @@
 // builds: a renamed flag or a value Herdr stopped accepting compiles perfectly
 // and fails at the far end, one action at a time. The stand-in the tests run
 // against cannot catch it either, being written from the same belief as the
-// code -- it accepted `--placement popup` for as long as the code sent it,
-// while the real thing refused it and nothing opened.
+// code -- it accepted `--placement popup` with a workspace, which is the pair
+// Herdr refuses, and nothing opened. The placement itself is fine: Herdr's own
+// PluginPanePlacement declares popup, and only its --help leaves it out, which
+// is why the values here are checked against the schema and not against the
+// help text.
 //
 // Not part of `make check`: it needs Herdr on the machine, and a check that
 // cannot run everywhere is one that gets ignored where it can.
