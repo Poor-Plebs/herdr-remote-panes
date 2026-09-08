@@ -546,17 +546,19 @@ func TestAFirstRunThatCannotWriteItsConfigSaysSo(t *testing.T) {
 }
 
 func TestAConfigWrittenByAnOlderVersionKeepsTheDefaultsOfItsDay(t *testing.T) {
-	// Load writes every setting at its default when there is no file, which is
-	// what makes them discoverable in the file rather than only in the README.
-	// The cost is recorded here rather than left to be found: a value written
-	// down is a value chosen, as far as anything downstream can tell, so
-	// changing a default reaches new installs and nobody else.
+	// Load USED to write every setting at its default when there was no file,
+	// and the cost is recorded here rather than left to be found: a value
+	// written down is a value chosen, as far as anything downstream can tell,
+	// so changing a default reached new installs and nobody else.
 	//
-	// It has already happened once. placement defaulted to "split" until
-	// v0.4.0, where the README says a mirror that does not mirror the shape is
-	// not something anybody should have to discover a setting for -- and
-	// everyone who installed before that has "placement": "split" written in
-	// their file by this function, so the change reached none of them.
+	// It happened once. placement defaulted to "split" until v0.4.0, where the
+	// README says a mirror that does not mirror the shape is not something
+	// anybody should have to discover a setting for -- and everyone who
+	// installed before that has "placement": "split" written in their file by
+	// that older version, so the change reached none of them. Load writes an
+	// empty config now (TestAFirstRunWritesNothingItWouldHaveToLiveWith), which
+	// is why this test writes the old file BY HAND: what it is about is the
+	// files that already exist, which are deliberately left as they are.
 	//
 	// This is not an assertion that the behaviour is right. It is here so that
 	// whoever changes a default finds out who will not get it, which is not

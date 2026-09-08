@@ -157,7 +157,10 @@ func hostsFrom(path string, depth int) []string {
 type reading struct {
 	done map[string]bool
 	from string
-	// why is every reason a file that is there was not read, in the order met.
+	// why is why a file that is there was not read, in the order met, and at
+	// most maxReasonsKept of them -- not every reason, which is what the bound
+	// below deliberately gives up. Only the first is shown; the rest are for
+	// anything that wants more than the menu does.
 	why []string
 }
 

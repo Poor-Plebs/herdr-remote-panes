@@ -205,14 +205,20 @@ func Path() (string, error) {
 	return filepath.Join(dir, "config.json"), nil
 }
 
-// Load reads the config file, writing one out when it is absent.
+// Load reads the config file, writing an EMPTY one out when it is absent.
 //
-// What it writes is every setting at its default, which is what makes them
-// discoverable in the file rather than only in the README -- and which pins
-// them: a value written down is a value chosen as far as anything here can
-// tell, so a default improved in a later version reaches new installs only.
-// TestAConfigWrittenByAnOlderVersionKeepsTheDefaultsOfItsDay is where that is
-// spelled out.
+// Empty rather than every setting at its default, and the reason is written
+// where the write happens. In short: nothing downstream can tell a value
+// somebody chose from a value this wrote for them, so writing the defaults
+// pins them, and a default improved in a later version would reach new
+// installs only. It used to write them, which is how everyone installed before
+// v0.4.0 kept placement "split" through the change that existed to take it
+// away from them.
+//
+// TestAFirstRunWritesNothingItWouldHaveToLiveWith holds this.
+// TestAConfigWrittenByAnOlderVersionKeepsTheDefaultsOfItsDay is the other
+// half, and is about a file already written: those are left alone, because a
+// value in one may well be a value somebody chose.
 func Load() (Config, error) {
 	path, err := Path()
 	if err != nil {
