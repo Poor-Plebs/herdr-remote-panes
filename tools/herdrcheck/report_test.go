@@ -284,14 +284,21 @@ func everyPaneField() map[string]bool {
 	return declared
 }
 
-// theEnums is what Herdr 0.9.0 declares for the flags this plugin sends values
-// with, written out rather than read from the binary: a test that asks the
-// installed Herdr says nothing about what the check does with an answer.
+// theEnums is what Herdr 0.9.0 declares for the types this check asks about,
+// written out rather than read from the binary: a test that asks the installed
+// Herdr says nothing about what the check does with an answer.
+//
+// The first three are the flags this plugin sends values with. AgentStatus is
+// not a flag at all -- it is what Herdr REPORTS a pane's agent to be, and it is
+// here because the check holds AgentState against it. Note that it has five
+// values and PaneAgentState has four: that gap is the whole reason AgentState
+// exists.
 func theEnums() map[string][]string {
 	return map[string][]string{
 		"PluginPanePlacement": {"overlay", "popup", "split", "tab", "zoomed"},
 		"PaneAgentState":      {"blocked", "idle", "unknown", "working"},
 		"SplitDirection":      {"down", "right"},
+		"AgentStatus":         {"blocked", "done", "idle", "unknown", "working"},
 	}
 }
 
@@ -467,5 +474,91 @@ func TestNoSchemaAtAllSaysTheFieldsWentUnchecked(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "could not be read") {
 		t.Errorf("the report does not say the fields went unchecked:\n%s", out.String())
+	}
+}
+
+// withAgentStatus is theEnums with a different set of reported statuses, for
+// the two tests below. Everything else stays as Herdr declares it so a failure
+// is about the statuses and nothing else.
+func withAgentStatus(statuses ...string) map[string][]string {
+	enums := theEnums()
+	enums["AgentStatus"] = statuses
+	return enums
+}
+
+// TestAStatusHerdrReportsAndTheMappingDoesNotNameIsDrift holds the input side
+// of herdrcli.AgentState.
+//
+// AgentState turns what a remote pane says its agent is doing into one of the
+// four states `pane report-agent` accepts, and its default is "unknown". That
+// default is right for a value that means nothing here. It is wrong for one
+// Herdr has just started reporting: the mapping goes on working, the gate stays
+// green, and the only sign is a machine whose agent shows nothing in the
+// sidebar while it is plainly busy. Herdr adding a status is the likeliest way
+// this plugin goes subtly wrong, and it is the sort of wrong nobody files.
+func TestAStatusHerdrReportsAndTheMappingDoesNotNameIsDrift(t *testing.T) {
+	// "waiting" stands in for whatever Herdr adds next. Checked here so the
+	// test cannot pass by the mapping having grown to cover it.
+	if herdrcli.AgentState("waiting") != "unknown" {
+		t.Fatalf("herdrcli.AgentState now names \"waiting\", so this test no longer " +
+			"describes a status the mapping has never heard of")
+	}
+
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		herdrSchema{
+			PaneFields: everyPaneField(),
+			Enums:      withAgentStatus("blocked", "done", "idle", "unknown", "waiting", "working"),
+		})
+
+	if code == 0 {
+		t.Errorf("Herdr reports a status the mapping does not name and the run "+
+			"exited nought:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "waiting") {
+		t.Errorf("the report does not name the status that has no name here:\n%s",
+			out.String())
+	}
+}
+
+// TestTheStatusThatMeansUnknownIsNotItselfDrift is the trap in the check above.
+//
+// It spots a fall-through by the mapping answering "unknown", which is exactly
+// what the mapping answers for the status "unknown" -- correctly, by name, not
+// by default. A check that did not except it would report drift against a Herdr
+// that had changed nothing, on every run, for as long as Herdr reports a status
+// meaning it does not know either.
+func TestTheStatusThatMeansUnknownIsNotItselfDrift(t *testing.T) {
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		herdrSchema{PaneFields: everyPaneField(), Enums: withAgentStatus("unknown")})
+
+	if code != 0 {
+		t.Errorf("the status \"unknown\" was reported as a status with no name:\n%s",
+			out.String())
+	}
+}
+
+// TestEveryStatusHerdrReportsTodayHasAName is the check run against what Herdr
+// 0.9.0 actually declares, so the five values in theEnums are held one by one
+// and "done" cannot quietly stop being handled.
+func TestEveryStatusHerdrReportsTodayHasAName(t *testing.T) {
+	statuses := theEnums()["AgentStatus"]
+	if len(statuses) < 5 {
+		t.Fatalf("theEnums declares %d statuses, too few to be checking anything: %v",
+			len(statuses), statuses)
+	}
+	for _, status := range statuses {
+		if status == "unknown" {
+			continue
+		}
+		if got := herdrcli.AgentState(status); got == "unknown" {
+			t.Errorf("Herdr reports %q and herdrcli.AgentState answers %q, so it "+
+				"fell through to the default", status, got)
+		}
 	}
 }

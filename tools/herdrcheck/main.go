@@ -292,8 +292,35 @@ func askTheSchema(w io.Writer, declared map[string]bool, enums map[string][]stri
 		return len(stale)
 	}
 
-	fmt.Fprintf(w, "\n%-24s ok, all %d fields herdrcli.Pane reads are declared, and "+
-		"every flag with an enum has one\n", "api schema", len(paneJSONFields()))
+	// And every status Herdr says it can REPORT is one AgentState knows by
+	// name. It maps what a remote pane says onto the four states pane
+	// report-agent accepts, and anything it does not recognise becomes
+	// "unknown" -- which is right for a value that means nothing here and
+	// wrong for one Herdr has just started using. Herdr reports five today and
+	// accepts four; "done" is the one that needs a decision, and AgentState
+	// makes it, calling a finished agent idle.
+	//
+	// A status that maps to "unknown" without BEING "unknown" fell through the
+	// default, which is how a new one would arrive: silently, as a machine
+	// whose agent shows nothing in the sidebar.
+	unnamed := []string{}
+	for _, status := range enums["AgentStatus"] {
+		if status != "unknown" && herdrcli.AgentState(status) == "unknown" {
+			unnamed = append(unnamed, status)
+		}
+	}
+	sort.Strings(unnamed)
+	if len(unnamed) > 0 {
+		fmt.Fprintf(w, "\n%-24s reports %s and herdrcli.AgentState does not name %s, so "+
+			"a machine's agent in that state shows as unknown here\n",
+			"api schema", strings.Join(unnamed, ", "),
+			map[bool]string{true: "it", false: "them"}[len(unnamed) == 1])
+		return len(unnamed)
+	}
+
+	fmt.Fprintf(w, "\n%-24s ok, all %d fields herdrcli.Pane reads are declared, every "+
+		"flag with an enum has one, and every status Herdr reports has a name\n",
+		"api schema", len(paneJSONFields()))
 	return 0
 }
 
