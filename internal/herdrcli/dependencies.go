@@ -67,6 +67,19 @@ var Dependencies = []Dependency{
 		Command: []string{"pane", "release-agent"},
 		Flags:   []string{"--source", "--agent"},
 	},
+	// The two the mirror runs on the REMOTE machine, over ssh. They were left
+	// out for as long as this list existed, because the tests that keep it
+	// honest read this package's own strings and these are built in
+	// internal/mirror -- so the commands the whole mirroring half depends on
+	// were the ones nothing asked Herdr about.
+	{
+		Command: []string{"terminal", "session", "observe"},
+		Flags:   []string{"--cols", "--rows"},
+	},
+	{
+		Command: []string{"terminal", "attach"},
+		Flags:   []string{"--takeover"},
+	},
 	{
 		Command: []string{"pane", "split"},
 		Flags:   []string{"--direction", "--focus"},

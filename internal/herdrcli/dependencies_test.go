@@ -11,11 +11,31 @@ import (
 	"testing"
 )
 
-// packageStrings is every string literal in this package's own code, which is
-// where the commands and flags it sends to Herdr are written.
+// packageStrings is every string literal in the two packages that build Herdr
+// commands: this one, and internal/mirror.
+//
+// It used to read this package alone, and that is how `terminal session
+// observe` and `terminal attach` -- the two commands the whole mirroring half
+// runs, on the far machine, over ssh -- stayed out of Dependencies for as long
+// as it existed. The list said it was "every Herdr command this plugin runs"
+// and the test that keeps it honest could not see half of them.
+//
+// Two directories rather than the whole tree, because a tree-wide sweep for
+// strings beginning "--" finds ssh's options and this plugin's own usage text,
+// and a check that reports things nobody can act on is one people stop reading.
+// If a third package starts building Herdr commands, it belongs here.
 func packageStrings(t *testing.T) []string {
 	t.Helper()
-	entries, err := os.ReadDir(".")
+	var found []string
+	for _, dir := range []string{".", filepath.Join("..", "mirror")} {
+		found = append(found, stringsIn(t, dir)...)
+	}
+	return found
+}
+
+func stringsIn(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +52,7 @@ func packageStrings(t *testing.T) []string {
 		if name == "dependencies.go" {
 			continue
 		}
-		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(".", name), nil, 0)
+		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, name), nil, 0)
 		if err != nil {
 			t.Fatalf("parsing %s: %v", name, err)
 		}
@@ -49,7 +69,7 @@ func packageStrings(t *testing.T) []string {
 		})
 	}
 	if len(found) == 0 {
-		t.Fatal("no string literals found in this package, so this checks nothing")
+		t.Fatalf("no string literals found in %s, so this checks nothing", dir)
 	}
 	return found
 }
@@ -68,7 +88,9 @@ func TestEveryFlagThisSendsIsOneMakeHerdrChecks(t *testing.T) {
 	}
 
 	for _, value := range packageStrings(t) {
-		if !strings.HasPrefix(value, "--") {
+		if !strings.HasPrefix(value, "--") || value == "--" {
+			// A bare "--" is the separator that keeps a machine's name from
+			// being read as an option, not a flag anything declares.
 			continue
 		}
 		if !listed[value] {
