@@ -51,7 +51,7 @@ func aRun(t *testing.T, ask asker) (string, int) {
 			command: []string{"session", "attach"},
 			where:   []string{"plan.go:628"},
 		}},
-		theAskedVersion, theDeclaredMinimum,
+		theAskedVersion, theDeclaredMinimum, theRecordedVersion,
 	)
 	return out.String(), code
 }
@@ -62,6 +62,7 @@ func aRun(t *testing.T, ask asker) (string, int) {
 const (
 	theAskedVersion    = "herdr 0.9.0"
 	theDeclaredMinimum = "herdr 0.8.0"
+	theRecordedVersion = "herdr 0.8.2"
 )
 
 // TestACleanRunSaysWhichHerdrItAsked holds the scope of the sentence it prints.
@@ -216,5 +217,50 @@ func TestAFlagThatWentGatesTheRunToo(t *testing.T) {
 		if strings.Contains(out, "take what this plugin sends") {
 			t.Errorf("%q lost a flag and the run still says everything is well:\n%s", one.what, out)
 		}
+	}
+}
+
+// TestARunSaysWhenTheRecordingsAreDueARefresh holds the one kind of drift this
+// tool cannot ask Herdr about.
+//
+// The parsers in internal/herdrcli are held against RECORDINGS of what Herdr
+// sent, and a recording cannot notice the real thing changing shape -- their
+// own comment says refreshing them against a newer Herdr is the point. Nothing
+// said when that was due, so they sat at 0.8.2 while the Herdr on the machine
+// became 0.9.0 and every test went on passing.
+//
+// It is a note and not a problem: a moved field is possible rather than proven,
+// and only re-capturing says which. So the exit code stays nought and the run
+// still says everything else was fine.
+func TestARunSaysWhenTheRecordingsAreDueARefresh(t *testing.T) {
+	out, code := aRun(t, answering(everything()))
+	if code != 0 {
+		t.Fatalf("a clean run exited %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, theRecordedVersion) {
+		t.Errorf("the report does not say which Herdr the recordings came from (%q):\n%s",
+			theRecordedVersion, out)
+	}
+	if !strings.Contains(out, "Re-capture them against "+theAskedVersion) {
+		t.Errorf("the report does not say to re-capture them against the Herdr it "+
+			"asked (%q):\n%s", theAskedVersion, out)
+	}
+}
+
+// TestRecordingsMatchingTheHerdrAskedAreNotMentioned is the other half: a
+// version that agrees is not something to tell anybody about, and a note that
+// appears whatever the versions are would be read as noise and then not read.
+func TestRecordingsMatchingTheHerdrAskedAreNotMentioned(t *testing.T) {
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil,
+		theAskedVersion, theDeclaredMinimum, theAskedVersion)
+	if code != 0 {
+		t.Fatalf("a clean run exited %d:\n%s", code, out.String())
+	}
+	if strings.Contains(out.String(), "Re-capture") {
+		t.Errorf("the recordings match the Herdr asked and the report still asks for a "+
+			"refresh:\n%s", out.String())
 	}
 }

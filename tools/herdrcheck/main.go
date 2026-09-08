@@ -42,6 +42,35 @@ func declaredMinimum(root string) string {
 	return "herdr " + string(m[1])
 }
 
+// recordedVersion is the Herdr the wire-format recordings were captured from,
+// taken from their own file names, or "" when they cannot be read or do not
+// agree with each other.
+//
+// Empty rather than a guess: this only exists to say a refresh is due, and a
+// wrong version would send somebody re-capturing against nothing.
+func recordedVersion(root string) string {
+	entries, err := os.ReadDir(filepath.Join(root, "internal", "herdrcli", "testdata"))
+	if err != nil {
+		return ""
+	}
+	from := regexp.MustCompile(`-([0-9]+\.[0-9]+\.[0-9]+)\.json$`)
+	seen := ""
+	for _, e := range entries {
+		m := from.FindStringSubmatch(e.Name())
+		if m == nil {
+			continue
+		}
+		if seen != "" && seen != m[1] {
+			return ""
+		}
+		seen = m[1]
+	}
+	if seen == "" {
+		return ""
+	}
+	return "herdr " + seen
+}
+
 // asker says what a command's help prints, and whether this Herdr has it at
 // all. A seam: the real one runs Herdr, and the tests stand in for it, because
 // what has to be held below is the counting and the exit status rather than
@@ -75,7 +104,7 @@ func main() {
 
 	ask := func(command []string) (string, bool) { return helpFor(bin, command) }
 	os.Exit(report(os.Stdout, ask, herdrcli.Dependencies, docs, said,
-		strings.TrimSpace(string(version)), declaredMinimum(".")))
+		strings.TrimSpace(string(version)), declaredMinimum("."), recordedVersion(".")))
 }
 
 // report asks about everything and says what it found, returning what this
@@ -89,7 +118,7 @@ func main() {
 // while printing the files it objects to. Removing either line that adds the
 // pages' and the messages' problems to the count passed just as quietly.
 func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []toldCommand,
-	asked, declared string) int {
+	asked, declared, recorded string) int {
 	problems := 0
 	for _, dep := range deps {
 		name := strings.Join(dep.Command, " ")
@@ -148,6 +177,17 @@ func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []tol
 	fmt.Fprintf(w, "\nasked of %s. The manifest declares %s as the minimum this plugin "+
 		"supports, and nothing here asks that one: install it to check.\n",
 		asked, declared)
+	// The parsers are held against RECORDINGS of what Herdr sent, and a
+	// recording cannot notice the real thing changing shape. Their own comment
+	// says refreshing them against a newer Herdr is the point -- and nothing
+	// said when that was due, so they sat at one version while the machine
+	// moved to another. Not a problem to fail on: a moved field is possible,
+	// not proven, and only re-capturing says which.
+	if recorded != "" && recorded != asked {
+		fmt.Fprintf(w, "\nthe wire-format recordings in internal/herdrcli/testdata are "+
+			"from %s. Re-capture them against %s: a field that moved shows up there and "+
+			"nowhere else.\n", recorded, asked)
+	}
 	return 0
 }
 
