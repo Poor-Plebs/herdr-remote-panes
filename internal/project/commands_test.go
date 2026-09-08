@@ -207,14 +207,13 @@ func TestEveryCommandTheDocsGiveStillWorks(t *testing.T) {
 // outside the chain that is held, and a placement changed there would reach
 // Herdr with nothing having looked at it.
 //
-// popup is ACCOUNTED FOR HERE rather than declared in Dependencies, and the
-// reason is written out because an exception with no reason rots. `make herdr`
-// checks a declared value against Herdr's own `--help`, which lists overlay,
-// split, tab and zoomed and does not mention popup -- while the binary ACCEPTS
-// popup: measured against 0.8.2 on 2026-09-07, where an unknown value is
-// refused by name ("invalid pane placement: banana") and popup is not.
-// Declaring it would make `make herdr` report drift that is not there. Leaving
-// it unaccounted for is how a menu sending it went unnoticed.
+// popup used to be excepted here, because `make herdr` checked declared values
+// against Herdr's `--help`, which lists four placements and omits it. That
+// exception is gone: the check asks Herdr's bundled schema now, whose
+// PluginPanePlacement declares overlay, popup, split, tab and zoomed, so popup
+// is simply declared in Dependencies like any other value. An exception that
+// existed because a check read the wrong source is worth removing when the
+// check learns to read the right one.
 func TestEveryPlacementThePluginSendsIsAccountedFor(t *testing.T) {
 	inRoot(t)
 
@@ -229,7 +228,6 @@ func TestEveryPlacementThePluginSendsIsAccountedFor(t *testing.T) {
 	if len(accounted) == 0 {
 		t.Fatal("no placements are declared for `plugin pane open`, so this holds nothing")
 	}
-	accounted["popup"] = "sent by the menu; Herdr 0.8.2 takes it though its --help omits it"
 
 	sends := regexp.MustCompile(`"--placement",\s*"([a-zA-Z]+)"`)
 	found := 0

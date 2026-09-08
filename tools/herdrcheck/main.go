@@ -107,7 +107,7 @@ func main() {
 	ask := func(command []string) (string, bool) { return helpFor(bin, command) }
 	os.Exit(report(os.Stdout, ask, herdrcli.Dependencies, docs, said,
 		strings.TrimSpace(string(version)), declaredMinimum("."), recordedVersion("."),
-		paneSchemaFields(bin)))
+		askHerdrSchema(bin)))
 }
 
 // report asks about everything and says what it found, returning what this
@@ -121,7 +121,7 @@ func main() {
 // while printing the files it objects to. Removing either line that adds the
 // pages' and the messages' problems to the count passed just as quietly.
 func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []toldCommand,
-	asked, declared, recorded string, paneFields map[string]bool) int {
+	asked, declared, recorded string, schema herdrSchema) int {
 	problems := 0
 	for _, dep := range deps {
 		name := strings.Join(dep.Command, " ")
@@ -143,7 +143,7 @@ func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []tol
 		}
 		for flag, values := range dep.Values {
 			for _, value := range values {
-				if !takesValue(text, flag, value) {
+				if !accepts(schema, text, flag, value) {
 					missing = append(missing, flag+"="+value)
 				}
 			}
@@ -161,7 +161,7 @@ func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []tol
 	fmt.Fprintln(w)
 	problems += askAbout(w, ask, said, "a message gives it at")
 
-	problems += askTheSchema(w, paneFields)
+	problems += askTheSchema(w, schema.PaneFields)
 
 	fmt.Fprintln(w)
 	total := len(deps) + len(docs) + len(said)
@@ -194,6 +194,43 @@ func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []tol
 			"nowhere else.\n", recorded, asked)
 	}
 	return 0
+}
+
+// enumFor names the schema type that says which values a flag takes.
+//
+// Two vocabularies meet here -- what the command line calls a flag and what the
+// schema calls its type -- so the pairing has to be written down once. It is
+// short and it is checked: a name the schema does not define is reported rather
+// than quietly skipped.
+var enumFor = map[string]string{
+	"--placement": "PluginPanePlacement",
+	"--state":     "PaneAgentState",
+	"--direction": "SplitDirection",
+}
+
+// accepts reports whether Herdr takes this value for this flag.
+//
+// The SCHEMA first, because it is the authority and the help text is not: Herdr
+// 0.9.0's `plugin pane open --help` lists overlay, split, tab and zoomed as the
+// possible placements, and its own PluginPanePlacement declares those four and
+// popup -- which the binary accepts and this plugin's menu has always sent. A
+// check reading the help alone called that drift and had to be given an
+// exception; reading the schema, there is nothing to except.
+//
+// Help remains the answer for every flag with no enum behind it, which is most
+// of them.
+func accepts(schema herdrSchema, help, flag, value string) bool {
+	if def, ok := enumFor[flag]; ok {
+		if values, known := schema.Enums[def]; known {
+			for _, one := range values {
+				if one == value {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return takesValue(help, flag, value)
 }
 
 // askTheSchema holds the fields this plugin's parsers read against the ones
@@ -245,6 +282,65 @@ func paneJSONFields() []string {
 		}
 	}
 	return fields
+}
+
+// herdrSchema is what the bundled schema says that this plugin depends on: the
+// fields a pane carries, and the values each flag takes.
+//
+// Zero when it could not be had -- an older Herdr with no `api schema` -- and
+// every reader has to treat that as "not checked" rather than as "nothing is
+// declared".
+type herdrSchema struct {
+	PaneFields map[string]bool
+	Enums      map[string][]string
+}
+
+// askHerdrSchema asks the installed Herdr for its bundled schema.
+func askHerdrSchema(bin string) herdrSchema {
+	return herdrSchema{PaneFields: paneSchemaFields(bin), Enums: schemaEnums(bin)}
+}
+
+// schemaEnums is every named type in the schema that lists the strings it
+// accepts, by name.
+func schemaEnums(bin string) map[string][]string {
+	out, err := exec.Command(bin, "api", "schema", "--json").Output()
+	if err != nil {
+		return nil
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(out, &doc); err != nil {
+		return nil
+	}
+	found := map[string][]string{}
+	var walk func(node json.RawMessage, name string)
+	walk = func(node json.RawMessage, name string) {
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(node, &obj) != nil {
+			return
+		}
+		if raw, ok := obj["enum"]; ok {
+			var values []string
+			if json.Unmarshal(raw, &values) == nil && name != "" {
+				found[name] = values
+			}
+		}
+		for key, child := range obj {
+			// Under $defs the key is the type's name; anywhere else it is a
+			// field and the name above it still applies.
+			next := name
+			if name == "$defs" || key == "$defs" {
+				next = key
+			}
+			if name == "$defs" {
+				next = key
+			}
+			walk(child, next)
+		}
+	}
+	for key, child := range doc {
+		walk(child, key)
+	}
+	return found
 }
 
 // paneSchemaFields asks the installed Herdr for its bundled schema and returns

@@ -45,15 +45,14 @@ var Dependencies = []Dependency{
 		// internal/syncd so a placement it plans and a placement Herdr takes
 		// cannot drift apart.
 		//
-		// popup is absent on purpose, and NOT because the flag refuses it:
-		// measured against Herdr 0.8.2, `--placement popup` is accepted, and
-		// this plugin's own menu sends exactly that. It is absent because this
-		// list is checked against Herdr's `--help`, which lists four possible
-		// values and omits popup -- so declaring it here would make `make
-		// herdr` report drift that is not there. The menu's sender is
-		// accounted for in internal/project instead, with the measurement.
+		// popup is here now. It was left out while this list was checked
+		// against Herdr's `--help`, which lists four possible values and omits
+		// it -- so declaring it read as drift that was not there. `make herdr`
+		// asks the schema instead, and Herdr's own PluginPanePlacement
+		// declares overlay, popup, split, tab and zoomed. The menu sends
+		// popup and always has.
 		Values: map[string][]string{
-			"--placement": {"split", "tab", "zoomed", "overlay"},
+			"--placement": {"split", "tab", "zoomed", "overlay", "popup"},
 		},
 	},
 	{

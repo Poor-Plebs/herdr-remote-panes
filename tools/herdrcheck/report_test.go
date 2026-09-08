@@ -51,7 +51,7 @@ func aRun(t *testing.T, ask asker) (string, int) {
 			command: []string{"session", "attach"},
 			where:   []string{"plan.go:628"},
 		}},
-		theAskedVersion, theDeclaredMinimum, theRecordedVersion, everyPaneField(),
+		theAskedVersion, theDeclaredMinimum, theRecordedVersion, aSchemaThatDeclaresEverything(),
 	)
 	return out.String(), code
 }
@@ -128,27 +128,36 @@ func TestARunWithNothingWrongExitsNought(t *testing.T) {
 }
 
 func TestAValueHerdrStoppedTakingGatesTheRun(t *testing.T) {
-	// The other half of what Dependencies records. A flag can still be there
-	// while the value this plugin sends for it is gone, which is exactly what
-	// happened to `--placement popup`: accepted by the stand-in for as long as
-	// the code sent it, refused by the real thing, and nothing opened.
-	known := everything()
-	known["pane split"] = `Usage: herdr pane split
+	// The other half of what Dependencies records: a flag can still be there
+	// while the value this plugin sends for it is gone.
+	//
+	// Modelled by taking it out of the SCHEMA rather than out of the help,
+	// because the schema is what says which values a flag takes. This test
+	// used to remove it from the help and to cite `--placement popup` as the
+	// case -- on the belief that Herdr refused popup, which it does not: its
+	// own PluginPanePlacement declares popup, the binary accepts it, and only
+	// the help text leaves it out.
+	enums := theEnums()
+	enums["SplitDirection"] = []string{"down"}
 
-Options:
-      --direction <DIRECTION>
-          [possible values: down]
-`
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{
+			Command: []string{"pane", "split"},
+			Flags:   []string{"--direction"},
+			Values:  map[string][]string{"--direction": {"right"}},
+		}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		herdrSchema{PaneFields: everyPaneField(), Enums: enums})
 
-	out, code := aRun(t, answering(known))
 	if code == 0 {
-		t.Errorf("a value Herdr stopped taking exited nought:\n%s", out)
+		t.Errorf("a value Herdr stopped taking exited nought:\n%s", out.String())
 	}
-	if !strings.Contains(out, "--direction=right") {
-		t.Errorf("the value that went is not named:\n%s", out)
+	if !strings.Contains(out.String(), "--direction=right") {
+		t.Errorf("the value that went is not named:\n%s", out.String())
 	}
-	if strings.Contains(out, "take what this plugin sends") {
-		t.Errorf("a value that went still says everything is well:\n%s", out)
+	if strings.Contains(out.String(), "take what this plugin sends") {
+		t.Errorf("a value that went still says everything is well:\n%s", out.String())
 	}
 }
 
@@ -255,7 +264,7 @@ func TestRecordingsMatchingTheHerdrAskedAreNotMentioned(t *testing.T) {
 	code := report(&out, answering(everything()),
 		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
 		nil, nil,
-		theAskedVersion, theDeclaredMinimum, theAskedVersion, everyPaneField())
+		theAskedVersion, theDeclaredMinimum, theAskedVersion, aSchemaThatDeclaresEverything())
 	if code != 0 {
 		t.Fatalf("a clean run exited %d:\n%s", code, out.String())
 	}
@@ -273,6 +282,62 @@ func everyPaneField() map[string]bool {
 		declared[f] = true
 	}
 	return declared
+}
+
+// theEnums is what Herdr 0.9.0 declares for the flags this plugin sends values
+// with, written out rather than read from the binary: a test that asks the
+// installed Herdr says nothing about what the check does with an answer.
+func theEnums() map[string][]string {
+	return map[string][]string{
+		"PluginPanePlacement": {"overlay", "popup", "split", "tab", "zoomed"},
+		"PaneAgentState":      {"blocked", "idle", "unknown", "working"},
+		"SplitDirection":      {"down", "right"},
+	}
+}
+
+func aSchemaThatDeclaresEverything() herdrSchema {
+	return herdrSchema{PaneFields: everyPaneField(), Enums: theEnums()}
+}
+
+// TestAValueTheSchemaDoesNotDeclareIsDrift holds the value check against the
+// authority rather than against the help text.
+//
+// Herdr's `plugin pane open --help` lists four placements and its schema
+// declares five: popup is accepted, and is what this plugin's menu sends. A
+// check reading the help called that drift and had to be given an exception.
+func TestAValueTheSchemaDoesNotDeclareIsDrift(t *testing.T) {
+	deps := []herdrcli.Dependency{{
+		Command: []string{"pane", "split"},
+		Flags:   []string{"--direction"},
+		Values:  map[string][]string{"--direction": {"sideways"}},
+	}}
+	var out strings.Builder
+	code := report(&out, answering(everything()), deps, nil, nil,
+		theAskedVersion, theDeclaredMinimum, theAskedVersion, aSchemaThatDeclaresEverything())
+	if code == 0 {
+		t.Errorf("--direction=sideways is in no enum and the run exited nought:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "--direction=sideways") {
+		t.Errorf("the report does not name the value:\n%s", out.String())
+	}
+}
+
+// TestAValueOnlyTheSchemaKnowsIsAccepted is the case the help text got wrong.
+func TestAValueOnlyTheSchemaKnowsIsAccepted(t *testing.T) {
+	deps := []herdrcli.Dependency{{
+		Command: []string{"pane", "split"},
+		Flags:   []string{"--direction"},
+		// paneSplit's help declares "right" and says nothing about "down";
+		// the schema declares both.
+		Values: map[string][]string{"--direction": {"down"}},
+	}}
+	var out strings.Builder
+	code := report(&out, answering(everything()), deps, nil, nil,
+		theAskedVersion, theDeclaredMinimum, theAskedVersion, aSchemaThatDeclaresEverything())
+	if code != 0 {
+		t.Errorf("--direction=down is in the schema's enum and was reported as drift:\n%s",
+			out.String())
+	}
 }
 
 // TestAFieldTheParserReadsAndTheSchemaDoesNotIsDrift holds the check the
@@ -294,7 +359,8 @@ func TestAFieldTheParserReadsAndTheSchemaDoesNotIsDrift(t *testing.T) {
 	var out strings.Builder
 	code := report(&out, answering(everything()),
 		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
-		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion, short)
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		herdrSchema{PaneFields: short, Enums: theEnums()})
 
 	if code == 0 {
 		t.Errorf("the schema does not declare %q and the run exited nought:\n%s",
@@ -312,7 +378,7 @@ func TestASchemaThatCouldNotBeReadIsNotDrift(t *testing.T) {
 	var out strings.Builder
 	code := report(&out, answering(everything()),
 		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
-		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion, nil)
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion, herdrSchema{})
 
 	if code != 0 {
 		t.Errorf("a Herdr with no readable schema was reported as drift:\n%s", out.String())
