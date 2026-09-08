@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/Poor-Plebs/herdr-remote-panes/internal/syncd"
 )
 
 // TestAnUpgradeHandsTheSocketOver runs two real daemons, the way an upgrade
@@ -304,19 +306,22 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 	older := build(previous, "older")
 	current := build("", "current")
 
-	// Named for its length, not for tidiness: the check in the defer scans the
-	// temp directory, and the socket only lands there when the direct path is
-	// too long to bind. See the control at the end of this test for the
-	// arithmetic.
+	// Named for its length, not for tidiness: this test is about the socket
+	// the daemons leave behind, and that only lands outside the state
+	// directory when the direct path is too long to bind. The arithmetic is
+	// with the check on it below.
 	state := filepath.Join(dir, "state-long-enough-to-hash-the-socket")
 	config := filepath.Join(dir, "config")
 	if err := os.MkdirAll(config, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	env := append(os.Environ(),
-		"HERDR_PLUGIN_STATE_DIR="+state,
-		"HERDR_PLUGIN_CONFIG_DIR="+config,
-		"HERDR_SESSION=upgrade-across")
+	// Set here rather than appended to the daemons' environment, so that where
+	// this process asks the socket will be and where the daemons bind it are
+	// the same three values and not two copies of them.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", state)
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", config)
+	t.Setenv("HERDR_SESSION", "upgrade-across")
+	env := os.Environ()
 
 	start := func(binary string) (*exec.Cmd, *saidWhat) {
 		said := &saidWhat{}
@@ -341,17 +346,52 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 		return false
 	}
 
-	// What is in the temp directory before any daemon of this test's runs, so
-	// what it leaves behind can be told from what was already there.
-	sockets := func() map[string]bool {
-		found, _ := filepath.Glob(filepath.Join(os.TempDir(), "hrp-*.sock"))
-		held := make(map[string]bool, len(found))
-		for _, path := range found {
-			held[path] = true
-		}
-		return held
+	// The one socket these daemons bind, ASKED of the code that decides where
+	// it goes rather than worked out here: socketPathFor has two branches and a
+	// hand-built path watches the wrong one wherever the other is taken.
+	//
+	// It replaces a glob of every hrp-*.sock in the temp directory, which was
+	// never this test's to read. That directory is SHARED, and on macOS every
+	// control-socket fixture in this repository lands in it -- answerWith in
+	// internal/cli and in internal/picker, scriptedListener in internal/syncd --
+	// because a t.TempDir() path there is long enough to force the same hashed
+	// fallback these daemons take. `go test ./...` runs those packages at the
+	// same time as this one, so a sibling's socket could fail the check in the
+	// defer and satisfy the control at the end, in the same run. It did: CI went
+	// red on macOS on 2026-09-08 naming a socket these daemons had not left, the
+	// same commit re-run was green on all three jobs, and the failure carried no
+	// "did not stop when asked" beside it -- so the daemon had exited cleanly
+	// and had unlinked its own.
+	ours, err := syncd.ControlSocket()
+	if err != nil {
+		t.Fatal(err)
 	}
-	before := sockets()
+
+	// That the hashed fallback is taken at all, which is what this test is for
+	// and can now be said outright instead of inferred from a glob at the end.
+	//
+	// socketPathFor falls back to a short hashed name past 100 bytes. With the
+	// state directory called plainly "state" the path came to 101 -- a margin of
+	// ONE, made of this test's own name, that directory and the session called
+	// "upgrade-across". One byte is not a margin, because t.TempDir()'s random
+	// component is not a fixed width: a shorter one puts the path at exactly
+	// 100, the daemon binds inside its state directory, and a test written
+	// because three hundred and fifty sockets once piled up in /tmp goes on
+	// passing while it watches the wrong place. Not hypothetical -- the check
+	// this replaces fired on the oldest-Go job on 2026-09-07 and said so. The
+	// state directory is named for its length now and buys 31 bytes, so even the
+	// shortest temp directory Go can hand out overruns the bound.
+	if filepath.Dir(ours) == state {
+		t.Fatalf("the daemons will bind %s, inside their own state directory, so "+
+			"this is no longer exercising the hashed fallback it was written "+
+			"for: the path is short enough again and the state directory needs "+
+			"a longer name", ours)
+	}
+	// And nothing of an earlier run is sitting on it, or "gone afterwards"
+	// would be a claim about somebody else's leftovers.
+	if _, err := os.Stat(ours); err == nil {
+		t.Fatalf("%s is already there before any daemon of this test has run", ours)
+	}
 
 	old, oldSaid := start(older)
 	defer func() { _ = old.Process.Kill() }()
@@ -388,13 +428,10 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 		}
 
 		// And it took its socket with it. The daemon unlinks the path it bound
-		// on the way out; a test that kills it instead leaves one file per run
-		// in the temp directory, under a name hashed from a t.TempDir() and so
-		// never the same twice.
-		for path := range sockets() {
-			if !before[path] {
-				t.Errorf("the daemons left %s behind in the temp directory", path)
-			}
+		// on the way out; one that is killed instead leaves the file, which is
+		// what the sockets that once piled up in /tmp were.
+		if _, err := os.Stat(ours); err == nil {
+			t.Errorf("the daemons left %s behind in the temp directory", ours)
 		}
 	}()
 	time.Sleep(time.Second)
@@ -414,39 +451,15 @@ func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 			previous, replacingSaid, previous, oldSaid)
 	}
 
-	// And a socket of the shape the check above looks for was actually made,
-	// which is what stops that check passing by finding nothing.
-	//
-	// It only lands in the temp directory when the direct path is too long to
-	// bind: socketPathFor falls back to a hashed short name past 100 bytes.
-	// With the state directory called plainly "state" the path came to 101
-	// bytes -- a margin of ONE, made up of this test's own name, that
-	// directory and the session called "upgrade-across".
-	//
-	// One byte is not a margin, because t.TempDir()'s random component is not
-	// a fixed width. A shorter one puts the path at exactly 100, the daemon
-	// binds inside its state directory, the glob matches nothing, and a check
-	// written because three hundred and fifty sockets once piled up in /tmp
-	// goes on passing while it watches the wrong directory. That is not
-	// hypothetical: this control fired on the oldest-Go job on 2026-09-07 and
-	// said so, which is the whole reason it exists. The state directory is
-	// named for its length now and buys 31 bytes, so even the shortest temp
-	// directory Go can hand out overruns the bound.
-	//
-	// So this is not decoration about a path. It is the control for the
-	// assertion in the defer, and it fails saying which way it went.
-	made := 0
-	for path := range sockets() {
-		if !before[path] {
-			made++
-		}
-	}
-	if made == 0 {
-		t.Errorf("no socket named hrp-*.sock appeared in %s, so the check that "+
-			"the daemons leave none behind is comparing nothing with nothing -- "+
-			"either the name has changed, or the path to a daemon's state "+
-			"directory is now short enough to bind directly and this test needs "+
-			"a longer one", os.TempDir())
+	// The control for the assertion in the defer: the socket really is there
+	// while a daemon is answering, so "it is gone afterwards" is a statement
+	// about the daemon tidying up rather than about a file that never existed.
+	// Asserting a resource was TAKEN is what gives asserting it was given back
+	// any content.
+	if _, err := os.Stat(ours); err != nil {
+		t.Errorf("a daemon is answering and %s is not there, so the check that "+
+			"it is removed afterwards is comparing nothing with nothing: %v",
+			ours, err)
 	}
 }
 
