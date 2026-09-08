@@ -147,6 +147,18 @@ func TestWhenTheRunningDaemonIsWorthMentioning(t *testing.T) {
 			running: "", installed: "9fcc667",
 			mentions: []string{"does not report which build", "9fcc667", "restart Herdr"},
 		},
+		{
+			// The same daemon by the other route, and the one this table
+			// missed. A daemon built outside a checkout does not send an empty
+			// revision: it sends what Short answers for such a build, which is
+			// "unknown" -- so it went past the branch above and was told it
+			// was an older build that restarting would update, which is the
+			// claim that branch exists to avoid making. The function already
+			// understood "unknown" on the INSTALLED side, two lines up.
+			what:    "a daemon whose build cannot be identified is not an older one",
+			running: "unknown", installed: "9fcc667",
+			mentions: []string{"does not report which build", "9fcc667", "restart Herdr"},
+		},
 	} {
 		t.Run(tt.what, func(t *testing.T) {
 			got := StaleMessageFor(tt.running, tt.installed)
