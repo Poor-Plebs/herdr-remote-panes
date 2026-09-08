@@ -265,6 +265,23 @@ of these left every check green and left the page sending somebody to a command
 that does not exist, which is worse than no instruction, because they believe
 the page and doubt their machine.
 
+It asks Herdr's own bundled schema, not only `--help`. The help is
+documentation and the schema is the description Herdr ships of its wire format,
+and the two disagree: the help for `plugin pane open` lists four placements and
+the schema declares five. So the values this plugin sends are checked against
+the schema where there is one, the fields its parsers read are checked against
+what the schema declares, and every agent status Herdr says it can report has
+to be one the plugin names rather than one it maps to "unknown" by default.
+
+It reads the manifest as well, which is the other contract and the earlier one.
+`herdr-plugin.toml` is what Herdr reads when it loads the plugin, and three of
+its settings take values Herdr defines: an action's `contexts`, a pane's
+`placement`, and the `platforms`. A value Herdr no longer knows is not refused
+in a way anybody sees — the schema gives `placement` a default of `overlay`, so
+the machine menu would open as an overlay rather than the session-modal popup
+it needs in order to receive Escape, with every action still working and
+nothing anywhere to read.
+
 What is read as a command is only what is written where a command can start —
 the beginning of a line, after a prompt, inside the quotes of `ssh box 'herdr
 pane list'`, in the `$(...)` of a path. In prose the word is preceded by

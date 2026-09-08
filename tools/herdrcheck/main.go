@@ -1,5 +1,6 @@
-// Command herdrcheck asks the installed Herdr whether it still takes what this
-// plugin sends it.
+// Command herdrcheck asks the installed Herdr whether it and this plugin still
+// agree -- about the commands and values the plugin sends it, and about the
+// values the plugin's manifest declares to it.
 //
 // Every command, flag and restricted value the plugin uses is written down in
 // internal/herdrcli.Dependencies, and none of it is checked by anything that
@@ -11,6 +12,14 @@
 // PluginPanePlacement declares popup, and only its --help leaves it out, which
 // is why the values here are checked against the schema and not against the
 // help text.
+//
+// The manifest is the other contract and the earlier one: herdr-plugin.toml is
+// what Herdr reads when it LOADS the plugin, and three of its settings take
+// values Herdr itself defines -- an action's contexts, a pane's placement and
+// the platforms. A value Herdr no longer knows is not refused in a way anybody
+// sees, because the schema gives placement a default of "overlay": the machine
+// menu would open as an overlay rather than the session-modal popup it needs in
+// order to receive Escape, with every action still working.
 //
 // Not part of `make check`: it needs Herdr on the machine, and a check that
 // cannot run everywhere is one that gets ignored where it can.
@@ -25,6 +34,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -110,7 +120,7 @@ func main() {
 	ask := func(command []string) (string, bool) { return helpFor(bin, command) }
 	os.Exit(report(os.Stdout, ask, herdrcli.Dependencies, docs, said,
 		strings.TrimSpace(string(version)), declaredMinimum("."), recordedVersion("."),
-		askHerdrSchema(bin)))
+		askHerdrSchema(bin), manifestValues(".")))
 }
 
 // report asks about everything and says what it found, returning what this
@@ -124,7 +134,7 @@ func main() {
 // while printing the files it objects to. Removing either line that adds the
 // pages' and the messages' problems to the count passed just as quietly.
 func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []toldCommand,
-	asked, declared, recorded string, schema herdrSchema) int {
+	asked, declared, recorded string, schema herdrSchema, manifest map[string][]string) int {
 	problems := 0
 	for _, dep := range deps {
 		name := strings.Join(dep.Command, " ")
@@ -165,6 +175,7 @@ func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []tol
 	problems += askAbout(w, ask, said, "a message gives it at")
 
 	problems += askTheSchema(w, schema.PaneFields, schema.Enums)
+	problems += askTheManifest(w, manifest, schema.Enums)
 
 	fmt.Fprintln(w)
 	total := len(deps) + len(docs) + len(said)
@@ -214,6 +225,110 @@ var enumFor = map[string]string{
 	"--placement": "PluginPanePlacement",
 	"--state":     "PaneAgentState",
 	"--direction": "SplitDirection",
+}
+
+// manifestEnumFor names the schema type behind each manifest setting whose
+// values Herdr declares.
+//
+// The manifest is this plugin's OTHER contract with Herdr, and the earlier one.
+// Everything else here asks whether the commands and values the plugin SENDS at
+// run time still exist; nothing had ever looked at the file Herdr READS at load
+// time to decide which actions there are, where a pane opens and on which
+// platforms. A value Herdr does not know is not refused loudly: the schema
+// gives placement a default of "overlay", so the machine menu would open as an
+// overlay rather than the session-modal popup it needs in order to get Escape,
+// and nothing anywhere would say why.
+//
+// Paired by hand like enumFor, and carrying the same trap: a pairing whose type
+// the schema stops defining is REPORTED rather than quietly skipped, or this
+// check would go on saying ok while asking nothing.
+var manifestEnumFor = map[string]string{
+	"platforms": "PluginPlatform",
+	"contexts":  "PluginActionContext",
+	"placement": "PluginPanePlacement",
+}
+
+// manifestSetting matches one `key = ...` line of the manifest and
+// manifestQuoted the strings on it, which together read both forms this file
+// uses: a bare value and an array of them.
+//
+// Enough TOML for the question and no more. The forms it cannot read -- a value
+// spread over several lines, a quoted or dotted key -- are ones this manifest
+// does not use, and a manifest that adopted one would leave a paired setting
+// with nothing found for it, which is what the scan's own test holds against
+// the real file.
+var (
+	manifestSetting = regexp.MustCompile(`(?m)^[ \t]*([a-z_]+)[ \t]*=[ \t]*(.*)$`)
+	manifestQuoted  = regexp.MustCompile(`"([^"]*)"`)
+)
+
+// manifestValues reads the paired settings out of the manifest, as the setting
+// name against every value the file gives it. A manifest that cannot be read at
+// all answers nil, which askTheManifest reports as unchecked rather than as
+// drift.
+func manifestValues(root string) map[string][]string {
+	raw, err := os.ReadFile(filepath.Join(root, "herdr-plugin.toml"))
+	if err != nil {
+		return nil
+	}
+	found := map[string][]string{}
+	for _, line := range manifestSetting.FindAllStringSubmatch(string(raw), -1) {
+		key := line[1]
+		if _, paired := manifestEnumFor[key]; !paired {
+			continue
+		}
+		for _, value := range manifestQuoted.FindAllStringSubmatch(line[2], -1) {
+			found[key] = append(found[key], value[1])
+		}
+	}
+	return found
+}
+
+// askTheManifest holds what the manifest declares against what Herdr says it
+// accepts.
+func askTheManifest(w io.Writer, values, enums map[string][]string) int {
+	switch {
+	case values == nil:
+		fmt.Fprintf(w, "\n%-24s could not be read, so the values it declares went "+
+			"unchecked\n", "plugin manifest")
+		return 0
+	case enums == nil:
+		fmt.Fprintf(w, "\n%-24s the schema could not be read, so the values the "+
+			"manifest declares went unchecked\n", "plugin manifest")
+		return 0
+	}
+
+	stale, wrong, checked := []string{}, []string{}, 0
+	for setting, def := range manifestEnumFor {
+		declared, known := enums[def]
+		if !known {
+			stale = append(stale, setting+" -> "+def)
+			continue
+		}
+		for _, value := range values[setting] {
+			checked++
+			if !slices.Contains(declared, value) {
+				wrong = append(wrong, fmt.Sprintf("%s = %q", setting, value))
+			}
+		}
+	}
+	sort.Strings(stale)
+	sort.Strings(wrong)
+
+	if len(stale) > 0 {
+		fmt.Fprintf(w, "\n%-24s does not define %s, so what the manifest declares "+
+			"there is checked against nothing\n", "plugin manifest",
+			strings.Join(stale, ", "))
+		return len(stale)
+	}
+	if len(wrong) > 0 {
+		fmt.Fprintf(w, "\n%-24s declares %s, which this Herdr does not accept\n",
+			"plugin manifest", strings.Join(wrong, ", "))
+		return len(wrong)
+	}
+	fmt.Fprintf(w, "\n%-24s ok, all %d values it declares are ones Herdr declares too\n",
+		"plugin manifest", checked)
+	return 0
 }
 
 // accepts reports whether Herdr takes this value for this flag.

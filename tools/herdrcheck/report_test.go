@@ -1,6 +1,8 @@
 package main
 
 import (
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -51,7 +53,7 @@ func aRun(t *testing.T, ask asker) (string, int) {
 			command: []string{"session", "attach"},
 			where:   []string{"plan.go:628"},
 		}},
-		theAskedVersion, theDeclaredMinimum, theRecordedVersion, aSchemaThatDeclaresEverything(),
+		theAskedVersion, theDeclaredMinimum, theRecordedVersion, aSchemaThatDeclaresEverything(), theManifest(),
 	)
 	return out.String(), code
 }
@@ -148,7 +150,7 @@ func TestAValueHerdrStoppedTakingGatesTheRun(t *testing.T) {
 			Values:  map[string][]string{"--direction": {"right"}},
 		}},
 		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
-		herdrSchema{PaneFields: everyPaneField(), Enums: enums})
+		herdrSchema{PaneFields: everyPaneField(), Enums: enums}, theManifest())
 
 	if code == 0 {
 		t.Errorf("a value Herdr stopped taking exited nought:\n%s", out.String())
@@ -264,7 +266,7 @@ func TestRecordingsMatchingTheHerdrAskedAreNotMentioned(t *testing.T) {
 	code := report(&out, answering(everything()),
 		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
 		nil, nil,
-		theAskedVersion, theDeclaredMinimum, theAskedVersion, aSchemaThatDeclaresEverything())
+		theAskedVersion, theDeclaredMinimum, theAskedVersion, aSchemaThatDeclaresEverything(), theManifest())
 	if code != 0 {
 		t.Fatalf("a clean run exited %d:\n%s", code, out.String())
 	}
@@ -292,13 +294,28 @@ func everyPaneField() map[string]bool {
 // not a flag at all -- it is what Herdr REPORTS a pane's agent to be, and it is
 // here because the check holds AgentState against it. Note that it has five
 // values and PaneAgentState has four: that gap is the whole reason AgentState
-// exists.
+// exists. The last two are not run-time values either: they are what the
+// MANIFEST declares, read by Herdr when it loads the plugin.
 func theEnums() map[string][]string {
 	return map[string][]string{
 		"PluginPanePlacement": {"overlay", "popup", "split", "tab", "zoomed"},
 		"PaneAgentState":      {"blocked", "idle", "unknown", "working"},
 		"SplitDirection":      {"down", "right"},
 		"AgentStatus":         {"blocked", "done", "idle", "unknown", "working"},
+		"PluginPlatform":      {"linux", "macos", "windows"},
+		"PluginActionContext": {"global", "workspace", "tab", "pane", "selection"},
+	}
+}
+
+// theManifest is what herdr-plugin.toml declares for the settings whose values
+// Herdr's schema constrains, written out so a test says what it means rather
+// than depending on the real file. TestTheManifestScanReadsTheRealFile is what
+// keeps the two in step.
+func theManifest() map[string][]string {
+	return map[string][]string{
+		"platforms": {"linux", "macos"},
+		"contexts":  {"global", "workspace", "selection"},
+		"placement": {"popup", "tab"},
 	}
 }
 
@@ -320,7 +337,7 @@ func TestAValueTheSchemaDoesNotDeclareIsDrift(t *testing.T) {
 	}}
 	var out strings.Builder
 	code := report(&out, answering(everything()), deps, nil, nil,
-		theAskedVersion, theDeclaredMinimum, theAskedVersion, aSchemaThatDeclaresEverything())
+		theAskedVersion, theDeclaredMinimum, theAskedVersion, aSchemaThatDeclaresEverything(), theManifest())
 	if code == 0 {
 		t.Errorf("--direction=sideways is in no enum and the run exited nought:\n%s", out.String())
 	}
@@ -340,7 +357,7 @@ func TestAValueOnlyTheSchemaKnowsIsAccepted(t *testing.T) {
 	}}
 	var out strings.Builder
 	code := report(&out, answering(everything()), deps, nil, nil,
-		theAskedVersion, theDeclaredMinimum, theAskedVersion, aSchemaThatDeclaresEverything())
+		theAskedVersion, theDeclaredMinimum, theAskedVersion, aSchemaThatDeclaresEverything(), theManifest())
 	if code != 0 {
 		t.Errorf("--direction=down is in the schema's enum and was reported as drift:\n%s",
 			out.String())
@@ -367,7 +384,7 @@ func TestAFieldTheParserReadsAndTheSchemaDoesNotIsDrift(t *testing.T) {
 	code := report(&out, answering(everything()),
 		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
 		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
-		herdrSchema{PaneFields: short, Enums: theEnums()})
+		herdrSchema{PaneFields: short, Enums: theEnums()}, theManifest())
 
 	if code == 0 {
 		t.Errorf("the schema does not declare %q and the run exited nought:\n%s",
@@ -385,7 +402,7 @@ func TestASchemaThatCouldNotBeReadIsNotDrift(t *testing.T) {
 	var out strings.Builder
 	code := report(&out, answering(everything()),
 		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
-		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion, herdrSchema{})
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion, herdrSchema{}, theManifest())
 
 	if code != 0 {
 		t.Errorf("a Herdr with no readable schema was reported as drift:\n%s", out.String())
@@ -418,7 +435,7 @@ func TestASchemaTypeThisPairsWithAndCannotFindIsReported(t *testing.T) {
 	code := report(&out, answering(everything()),
 		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
 		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
-		herdrSchema{PaneFields: everyPaneField(), Enums: short})
+		herdrSchema{PaneFields: everyPaneField(), Enums: short}, theManifest())
 
 	if code == 0 {
 		t.Errorf("the schema no longer defines PluginPanePlacement and the run exited "+
@@ -449,7 +466,7 @@ func TestASchemaWithNoEnumsIsNotAStalePairing(t *testing.T) {
 	code := report(&out, answering(everything()),
 		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
 		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
-		herdrSchema{PaneFields: everyPaneField(), Enums: nil})
+		herdrSchema{PaneFields: everyPaneField(), Enums: nil}, theManifest())
 
 	if code != 0 {
 		t.Errorf("a schema carrying no enums was reported as having stale pairings:\n%s",
@@ -467,7 +484,7 @@ func TestNoSchemaAtAllSaysTheFieldsWentUnchecked(t *testing.T) {
 	var out strings.Builder
 	code := report(&out, answering(everything()),
 		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
-		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion, herdrSchema{})
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion, herdrSchema{}, theManifest())
 
 	if code != 0 {
 		t.Errorf("a Herdr with no readable schema was reported as drift:\n%s", out.String())
@@ -511,7 +528,7 @@ func TestAStatusHerdrReportsAndTheMappingDoesNotNameIsDrift(t *testing.T) {
 		herdrSchema{
 			PaneFields: everyPaneField(),
 			Enums:      withAgentStatus("blocked", "done", "idle", "unknown", "waiting", "working"),
-		})
+		}, theManifest())
 
 	if code == 0 {
 		t.Errorf("Herdr reports a status the mapping does not name and the run "+
@@ -535,7 +552,7 @@ func TestTheStatusThatMeansUnknownIsNotItselfDrift(t *testing.T) {
 	code := report(&out, answering(everything()),
 		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
 		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
-		herdrSchema{PaneFields: everyPaneField(), Enums: withAgentStatus("unknown")})
+		herdrSchema{PaneFields: everyPaneField(), Enums: withAgentStatus("unknown")}, theManifest())
 
 	if code != 0 {
 		t.Errorf("the status \"unknown\" was reported as a status with no name:\n%s",
@@ -560,5 +577,117 @@ func TestEveryStatusHerdrReportsTodayHasAName(t *testing.T) {
 			t.Errorf("Herdr reports %q and herdrcli.AgentState answers %q, so it "+
 				"fell through to the default", status, got)
 		}
+	}
+}
+
+// manifestDeclaring is theManifest with one setting given different values, so
+// a failure is about that setting and nothing else.
+func manifestDeclaring(setting string, values ...string) map[string][]string {
+	declared := theManifest()
+	declared[setting] = values
+	return declared
+}
+
+// TestAManifestValueHerdrDoesNotDeclareIsDrift holds the load-time contract.
+//
+// The manifest is read by Herdr when it loads the plugin, and a value it does
+// not know does not come back as an error the plugin could report: the schema
+// gives placement a default of "overlay", so a menu declared with a placement
+// Herdr had dropped would simply open as an overlay -- not session-modal, not
+// receiving Escape -- with every command still working and nothing to read.
+func TestAManifestValueHerdrDoesNotDeclareIsDrift(t *testing.T) {
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		aSchemaThatDeclaresEverything(), manifestDeclaring("placement", "popup", "sidebar"))
+
+	if code == 0 {
+		t.Errorf("the manifest declares a placement Herdr does not and the run "+
+			"exited nought:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "sidebar") {
+		t.Errorf("the report does not name the value Herdr will not take:\n%s",
+			out.String())
+	}
+	if strings.Contains(out.String(), `"popup"`) {
+		t.Errorf("the report names popup, which this Herdr does declare:\n%s",
+			out.String())
+	}
+}
+
+// TestAManifestSettingPairedWithATypeTheSchemaDropsIsReported is the same trap
+// enumFor carries: the pairing is written by hand, and a type Herdr renames
+// would leave the setting checked against nothing while the run still said ok.
+func TestAManifestSettingPairedWithATypeTheSchemaDropsIsReported(t *testing.T) {
+	short := theEnums()
+	delete(short, "PluginActionContext")
+
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		herdrSchema{PaneFields: everyPaneField(), Enums: short}, theManifest())
+
+	if code == 0 {
+		t.Errorf("a setting is paired with a type the schema does not define and "+
+			"the run exited nought:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "contexts -> PluginActionContext") {
+		t.Errorf("the report does not name the setting left without an authority:\n%s",
+			out.String())
+	}
+}
+
+// TestAManifestThatCouldNotBeReadIsNotDrift is the other side. A run from
+// somewhere with no manifest under it has nothing to say about the manifest,
+// which is different from having found something wrong in one.
+func TestAManifestThatCouldNotBeReadIsNotDrift(t *testing.T) {
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		aSchemaThatDeclaresEverything(), nil)
+
+	if code != 0 {
+		t.Errorf("an unreadable manifest was reported as drift:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "went unchecked") {
+		t.Errorf("the report does not say the manifest went unchecked:\n%s", out.String())
+	}
+}
+
+// TestTheManifestScanReadsTheRealFile is the scope assertion under the scan.
+//
+// It reads enough TOML for the question and no more, so a manifest that adopted
+// a form it cannot see -- a value over several lines, a quoted key -- would
+// leave a paired setting with nothing found for it, and a check over an empty
+// list passes. This is the denominator that says the check is asking about
+// something.
+func TestTheManifestScanReadsTheRealFile(t *testing.T) {
+	found := manifestValues(filepath.Join("..", ".."))
+	if found == nil {
+		t.Fatal("herdr-plugin.toml could not be read from the repository root")
+	}
+	for setting := range manifestEnumFor {
+		if len(found[setting]) == 0 {
+			t.Errorf("the scan found no %q in the manifest, so what the check says "+
+				"about it is said over nothing", setting)
+		}
+	}
+	// The two placements this plugin cannot do without: the menu is a popup
+	// because a popup is session-modal and gets Escape, and a mirror is a tab.
+	for _, want := range []string{"popup", "tab"} {
+		if !slices.Contains(found["placement"], want) {
+			t.Errorf("the manifest declares a %q pane and the scan did not find it: %v",
+				want, found["placement"])
+		}
+	}
+	// And it returns the paired settings and nothing else, so a manifest key
+	// that happens to share a name with none of them cannot arrive as a value
+	// to check.
+	if len(found) != len(manifestEnumFor) {
+		t.Errorf("the scan returned %d settings and %d are paired: %v",
+			len(found), len(manifestEnumFor), found)
 	}
 }
