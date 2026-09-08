@@ -160,6 +160,23 @@ func TestTheHelpAndTheCodeAgreeAboutArguments(t *testing.T) {
 		}
 	}
 
+	// The commands the help deliberately leaves out, which the loop above
+	// therefore never asks about. TestUsageListsEveryCommand exempts them --
+	// listing the help in the help would be odd -- and this test takes its
+	// list FROM the help, so that exemption narrows this denominator too. The
+	// hole is at the join between two checks that are each right on their own,
+	// so these are asked for by name.
+	for _, command := range []string{"help", "-h", "--help"} {
+		if _, listed := saw[command]; listed {
+			t.Errorf("the help lists %q now, so the loop above covers it and this "+
+				"block is a second copy of that question", command)
+		}
+		if said := ignoredArguments(command, []string{"bot"}); said == "" {
+			t.Errorf("%q reads nothing from argv, and an argument given anyway is "+
+				"dropped in the silence takesNoArgument exists to break", command)
+		}
+	}
+
 	// One argument and several are different sentences, because the join makes
 	// the subject plural: `"bot" and "web" was ignored` reads as a fault in the
 	// warning rather than in the command.

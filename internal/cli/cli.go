@@ -130,6 +130,15 @@ var takesNoArgument = map[string]bool{
 	// it found -- and the help shows both without an argument, so an argument
 	// given to either was dropped in the silence this map exists to break.
 	"daemon": true, "mirror": true,
+	// The help itself, which prints the usage and returns without looking at
+	// argv. These are here late because the help deliberately does NOT list
+	// them -- TestUsageListsEveryCommand exempts them, reasonably, since
+	// listing the help in the help would be odd -- and the test that holds this
+	// map reads the help to decide what to ask about. So the exemption in one
+	// check quietly narrowed the denominator of another, and `help bot`
+	// printed the usage and said nothing about "bot", which is the same
+	// silence daemon and mirror were added here to break.
+	"help": true, "-h": true, "--help": true,
 }
 
 // ignoredArguments reports what to say about arguments a command will not read,
