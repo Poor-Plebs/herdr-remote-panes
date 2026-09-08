@@ -2,6 +2,7 @@ package project
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -704,5 +705,74 @@ func TestBothCommandRunnersGuardInTheSameOrder(t *testing.T) {
 	}
 	if !reflect.DeepEqual(ssh, local) {
 		t.Errorf("the two runners guard in different orders:\n  ssh:   %v\n  local: %v", ssh, local)
+	}
+}
+
+// TestDocPagesIsEveryPageInTheRepository holds DocPages against the pages that
+// are actually there.
+//
+// Its doc says "every page of documentation in the repository" and its body is
+// one glob: the README, and docs/*.md. A page added at the top next to the
+// README, or one directory deeper under docs/, is not returned by it -- and
+// DocPages is what every check over the prose reads. The links, the wrapping,
+// the commands somebody is told to type, the action ids, the log names and the
+// numeric claims are all held for the pages it lists and for no others, so a
+// page it misses is a page with nothing looking at it, which is the state all
+// six of those checks exist to prevent.
+//
+// Both directions, because they fail differently: a tracked page that DocPages
+// does not return is unchecked prose, and a page returned that git does not
+// track is a check reading something that is not part of the repository.
+func TestDocPagesIsEveryPageInTheRepository(t *testing.T) {
+	inRoot(t)
+
+	// Asked of git rather than of the filesystem, and that is not a detail:
+	// walking the directory found notes/engineering-log.md, which is a working
+	// file this repository ignores by name. "In the repository" means tracked,
+	// so the thing that knows is git.
+	out, err := exec.Command("git", "ls-files", "*.md").Output()
+	if err != nil {
+		t.Fatalf("asking git which pages are tracked: %v", err)
+	}
+	tracked := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			tracked[filepath.Clean(line)] = true
+		}
+	}
+	if len(tracked) < 3 {
+		t.Fatalf("git tracks %d markdown pages, so this is comparing almost "+
+			"nothing: %v", len(tracked), tracked)
+	}
+
+	pages, err := DocPages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	returned := map[string]bool{}
+	root, err := Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, page := range pages {
+		rel, err := filepath.Rel(root, page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		returned[filepath.Clean(rel)] = true
+	}
+
+	for path := range tracked {
+		if !returned[path] {
+			t.Errorf("%s is a page in the repository and DocPages does not return it, "+
+				"so the links, the wrapping, the commands it gives and every other "+
+				"check over the prose skip it entirely", path)
+		}
+	}
+	for path := range returned {
+		if !tracked[path] {
+			t.Errorf("DocPages returns %s and git does not track it, so whatever reads "+
+				"it is reading something that is gone", path)
+		}
 	}
 }
