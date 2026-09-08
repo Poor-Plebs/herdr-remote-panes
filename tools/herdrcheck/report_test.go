@@ -396,22 +396,6 @@ func TestAFieldTheParserReadsAndTheSchemaDoesNotIsDrift(t *testing.T) {
 	}
 }
 
-// TestASchemaThatCouldNotBeReadIsNotDrift is the other side: an older Herdr with
-// no `api schema` at all must not be reported as having lost every field.
-func TestASchemaThatCouldNotBeReadIsNotDrift(t *testing.T) {
-	var out strings.Builder
-	code := report(&out, answering(everything()),
-		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
-		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion, herdrSchema{}, theManifest())
-
-	if code != 0 {
-		t.Errorf("a Herdr with no readable schema was reported as drift:\n%s", out.String())
-	}
-	if !strings.Contains(out.String(), "could not be read") {
-		t.Errorf("the report does not say the fields went unchecked:\n%s", out.String())
-	}
-}
-
 // TestASchemaTypeThisPairsWithAndCannotFindIsReported holds the claim enumFor's
 // comment makes about itself.
 //
@@ -489,8 +473,17 @@ func TestNoSchemaAtAllSaysTheFieldsWentUnchecked(t *testing.T) {
 	if code != 0 {
 		t.Errorf("a Herdr with no readable schema was reported as drift:\n%s", out.String())
 	}
-	if !strings.Contains(out.String(), "could not be read") {
-		t.Errorf("the report does not say the fields went unchecked:\n%s", out.String())
+	// Scoped to the line the schema check itself wrote. Read across the whole
+	// report, this passed on the MANIFEST's line, which says "could not be
+	// read" about the very same missing schema -- so the sentence naming the
+	// fields could be replaced by anything and both of the tests that were
+	// here went on passing. Measured, not supposed.
+	said := reportLine(t, out.String(), "api schema")
+	if !strings.Contains(said, "could not be read") {
+		t.Errorf("the api schema line does not say the schema could not be read: %q", said)
+	}
+	if !strings.Contains(said, "fields") {
+		t.Errorf("the api schema line does not say what went unchecked: %q", said)
 	}
 }
 
@@ -652,8 +645,8 @@ func TestAManifestThatCouldNotBeReadIsNotDrift(t *testing.T) {
 	if code != 0 {
 		t.Errorf("an unreadable manifest was reported as drift:\n%s", out.String())
 	}
-	if !strings.Contains(out.String(), "went unchecked") {
-		t.Errorf("the report does not say the manifest went unchecked:\n%s", out.String())
+	if said := reportLine(t, out.String(), "plugin manifest"); !strings.Contains(said, "went unchecked") {
+		t.Errorf("the plugin manifest line does not say it went unchecked: %q", said)
 	}
 }
 
@@ -743,4 +736,23 @@ func TestASettingWithNoValuesIsNamedAsUnchecked(t *testing.T) {
 	if !strings.Contains(out.String(), "nothing was found for placement") {
 		t.Errorf("the report does not say placement went unchecked:\n%s", out.String())
 	}
+}
+
+// reportLine is the line the report wrote for one check, found by its label.
+//
+// The report is a column of "<label>  <what it found>" lines, and an assertion
+// made with strings.Contains over the WHOLE of it is satisfied by any line at
+// all. That is not a hypothetical worry here: two checks say "could not be
+// read" about a missing schema, and the one the manifest check added kept the
+// schema's own tests passing with the schema's sentence replaced by anything.
+// Ask which line said it.
+func reportLine(t *testing.T, out, label string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, label) {
+			return line
+		}
+	}
+	t.Fatalf("the report has no %q line in it:\n%s", label, out)
+	return ""
 }
