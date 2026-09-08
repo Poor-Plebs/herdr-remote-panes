@@ -1,20 +1,29 @@
 package syncd
 
 import (
+	"bytes"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/project"
 )
 
-// sendingCommand matches a Command literal that names the word it is sending,
-// which is how every caller in this tree builds one.
-var sendingCommand = regexp.MustCompile(`Command\{\s*Cmd:\s*"([a-z-]+)"`)
+// sendingCommand matches a Command literal that names the word it is sending.
+// buildingCommand matches every Command literal that sets Cmd at all, whatever
+// it sets it to, so a site whose word this cannot read is counted rather than
+// passed over -- the difference between the two is the scan's blind spot, and a
+// blind spot nobody counts is one that grows.
+var (
+	sendingCommand  = regexp.MustCompile(`Command\{\s*Cmd:\s*"([a-z-]+)"`)
+	buildingCommand = regexp.MustCompile(`Command\{\s*Cmd:\s*`)
+)
 
 // commandWordsSent is every command word this plugin sends the daemon, read
 // from the call sites rather than from a list written beside them.
@@ -23,8 +32,10 @@ var sendingCommand = regexp.MustCompile(`Command\{\s*Cmd:\s*"([a-z-]+)"`)
 // have nothing else in common: the menu asks in internal/picker, the status and
 // version commands in internal/cli, and each does it for its own reason. A list
 // here would be a second copy of a fact, and the copy nobody updates.
-func commandWordsSent(t *testing.T) []string {
+func commandWordsSent(t *testing.T) ([]string, []string) {
 	t.Helper()
+
+	opaque := []string{}
 
 	root, err := project.Root()
 	if err != nil {
@@ -53,8 +64,21 @@ func commandWordsSent(t *testing.T) []string {
 			return err
 		}
 		files++
+		// Both patterns begin at the same "Command{", so a site whose word was
+		// read and one that was not are told apart by WHERE they start --
+		// never by counting, since the two kinds interleave within a file.
+		wordRead := map[int]bool{}
+		for _, at := range sendingCommand.FindAllIndex(raw, -1) {
+			wordRead[at[0]] = true
+		}
 		for _, found := range sendingCommand.FindAllSubmatch(raw, -1) {
 			seen[string(found[1])] = true
+		}
+		for _, at := range buildingCommand.FindAllIndex(raw, -1) {
+			if !wordRead[at[0]] {
+				opaque = append(opaque, fmt.Sprintf("%s:%d", filepath.Base(path),
+					1+bytes.Count(raw[:at[0]], []byte("\n"))))
+			}
 		}
 		return nil
 	})
@@ -72,7 +96,8 @@ func commandWordsSent(t *testing.T) []string {
 	for word := range seen {
 		words = append(words, word)
 	}
-	return words
+	sort.Strings(opaque)
+	return words, opaque
 }
 
 func TestEveryCommandThePluginSendsIsOneTheDaemonHasACaseFor(t *testing.T) {
@@ -87,7 +112,26 @@ func TestEveryCommandThePluginSendsIsOneTheDaemonHasACaseFor(t *testing.T) {
 	// It is silent when it happens. Ask does not read reply.OK, so the caller
 	// gets a reply with no error and no machines in it: the menu draws an empty
 	// list, which is what a daemon with nothing connected looks like.
-	words := commandWordsSent(t)
+	words, opaque := commandWordsSent(t)
+
+	// What the scan could not read, so its silence is a measurement rather
+	// than an assumption. There is exactly ONE such site today and it is safe
+	// for a reason this cannot see: internal/cli's `Cmd: command` sits inside
+	// `case "disconnect":`, so the switch pins the word, and "disconnect" is
+	// covered anyway by another site that writes it out. A second one would
+	// not be safe by default, and this is what makes it announce itself
+	// instead of being quietly absent from the list below.
+	// An exact count, not a ceiling: at "more than one" this passes just as
+	// well when the detection above has stopped working and finds none, which
+	// is the shape of a check that reads nothing and says everything is fine.
+	if len(opaque) != 1 {
+		t.Errorf("%d sites build a command from something this scan cannot read "+
+			"and exactly one is accounted for: %v -- a NEW one needs checking by "+
+			"hand, since nothing here can tell what word it sends; and if that "+
+			"site was made to write its word out, this number is now nought and "+
+			"the paragraph above it should go", len(opaque), opaque)
+	}
+
 	if len(words) < 5 {
 		t.Fatalf("only %d command words were found in the tree (%v), which is "+
 			"fewer than this plugin sends", len(words), words)
