@@ -164,7 +164,7 @@ func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []tol
 	fmt.Fprintln(w)
 	problems += askAbout(w, ask, said, "a message gives it at")
 
-	problems += askTheSchema(w, schema.PaneFields)
+	problems += askTheSchema(w, schema.PaneFields, schema.Enums)
 
 	fmt.Fprintln(w)
 	total := len(deps) + len(docs) + len(said)
@@ -202,9 +202,14 @@ func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []tol
 // enumFor names the schema type that says which values a flag takes.
 //
 // Two vocabularies meet here -- what the command line calls a flag and what the
-// schema calls its type -- so the pairing has to be written down once. It is
-// short and it is checked: a name the schema does not define is reported rather
-// than quietly skipped.
+// schema calls its type -- so the pairing has to be written down once, and a
+// pairing written down is a pairing that can go stale.
+//
+// askTheSchema reports a name the schema does not define. That is not
+// decoration: without it, a type Herdr renames sends accepts quietly back to
+// the help text, which is the source this whole check exists to stop trusting
+// -- and the first thing that would happen is `--placement popup` being called
+// drift again, by a check that had silently stopped asking the authority.
 var enumFor = map[string]string{
 	"--placement": "PluginPanePlacement",
 	"--state":     "PaneAgentState",
@@ -252,7 +257,7 @@ func accepts(schema herdrSchema, help, flag, value string) bool {
 // A field the schema no longer declares is a PROBLEM and not a note. Unlike the
 // version numbers above, this is drift proven: the parser reads a name that the
 // Herdr installed here says nothing about.
-func askTheSchema(w io.Writer, declared map[string]bool) int {
+func askTheSchema(w io.Writer, declared map[string]bool, enums map[string][]string) int {
 	if declared == nil {
 		fmt.Fprintf(w, "\n%-24s the schema could not be read, so the fields the "+
 			"parsers depend on were not checked\n", "api schema")
@@ -269,8 +274,26 @@ func askTheSchema(w io.Writer, declared map[string]bool) int {
 			"api schema", strings.Join(missing, ", "))
 		return len(missing)
 	}
-	fmt.Fprintf(w, "\n%-24s ok, all %d fields herdrcli.Pane reads are declared\n",
-		"api schema", len(paneJSONFields()))
+	// And every schema type this checker pairs a flag with is one the schema
+	// still defines. A pairing that has gone stale sends accepts back to the
+	// help text without saying so.
+	stale := []string{}
+	if enums != nil {
+		for flag, def := range enumFor {
+			if _, ok := enums[def]; !ok {
+				stale = append(stale, flag+" -> "+def)
+			}
+		}
+		sort.Strings(stale)
+	}
+	if len(stale) > 0 {
+		fmt.Fprintf(w, "\n%-24s does not define %s, so those values fall back to the "+
+			"help text, which is not the authority\n", "api schema", strings.Join(stale, ", "))
+		return len(stale)
+	}
+
+	fmt.Fprintf(w, "\n%-24s ok, all %d fields herdrcli.Pane reads are declared, and "+
+		"every flag with an enum has one\n", "api schema", len(paneJSONFields()))
 	return 0
 }
 

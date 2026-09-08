@@ -387,3 +387,85 @@ func TestASchemaThatCouldNotBeReadIsNotDrift(t *testing.T) {
 		t.Errorf("the report does not say the fields went unchecked:\n%s", out.String())
 	}
 }
+
+// TestASchemaTypeThisPairsWithAndCannotFindIsReported holds the claim enumFor's
+// comment makes about itself.
+//
+// accepts asks the schema for the values a flag takes, and falls back to the
+// help text when the schema has no such type. That fallback is right -- an
+// older Herdr has no schema at all -- and silent it is a trap: the help is the
+// source this whole check exists to stop trusting, and the first thing that
+// would happen is `--placement popup` being called drift again by a checker
+// that had quietly stopped asking the authority.
+//
+// The comment said the missing name was reported. It was not, until this.
+func TestASchemaTypeThisPairsWithAndCannotFindIsReported(t *testing.T) {
+	if len(enumFor) == 0 {
+		t.Fatal("no flag is paired with a schema type, so this holds nothing")
+	}
+
+	short := theEnums()
+	delete(short, "PluginPanePlacement")
+
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		herdrSchema{PaneFields: everyPaneField(), Enums: short})
+
+	if code == 0 {
+		t.Errorf("the schema no longer defines PluginPanePlacement and the run exited "+
+			"nought:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "PluginPanePlacement") {
+		t.Errorf("the report does not name the type that is gone:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "--placement") {
+		t.Errorf("the report does not name the flag left without an authority:\n%s",
+			out.String())
+	}
+}
+
+// TestASchemaWithNoEnumsIsNotAStalePairing is the other side, and it has to
+// hand the pane fields IN to reach the question.
+//
+// A schema that could not be read at all is answered earlier, by the line that
+// says the fields went unchecked -- so passing an empty herdrSchema tests that
+// line and not this one. The case this is about is a schema that parsed and
+// carries no enums, where reporting every pairing as gone would be three
+// problems invented out of one absence.
+//
+// Written this way because the first version passed for the wrong reason:
+// blinding the guard it is named for left it green.
+func TestASchemaWithNoEnumsIsNotAStalePairing(t *testing.T) {
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		herdrSchema{PaneFields: everyPaneField(), Enums: nil})
+
+	if code != 0 {
+		t.Errorf("a schema carrying no enums was reported as having stale pairings:\n%s",
+			out.String())
+	}
+	if strings.Contains(out.String(), "does not define") {
+		t.Errorf("the report complains about pairings when the schema has no enums:\n%s",
+			out.String())
+	}
+}
+
+// TestNoSchemaAtAllSaysTheFieldsWentUnchecked is the case that empty schema
+// really tests, kept apart so each says what it holds.
+func TestNoSchemaAtAllSaysTheFieldsWentUnchecked(t *testing.T) {
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion, herdrSchema{})
+
+	if code != 0 {
+		t.Errorf("a Herdr with no readable schema was reported as drift:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "could not be read") {
+		t.Errorf("the report does not say the fields went unchecked:\n%s", out.String())
+	}
+}
