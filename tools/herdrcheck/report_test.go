@@ -51,7 +51,7 @@ func aRun(t *testing.T, ask asker) (string, int) {
 			command: []string{"session", "attach"},
 			where:   []string{"plan.go:628"},
 		}},
-		theAskedVersion, theDeclaredMinimum, theRecordedVersion,
+		theAskedVersion, theDeclaredMinimum, theRecordedVersion, everyPaneField(),
 	)
 	return out.String(), code
 }
@@ -255,12 +255,69 @@ func TestRecordingsMatchingTheHerdrAskedAreNotMentioned(t *testing.T) {
 	code := report(&out, answering(everything()),
 		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
 		nil, nil,
-		theAskedVersion, theDeclaredMinimum, theAskedVersion)
+		theAskedVersion, theDeclaredMinimum, theAskedVersion, everyPaneField())
 	if code != 0 {
 		t.Fatalf("a clean run exited %d:\n%s", code, out.String())
 	}
 	if strings.Contains(out.String(), "Re-capture") {
 		t.Errorf("the recordings match the Herdr asked and the report still asks for a "+
 			"refresh:\n%s", out.String())
+	}
+}
+
+// everyPaneField is a schema that declares everything herdrcli.Pane reads,
+// built from the struct so a field added to the parser is added here too.
+func everyPaneField() map[string]bool {
+	declared := map[string]bool{}
+	for _, f := range paneJSONFields() {
+		declared[f] = true
+	}
+	return declared
+}
+
+// TestAFieldTheParserReadsAndTheSchemaDoesNotIsDrift holds the check the
+// recordings cannot make.
+//
+// A recording answers "does the parser read what Herdr wrote once", for ever.
+// The schema comes from the binary installed now, so a field renamed on Herdr's
+// side is visible here and nowhere else in this repository.
+func TestAFieldTheParserReadsAndTheSchemaDoesNotIsDrift(t *testing.T) {
+	if len(paneJSONFields()) < 5 {
+		t.Fatalf("herdrcli.Pane reads %d fields, which is too few for this to be "+
+			"checking anything: %v", len(paneJSONFields()), paneJSONFields())
+	}
+
+	short := everyPaneField()
+	gone := paneJSONFields()[0]
+	delete(short, gone)
+
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion, short)
+
+	if code == 0 {
+		t.Errorf("the schema does not declare %q and the run exited nought:\n%s",
+			gone, out.String())
+	}
+	if !strings.Contains(out.String(), gone) {
+		t.Errorf("the report does not name the field that is gone (%q):\n%s",
+			gone, out.String())
+	}
+}
+
+// TestASchemaThatCouldNotBeReadIsNotDrift is the other side: an older Herdr with
+// no `api schema` at all must not be reported as having lost every field.
+func TestASchemaThatCouldNotBeReadIsNotDrift(t *testing.T) {
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion, nil)
+
+	if code != 0 {
+		t.Errorf("a Herdr with no readable schema was reported as drift:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "could not be read") {
+		t.Errorf("the report does not say the fields went unchecked:\n%s", out.String())
 	}
 }

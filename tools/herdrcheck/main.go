@@ -14,11 +14,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -104,7 +106,8 @@ func main() {
 
 	ask := func(command []string) (string, bool) { return helpFor(bin, command) }
 	os.Exit(report(os.Stdout, ask, herdrcli.Dependencies, docs, said,
-		strings.TrimSpace(string(version)), declaredMinimum("."), recordedVersion(".")))
+		strings.TrimSpace(string(version)), declaredMinimum("."), recordedVersion("."),
+		paneSchemaFields(bin)))
 }
 
 // report asks about everything and says what it found, returning what this
@@ -118,7 +121,7 @@ func main() {
 // while printing the files it objects to. Removing either line that adds the
 // pages' and the messages' problems to the count passed just as quietly.
 func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []toldCommand,
-	asked, declared, recorded string) int {
+	asked, declared, recorded string, paneFields map[string]bool) int {
 	problems := 0
 	for _, dep := range deps {
 		name := strings.Join(dep.Command, " ")
@@ -158,6 +161,8 @@ func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []tol
 	fmt.Fprintln(w)
 	problems += askAbout(w, ask, said, "a message gives it at")
 
+	problems += askTheSchema(w, paneFields)
+
 	fmt.Fprintln(w)
 	total := len(deps) + len(docs) + len(said)
 	if problems > 0 {
@@ -189,6 +194,92 @@ func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []tol
 			"nowhere else.\n", recorded, asked)
 	}
 	return 0
+}
+
+// askTheSchema holds the fields this plugin's parsers read against the ones
+// Herdr's own bundled schema declares.
+//
+// The recordings in internal/herdrcli cannot do this. They are captures of what
+// Herdr sent once, so they answer "does the parser read what 0.8.2 wrote" and
+// go on answering it for ever -- a renamed field looks the same to them. The
+// schema comes from the binary that is installed, offline and without a server,
+// which is what makes this the check the recordings were standing in for.
+//
+// The field list is REFLECTED off the struct rather than written out again: a
+// field added to the parser and not to this list would otherwise be unheld, and
+// two lists of the same thing is the mistake this repository keeps finding.
+//
+// A field the schema no longer declares is a PROBLEM and not a note. Unlike the
+// version numbers above, this is drift proven: the parser reads a name that the
+// Herdr installed here says nothing about.
+func askTheSchema(w io.Writer, declared map[string]bool) int {
+	if declared == nil {
+		fmt.Fprintf(w, "\n%-24s the schema could not be read, so the fields the "+
+			"parsers depend on were not checked\n", "api schema")
+		return 0
+	}
+	missing := []string{}
+	for _, field := range paneJSONFields() {
+		if !declared[field] {
+			missing = append(missing, field)
+		}
+	}
+	if len(missing) > 0 {
+		fmt.Fprintf(w, "\n%-24s does not declare %s, and herdrcli.Pane reads them\n",
+			"api schema", strings.Join(missing, ", "))
+		return len(missing)
+	}
+	fmt.Fprintf(w, "\n%-24s ok, all %d fields herdrcli.Pane reads are declared\n",
+		"api schema", len(paneJSONFields()))
+	return 0
+}
+
+// paneJSONFields is what herdrcli.Pane reads, taken from the struct itself.
+func paneJSONFields() []string {
+	var fields []string
+	t := reflect.TypeOf(herdrcli.Pane{})
+	for i := 0; i < t.NumField(); i++ {
+		tag := strings.Split(t.Field(i).Tag.Get("json"), ",")[0]
+		if tag != "" && tag != "-" {
+			fields = append(fields, tag)
+		}
+	}
+	return fields
+}
+
+// paneSchemaFields asks the installed Herdr for its bundled schema and returns
+// the properties of the pane object a listing is made of, or nil when it cannot
+// be had -- an older Herdr with no `api schema`, or one that answers something
+// this cannot read.
+func paneSchemaFields(bin string) map[string]bool {
+	out, err := exec.Command(bin, "api", "schema", "--json").Output()
+	if err != nil {
+		return nil
+	}
+	var doc struct {
+		Schemas struct {
+			Success struct {
+				Defs map[string]struct {
+					Properties map[string]json.RawMessage `json:"properties"`
+				} `json:"$defs"`
+			} `json:"success_response"`
+		} `json:"schemas"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		return nil
+	}
+	// The pane object a listing carries. Named rather than searched for: if
+	// Herdr renames it, that is drift worth reporting rather than papering
+	// over by finding whatever else looks pane-shaped.
+	def, ok := doc.Schemas.Success.Defs["PaneInfo"]
+	if !ok {
+		return nil
+	}
+	fields := map[string]bool{}
+	for name := range def.Properties {
+		fields[name] = true
+	}
+	return fields
 }
 
 // askAbout asks Herdr about every command something tells somebody to run, and
