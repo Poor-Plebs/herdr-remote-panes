@@ -11,31 +11,102 @@ import (
 	"testing"
 )
 
-// packageStrings is every string literal in the two packages that build Herdr
-// commands: this one, and internal/mirror.
+// packageStrings is every string literal handed to a call that runs a Herdr
+// command, anywhere under internal/.
 //
-// It used to read this package alone, and that is how `terminal session
-// observe` and `terminal attach` -- the two commands the whole mirroring half
-// runs, on the far machine, over ssh -- stayed out of Dependencies for as long
-// as it existed. The list said it was "every Herdr command this plugin runs"
-// and the test that keeps it honest could not see half of them.
+// Derived from the CALL SITES rather than from a list of packages, because a
+// list of packages is a thing to keep correct and this one was wrong twice. It
+// read this package alone while internal/mirror ran two commands over ssh --
+// `terminal session observe` and `terminal attach`, the whole mirroring half.
+// Widened to those two, it was still wrong: internal/syncd runs four more from
+// the daemon, `tab create` and three `workspace` commands among them. Both
+// times the list was fixed and the question was not.
 //
-// Two directories rather than the whole tree, because a tree-wide sweep for
-// strings beginning "--" finds ssh's options and this plugin's own usage text,
-// and a check that reports things nobody can act on is one people stop reading.
-// If a third package starts building Herdr commands, it belongs here.
+// Two sources, and both are needed. A file that calls Run, RunJSON or Argv is
+// a file that runs Herdr commands, and its literals are the words and flags it
+// asks for -- the whole file, because mirror and syncd build the argv as a
+// slice several lines above the call. This package calls none of them: it
+// builds argv slices for its callers to send, so its own literals are where
+// its commands are written. Taking only the call sites loses `notification
+// show` and the agent commands; taking only this package loses everything
+// syncd and mirror run.
+//
+// Neither source picks up ssh's options or this plugin's own usage text, which
+// a sweep of every "--" string in the tree would.
 func packageStrings(t *testing.T) []string {
 	t.Helper()
-	var found []string
-	for _, dir := range []string{".", filepath.Join("..", "mirror")} {
-		found = append(found, stringsIn(t, dir)...)
+
+	runners := map[string]bool{"Run": true, "RunJSON": true, "Argv": true}
+	found := ownStrings(t)
+	files := 0
+	err := filepath.Walk("..", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			// Not the root of the walk, whose own name is "..", which begins
+			// with a dot and would prune everything before it started. The
+			// denominator below said so on the first run.
+			if name := info.Name(); path != ".." &&
+				(strings.HasPrefix(name, ".") || name == "testdata") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", path, err)
+		}
+		files++
+		// A file that runs a Herdr command, and then every literal in it --
+		// not only the arguments at the call. Both mirror and syncd build the
+		// argv as a slice first and hand it on, so the words are in a
+		// composite literal several lines above the call that sends them.
+		runsHerdr := false
+		ast.Inspect(file, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && runners[sel.Sel.Name] {
+					runsHerdr = true
+				}
+			}
+			return true
+		})
+		if !runsHerdr {
+			return nil
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			lit, ok := n.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			if value, err := strconv.Unquote(lit.Value); err == nil {
+				found = append(found, value)
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if files < 10 {
+		t.Fatalf("only %d source files were read under internal/, so this is "+
+			"looking at almost nothing", files)
+	}
+	if len(found) == 0 {
+		t.Fatal("no Herdr command was found being run, so this checks nothing")
 	}
 	return found
 }
 
-func stringsIn(t *testing.T, dir string) []string {
+// ownStrings is every string literal in this package's own code, where its argv
+// builders spell the commands out.
+func ownStrings(t *testing.T) []string {
 	t.Helper()
-	entries, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,13 +117,11 @@ func stringsIn(t *testing.T, dir string) []string {
 			continue
 		}
 		// Not the list itself. Reading it back in makes every word in it a
-		// word "this package says", so the list vouches for itself: a command
-		// nothing sends is found in the line that lists it, and the check
-		// passes for exactly the entry it was meant to catch. It did.
+		// word "this plugin says", so the list would vouch for itself.
 		if name == "dependencies.go" {
 			continue
 		}
-		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, name), nil, 0)
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
 		if err != nil {
 			t.Fatalf("parsing %s: %v", name, err)
 		}
@@ -61,15 +130,11 @@ func stringsIn(t *testing.T, dir string) []string {
 			if !ok || lit.Kind != token.STRING {
 				return true
 			}
-			value, err := strconv.Unquote(lit.Value)
-			if err == nil {
+			if value, err := strconv.Unquote(lit.Value); err == nil {
 				found = append(found, value)
 			}
 			return true
 		})
-	}
-	if len(found) == 0 {
-		t.Fatalf("no string literals found in %s, so this checks nothing", dir)
 	}
 	return found
 }
@@ -91,6 +156,14 @@ func TestEveryFlagThisSendsIsOneMakeHerdrChecks(t *testing.T) {
 		if !strings.HasPrefix(value, "--") || value == "--" {
 			// A bare "--" is the separator that keeps a machine's name from
 			// being read as an option, not a flag anything declares.
+			continue
+		}
+		// Herdr's own two, which belong to no command: this plugin runs
+		// `herdr --version` to see what a machine has, and `make herdr` asks
+		// every command with `--help`. Both are exercised by the checker
+		// itself on every run -- it cannot ask a command anything without
+		// them -- so a Dependencies entry would be a second, weaker copy.
+		if value == "--version" || value == "--help" {
 			continue
 		}
 		if !listed[value] {

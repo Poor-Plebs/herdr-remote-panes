@@ -67,6 +67,23 @@ var Dependencies = []Dependency{
 		Command: []string{"pane", "release-agent"},
 		Flags:   []string{"--source", "--agent"},
 	},
+	// The four the daemon runs, none of which were listed until the scan
+	// stopped reading one package at a time: a tab for a machine's terminals,
+	// and the workspace a machine's panes live in, named and re-named and told
+	// what it is showing.
+	{
+		Command: []string{"tab", "create"},
+		Flags:   []string{"--focus"},
+	},
+	{
+		Command: []string{"workspace", "create"},
+		Flags:   []string{"--label"},
+	},
+	{Command: []string{"workspace", "rename"}},
+	{
+		Command: []string{"workspace", "report-metadata"},
+		Flags:   []string{"--source", "--token", "--clear-token"},
+	},
 	// The two the mirror runs on the REMOTE machine, over ssh. They were left
 	// out for as long as this list existed, because the tests that keep it
 	// honest read this package's own strings and these are built in
