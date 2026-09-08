@@ -21,7 +21,24 @@ import (
 // The paths and titles in it are replaced; it went into a public repository.
 //
 // Refreshing it against a newer Herdr is the point. If a field has moved, this
-// is where it shows.
+// is where it shows -- and `make herdr` says when it is due, by reading the
+// version out of these file names and comparing it with the Herdr installed.
+//
+// HOW TO RE-CAPTURE, and the trap in it. Herdr honours HERDR_SOCKET_PATH, so a
+// server of one's own is `HERDR_SOCKET_PATH=$dir/herdr.sock herdr server` --
+// the help calls it "Run as headless server" -- and it answers on that socket
+// alone. A PRIVATE SOCKET IS NOT PRIVATE STATE: tried on 2026-09-08, that
+// server came up holding the workspaces and panes of the session saved on this
+// machine, agent and all, because the state it restores does not live beside
+// the socket. Expect a real session rather than an empty one, take the capture
+// from a machine whose session you are willing to start, and replace the paths
+// and titles before committing it, as the ones here are replaced.
+//
+// What was verified on 0.9.0 without going further: the error envelope is
+// unchanged -- id, error.code, error.message, with only the message text
+// grown -- and a workspace still carries workspace_id and label, which are the
+// two fields ParseWorkspaceList reads. The pane fields were not compared, so
+// these recordings are still the only word on those.
 func TestARealPaneListingParses(t *testing.T) {
 	raw, err := os.ReadFile("testdata/pane-list-0.8.2.json")
 	if err != nil {
