@@ -241,6 +241,83 @@ func previousRelease(t *testing.T) string {
 	return ""
 }
 
+// aRepositoryWithTwoReleases builds a git repository of empty commits, with the
+// newer tag either on HEAD or one commit behind it.
+//
+// Empty commits because nothing here reads a file: the question is only which
+// tag previousRelease picks, and a tree would be weight without a claim.
+func aRepositoryWithTwoReleases(t *testing.T, newestAtHead bool) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		// An identity of its own, so this does not depend on whatever the
+		// machine running the suite has configured -- or has not.
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=upgrade test", "GIT_AUTHOR_EMAIL=test@example.invalid",
+			"GIT_COMMITTER_NAME=upgrade test", "GIT_COMMITTER_EMAIL=test@example.invalid")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	git("init", "-q")
+	git("commit", "-q", "--allow-empty", "-m", "the older release")
+	git("tag", "v0.1.0")
+	git("commit", "-q", "--allow-empty", "-m", "the newer release")
+	git("tag", "v0.2.0")
+	if !newestAtHead {
+		git("commit", "-q", "--allow-empty", "-m", "work since the release")
+	}
+	return dir
+}
+
+// TestThePreviousReleaseIsNeverTheBuildUnderTest holds the one line that keeps
+// the test below about an upgrade at all.
+//
+// previousRelease walks the tags newest first and skips any that points at
+// HEAD. That skip is the whole difference between this file's two tests: the
+// short one starts a single build twice, and the long one is here because a
+// real upgrade is one VERSION replacing another -- three releases went out
+// broken on exactly that difference. Take the skip away and, in the window
+// where HEAD is the release commit, "the last release" is the build under test:
+// the long test quietly becomes a slower copy of the short one and goes on
+// passing.
+//
+// That window is not hypothetical or rare. It is every release commit, which is
+// precisely when somebody runs this to find out whether the release is sound.
+// Measured on the v0.4.33 release commit: neutralising the skip left the whole
+// of internal/project green.
+func TestThePreviousReleaseIsNeverTheBuildUnderTest(t *testing.T) {
+	// Otherwise a machine that has this set answers every row with it.
+	t.Setenv("HRP_UPGRADE_FROM", "")
+
+	for _, row := range []struct {
+		when         string
+		newestAtHead bool
+		want         string
+	}{
+		// The release commit: the newest tag is the code under test, so the
+		// upgrade has to come from the one before it.
+		{"HEAD is the release commit", true, "v0.1.0"},
+		// The control, and it is what stops a build that always answers "the
+		// second newest" from passing the row above. Any commit after a
+		// release, which is most of the time, must upgrade FROM that release.
+		{"HEAD is past the release", false, "v0.2.0"},
+	} {
+		t.Run(row.when, func(t *testing.T) {
+			t.Chdir(aRepositoryWithTwoReleases(t, row.newestAtHead))
+
+			if got := previousRelease(t); got != row.want {
+				t.Errorf("with %s, the upgrade would come from %s and it should "+
+					"come from %s", row.when, got, row.want)
+			}
+		})
+	}
+}
+
 func TestAnUpgradeFromTheLastReleaseHandsTheSocketOver(t *testing.T) {
 	// The test above starts one build twice, which is a daemon replacing
 	// itself. A real upgrade is one version replacing another, and the half
