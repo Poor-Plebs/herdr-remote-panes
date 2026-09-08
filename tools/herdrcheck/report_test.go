@@ -691,3 +691,56 @@ func TestTheManifestScanReadsTheRealFile(t *testing.T) {
 			len(found), len(manifestEnumFor), found)
 	}
 }
+
+// TestAManifestNothingWasFoundInIsNotOk holds the difference between finding no
+// drift and having looked at nothing.
+//
+// The scan reads enough TOML for the question and no more, so a manifest that
+// adopted a form it cannot see leaves it with nothing to check -- and the
+// sentence it printed for that was the success one with a nought in it: "ok,
+// all 0 values it declares are ones Herdr declares too". Measured before this
+// was written: the package caught it through the scan's own test, and the
+// COMMAND exited nought and said ok. `make herdr` is what somebody runs when
+// they suspect drift, and it has to be able to tell them it found none because
+// there was none.
+func TestAManifestNothingWasFoundInIsNotOk(t *testing.T) {
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		aSchemaThatDeclaresEverything(), map[string][]string{})
+
+	if code == 0 {
+		t.Errorf("the scan found nothing in the manifest and the run exited "+
+			"nought:\n%s", out.String())
+	}
+	// The whole point is the sentence, not only the status: an empty scan must
+	// not read like a clean one.
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(line, "plugin manifest") && strings.Contains(line, "ok,") {
+			t.Errorf("an empty scan still says ok:\n%s", line)
+		}
+	}
+}
+
+// TestASettingWithNoValuesIsNamedAsUnchecked is the same claim one setting at a
+// time. A manifest that declared no panes at all would have no placement in it,
+// which is legitimate -- and the count would then quietly cover two settings
+// while the line read as though it covered three.
+func TestASettingWithNoValuesIsNamedAsUnchecked(t *testing.T) {
+	partial := theManifest()
+	delete(partial, "placement")
+
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		aSchemaThatDeclaresEverything(), partial)
+
+	if code != 0 {
+		t.Errorf("a manifest declaring no panes was reported as drift:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "nothing was found for placement") {
+		t.Errorf("the report does not say placement went unchecked:\n%s", out.String())
+	}
+}

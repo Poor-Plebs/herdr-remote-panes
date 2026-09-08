@@ -298,12 +298,15 @@ func askTheManifest(w io.Writer, values, enums map[string][]string) int {
 		return 0
 	}
 
-	stale, wrong, checked := []string{}, []string{}, 0
+	stale, wrong, silent, checked := []string{}, []string{}, []string{}, 0
 	for setting, def := range manifestEnumFor {
 		declared, known := enums[def]
 		if !known {
 			stale = append(stale, setting+" -> "+def)
 			continue
+		}
+		if len(values[setting]) == 0 {
+			silent = append(silent, setting)
 		}
 		for _, value := range values[setting] {
 			checked++
@@ -314,6 +317,7 @@ func askTheManifest(w io.Writer, values, enums map[string][]string) int {
 	}
 	sort.Strings(stale)
 	sort.Strings(wrong)
+	sort.Strings(silent)
 
 	if len(stale) > 0 {
 		fmt.Fprintf(w, "\n%-24s does not define %s, so what the manifest declares "+
@@ -325,6 +329,28 @@ func askTheManifest(w io.Writer, values, enums map[string][]string) int {
 		fmt.Fprintf(w, "\n%-24s declares %s, which this Herdr does not accept\n",
 			"plugin manifest", strings.Join(wrong, ", "))
 		return len(wrong)
+	}
+	// A count of nought is not an answer to this question. The manifest was
+	// READ -- an unreadable one is nil and reported above -- and none of the
+	// settings this knows about were found in it, which for this repository can
+	// only mean the scan has stopped matching the file rather than that the file
+	// stopped declaring anything. Reported, because the alternative is the
+	// sentence below with a nought in it, and success and total failure would
+	// then differ by one character in a line that opens "ok". `make check`
+	// catches this through the scan's own test; `make herdr` is what somebody
+	// runs when they suspect drift, and it has to be able to say it found none
+	// because there was none rather than because it looked at nothing.
+	if checked == 0 {
+		fmt.Fprintf(w, "\n%-24s was read and none of the %d settings this checks were "+
+			"found in it, so the scan is no longer matching what the file says\n",
+			"plugin manifest", len(manifestEnumFor))
+		return 1
+	}
+	if len(silent) > 0 {
+		fmt.Fprintf(w, "\n%-24s ok, all %d values it declares are ones Herdr declares "+
+			"too -- but nothing was found for %s, so that setting is unchecked\n",
+			"plugin manifest", checked, strings.Join(silent, ", "))
+		return 0
 	}
 	fmt.Fprintf(w, "\n%-24s ok, all %d values it declares are ones Herdr declares too\n",
 		"plugin manifest", checked)
