@@ -18,11 +18,29 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/Poor-Plebs/herdr-remote-panes/internal/herdrcli"
 )
+
+// declaredMinimum is the Herdr the manifest says this plugin supports, or a
+// note in its place. Read rather than compared: the report says both versions
+// and leaves the reading to a person, because a semver comparison here would
+// be a second opinion about what "supported" means.
+func declaredMinimum(root string) string {
+	raw, err := os.ReadFile(filepath.Join(root, "herdr-plugin.toml"))
+	if err != nil {
+		return "a minimum the manifest could not be read for"
+	}
+	m := regexp.MustCompile(`(?m)^min_herdr_version = "([^"]+)"`).FindSubmatch(raw)
+	if m == nil {
+		return "no minimum the manifest declares"
+	}
+	return "herdr " + string(m[1])
+}
 
 // asker says what a command's help prints, and whether this Herdr has it at
 // all. A seam: the real one runs Herdr, and the tests stand in for it, because
@@ -56,7 +74,8 @@ func main() {
 	}
 
 	ask := func(command []string) (string, bool) { return helpFor(bin, command) }
-	os.Exit(report(os.Stdout, ask, herdrcli.Dependencies, docs, said))
+	os.Exit(report(os.Stdout, ask, herdrcli.Dependencies, docs, said,
+		strings.TrimSpace(string(version)), declaredMinimum(".")))
 }
 
 // report asks about everything and says what it found, returning what this
@@ -69,7 +88,8 @@ func main() {
 // and then tells make everything is fine, which is `gofmt -l` exiting nought
 // while printing the files it objects to. Removing either line that adds the
 // pages' and the messages' problems to the count passed just as quietly.
-func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []toldCommand) int {
+func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []toldCommand,
+	asked, declared string) int {
 	problems := 0
 	for _, dep := range deps {
 		name := strings.Join(dep.Command, " ")
@@ -119,6 +139,15 @@ func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []tol
 	fmt.Fprintf(w, "all %d commands take what this plugin sends, and all %d it tells somebody "+
 		"to run exist and take the %d flags given with them\n",
 		len(deps), len(docs)+len(said), passedFlags(docs)+passedFlags(said))
+	// The claim above is about ONE Herdr: the one installed here. The manifest
+	// declares a minimum, and nothing asks that Herdr anything -- so a command
+	// or a flag added after it would pass this and fail for somebody on the
+	// version the plugin says it supports. Said here rather than left for a
+	// reader to work out, because the sentence above reads like a claim about
+	// the plugin and is a claim about this machine.
+	fmt.Fprintf(w, "\nasked of %s. The manifest declares %s as the minimum this plugin "+
+		"supports, and nothing here asks that one: install it to check.\n",
+		asked, declared)
 	return 0
 }
 

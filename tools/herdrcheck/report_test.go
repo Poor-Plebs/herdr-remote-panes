@@ -51,8 +51,48 @@ func aRun(t *testing.T, ask asker) (string, int) {
 			command: []string{"session", "attach"},
 			where:   []string{"plan.go:628"},
 		}},
+		theAskedVersion, theDeclaredMinimum,
 	)
 	return out.String(), code
+}
+
+// The two versions a run names: the one it asked, and the one the manifest
+// says this plugin supports. Written out rather than read from anywhere, so
+// the assertions below cannot pass by comparing a value with itself.
+const (
+	theAskedVersion    = "herdr 0.9.0"
+	theDeclaredMinimum = "herdr 0.8.0"
+)
+
+// TestACleanRunSaysWhichHerdrItAsked holds the scope of the sentence it prints.
+//
+// "all N commands take what this plugin sends" reads as a claim about the
+// plugin and is a claim about ONE Herdr: the one installed on the machine that
+// ran it. The manifest declares a minimum, and nothing asks that Herdr
+// anything, so a command or flag added after it passes here and fails for
+// somebody on the version the plugin says it supports. The report says both
+// now, which is the difference between a check and a check somebody can read
+// the scope of.
+func TestACleanRunSaysWhichHerdrItAsked(t *testing.T) {
+	out, code := aRun(t, answering(everything()))
+	if code != 0 {
+		t.Fatalf("a clean run exited %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, theAskedVersion) {
+		t.Errorf("the report does not say which Herdr it asked (%q):\n%s",
+			theAskedVersion, out)
+	}
+	if !strings.Contains(out, theDeclaredMinimum) {
+		t.Errorf("the report does not say the minimum the manifest declares (%q), so "+
+			"its sentence reads as a claim about every supported Herdr:\n%s",
+			theDeclaredMinimum, out)
+	}
+	// And it says the minimum is not what was asked, rather than printing two
+	// versions and leaving them to be read as one checked range.
+	if !strings.Contains(out, "nothing here asks that one") {
+		t.Errorf("the report names both versions without saying which of them was "+
+			"actually asked:\n%s", out)
+	}
 }
 
 // everything is a Herdr that has all three of them.
