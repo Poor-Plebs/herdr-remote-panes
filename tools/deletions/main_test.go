@@ -488,7 +488,22 @@ func TestAnInterruptedSweepPutsTheStatementBack(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := <-done; err == nil {
-				t.Error("a command stopped by a signal exited nought")
+				// Two different things exit nought here and they are not the
+				// same defect. The handler may have chosen the wrong status --
+				// or the sweep may have finished before the signal arrived, in
+				// which case there was nothing to interrupt and the fixture is
+				// what failed, not restoreOnSignal.
+				//
+				// This happened on one CI runner on 2026-09-08, green on the
+				// same job when re-run and green twelve times locally, so it is
+				// timing and it will come back. What the command SAID is the
+				// thing that tells the two apart -- a `go test` that never
+				// reached the fixture's twenty-second sleep is a build that
+				// failed, and it is printed here rather than left to be
+				// guessed at next time.
+				t.Errorf("a command stopped by a signal exited nought. If it had "+
+					"already finished, the fixture stopped holding it open and this "+
+					"says nothing about the handler. What it said:\n%s", said())
 			} else {
 				var exit *exec.ExitError
 				if !errors.As(err, &exit) {
