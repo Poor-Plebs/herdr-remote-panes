@@ -189,6 +189,19 @@ func TestABoundHeldToItselfIsRecognised(t *testing.T) {
 		{"a declaration rather than an assignment", "a, b := 1, 2\nif a < b {\nc := b\n_ = c\n}\n_ = a", false},
 		{"arithmetic on the compared side", "f, v, c := 1, 2, 3\nif f+v > c {\nf = c - v\n}\n_ = f", false},
 
+		// The three shapes the guard on the assignment is made of, one row
+		// each. Every one of them is rejected by a different clause, and a
+		// sweep flipped all three with nothing failing: the rows above reject
+		// these for other reasons first, so the clauses themselves were held
+		// by nothing. Only parsed, never compiled, which is what lets the last
+		// two be written at all.
+		{"a declaration whose names would otherwise read as a clamp",
+			"a, b := 1, 2\nif a < b {\na := b\n}\n_ = a", false},
+		{"more names assigned than there are values",
+			"a, b, c := 1, 2, 3\nif a < b {\na, c = b\n}\n_ = a", false},
+		{"the compared side assigned something else entirely",
+			"a, b, c := 1, 2, 3\nif a < b {\na = c\n}\n_ = a", false},
+
 		// A slice held to a maximum length. At the boundary the slice
 		// expression is the whole slice, so the branch assigns what is
 		// already there -- the same argument as a clamp, one step along.
