@@ -518,11 +518,11 @@ func TestAnIncludeThatIsSkippedSaysWhy(t *testing.T) {
 			slowGlobs.Delete(pattern)
 		})
 
-		if why := Unreadable(); !strings.Contains(why, "expand") {
+		if why := Unreadable(); !strings.Contains(why, "was not given any time") {
 			t.Errorf("an include given no time to expand is reported as %q", why)
 		}
 		// Again, now that it is remembered as slow.
-		if why := Unreadable(); !strings.Contains(why, "expand") {
+		if why := Unreadable(); !strings.Contains(why, "not expanded again") {
 			t.Errorf("an include skipped for being slow before is reported as %q", why)
 		}
 	})
