@@ -302,6 +302,63 @@ func TestOneFileSpelledSeveralWaysIsStillReadOnce(t *testing.T) {
 	}
 }
 
+// TestTheReasonsKeptAreBoundedAtAHandful holds the number, and not merely the
+// effect of there being one.
+//
+// The bound is there because a config of nothing but unusable lines builds one
+// string per line and reads none of them, while the menu that reads the record
+// has room for the first of them. Holding it needs a walk offered MORE reasons
+// than the bound, each about a DIFFERENT file: the test beside this one spells
+// one file nine ways, and the read-once record collapses those to a single
+// reason long before the bound is approached, so it says nothing about how
+// many are kept. Nothing else asked either, which left the count itself free
+// to move by one.
+//
+// Distinct directories, because a directory is unreadable for a reason of its
+// own and nothing about its contents can account for the note.
+func TestTheReasonsKeptAreBoundedAtAHandful(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".ssh", "conf.d")
+
+	const offered = maxReasonsKept + 4
+	for i := 0; i < offered; i++ {
+		if err := os.MkdirAll(filepath.Join(dir, fmt.Sprintf("frag%02d", i)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Measured rather than assumed: the fixture is only about the bound if the
+	// walk is really offered more reasons than the bound keeps.
+	matches, err := filepath.Glob(filepath.Join(dir, "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) <= maxReasonsKept {
+		t.Fatalf("the fixture offers %d unreadable files against a bound of %d, "+
+			"so it never reaches it", len(matches), maxReasonsKept)
+	}
+
+	path := filepath.Join(home, ".ssh", "config")
+	if err := os.WriteFile(path, []byte("Include "+dir+"/*\nHost bot\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	read := newReading(path)
+	hostsRead(path, 0, read)
+
+	if len(read.why) != maxReasonsKept {
+		t.Errorf("a walk offered %d unreadable files kept %d reasons, want %d: %v",
+			len(matches), len(read.why), maxReasonsKept, read.why)
+	}
+	// And they are the reasons this test takes them for, rather than some
+	// other complaint arriving in their place and filling the record.
+	for _, why := range read.why {
+		if !strings.Contains(why, "not a regular file") {
+			t.Errorf("a kept reason is %q, which is not what a directory gives", why)
+		}
+	}
+}
+
 // TestAnIncludeThatMatchesEverythingIsRefused bounds the work one line can ask
 // for.
 //
