@@ -99,9 +99,14 @@ func TestTheDaemonsLogReachesTheFileItNames(t *testing.T) {
 }
 
 // TestNoStateDirectoryMeansNoLogRatherThanACrash holds the other half of what
-// daemonLog returns. Its caller writes `if closeLog := daemonLog(); closeLog
-// != nil` -- calling a nil func is a panic, and this is the case that returns
-// one.
+// daemonLog returns: with nowhere to put a log, it opens none.
+//
+// What the CALLER does with that answer is a separate claim and lives in
+// TestTheDaemonCommandDoesNotCrashWithNowhereToLog below. This test used to
+// stand in for it, quoting the caller's guard in its own comment and then
+// deciding for itself what a nil answer means -- which is the helper held by
+// its own test and by none of its callers, and a mutation sweep found the
+// guard held by nothing on 2026-09-09.
 func TestNoStateDirectoryMeansNoLogRatherThanACrash(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", "")
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
@@ -109,6 +114,46 @@ func TestNoStateDirectoryMeansNoLogRatherThanACrash(t *testing.T) {
 	if closeLog := daemonLog(); closeLog != nil {
 		closeLog()
 		t.Error("a log was opened with nowhere to put it")
+	}
+}
+
+// TestTheDaemonCommandDoesNotCrashWithNowhereToLog holds the guard in Main
+// that decides what to do with what daemonLog returned.
+//
+// `if closeLog := daemonLog(); closeLog != nil { defer closeLog() }`. Deferring
+// a nil func is a panic when the deferred call runs, so the guard is the whole
+// of what stops `herdr-remote-panes daemon`, run from an ordinary shell rather
+// than through Herdr, ending in a stack trace instead of a sentence. Nothing
+// held it: the sweep flipped the comparison and every test still passed,
+// because the two tests of daemonLog call it directly.
+//
+// Driven through Main for that reason. It returns rather than blocking because
+// there is no state directory to put a control socket in, which is the same
+// thing that makes daemonLog answer nil.
+func TestTheDaemonCommandDoesNotCrashWithNowhereToLog(t *testing.T) {
+	args, stderr := os.Args, os.Stderr
+	flags, prefix, out := log.Flags(), log.Prefix(), log.Writer()
+	t.Cleanup(func() {
+		os.Args, os.Stderr = args, stderr
+		log.SetFlags(flags)
+		log.SetPrefix(prefix)
+		log.SetOutput(out)
+	})
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", "")
+
+	quiet, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer quiet.Close()
+
+	os.Stderr, os.Args = quiet, []string{"herdr-remote-panes", "daemon"}
+	code := Main()
+	os.Stderr, os.Args = stderr, args
+
+	// Not a panic, and not a success either: there is nowhere to run from.
+	if code == 0 {
+		t.Errorf("the daemon exited nought with no state directory to run in")
 	}
 }
 
@@ -569,7 +614,6 @@ func TestTheDaemonsLogHoldsWhyItStoppedAsWellAsThatItStarted(t *testing.T) {
 	os.Stderr, os.Args = f, []string{"herdr-remote-panes", "daemon"}
 	code := Main()
 	os.Stderr, os.Args = stderr, args
-	_ = f.Close()
 
 	if code != 1 {
 		t.Fatalf("a daemon that could not bind its control socket exited %d, so "+
@@ -600,5 +644,31 @@ func TestTheDaemonsLogHoldsWhyItStoppedAsWellAsThatItStarted(t *testing.T) {
 	if !bytes.Equal(logged, shown) {
 		t.Errorf("the daemon's log and its terminal do not say the same thing.\n"+
 			"daemon.log:\n%s\nthe terminal:\n%s", logged, shown)
+	}
+
+	// And Main deferred the close, so the log is shut and nothing written
+	// afterwards reaches it. The guard that registers that defer -- `if
+	// closeLog := daemonLog(); closeLog != nil` -- was held by nothing at all,
+	// because both tests of daemonLog call it directly and decide for
+	// themselves what a nil answer means.
+	//
+	// LAST, and with the terminal file still open, both of which are
+	// load-bearing. Written before the comparison above, this line reaches the
+	// terminal and not the log and fails an equality that is right. Written
+	// after that file is closed, it reaches NEITHER -- the logger's
+	// MultiWriter has the terminal first, so every write fails there and never
+	// gets to the log -- and it then proves nothing whether the close was
+	// deferred or not. Measured both ways: the second one missed a neutralised
+	// defer entirely.
+	log.Print("after the daemon has stopped")
+	_ = f.Close()
+
+	stillOpen, err := os.ReadFile(filepath.Join(dir, "daemon.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(stillOpen, []byte("after the daemon has stopped")) {
+		t.Errorf("the log is still open after Main returned, so nothing closed "+
+			"it:\n%s", stillOpen)
 	}
 }

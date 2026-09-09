@@ -63,11 +63,6 @@ internal/mirror/liveness.go	|| -> &&	if err != nil || pid <= 0 {
 # Same: pid 0 gets past the guard, and /proc/0/comm is what stops it here.
 internal/mirror/liveness.go	<= -> <	if err != nil || pid <= 0 {
 
-# ReadBuildInfo cannot fail inside a test binary, so both branches answer
-# "unknown": the mutated one directly, the original through shortRevision("").
-# What that decides is out of a test's reach, which is why shortRevision exists
-# separately and has one.
-internal/version/version.go	! ->	if !ok {
 
 # i == 0 means the line begins with "=", and the guard inside already rejects
 # it: Fields("") is empty, never the one field the rewrite needs. Both
