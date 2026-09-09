@@ -106,6 +106,14 @@ func TestTheSurvivorsAreCountedInASentence(t *testing.T) {
 		// sentence about none of anything.
 		{0, 0, 4, ""},
 		{0, 0, 0, ""},
+		// And ONE of them, which is the row this table did not have. "the
+		// other is a decision" needs something for it to be other THAN, and
+		// with nothing before it the sentence starts mid-thought. A sweep
+		// flipped the guard that stops it -- len(clauses) > 0 to >= 0, which
+		// is always true -- and every row above passed: the four-decision row
+		// takes the plural branch, and every row with a clause already has
+		// one.
+		{0, 0, 1, ""},
 	} {
 		if got := survivorNote(tt.onErrors, tt.onClamps, tt.rest); got != tt.want {
 			t.Errorf("survivorNote(%d, %d, %d) =\n%q\nwant\n%q",
