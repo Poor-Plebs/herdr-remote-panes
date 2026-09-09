@@ -934,3 +934,70 @@ func TestARaisedBoundCarriesTheFactorItWasGiven(t *testing.T) {
 	// property of check, which runs a suite and is held by the built-command
 	// test instead.
 }
+
+// TestABoundTheThousandfoldCannotSettleIsAnsweredByTheSmallRaise holds the
+// second raise where it is USED, which is the half that was missing.
+//
+// askAgain has a table of its own and its call site had nothing: dropping the
+// `!` in `if !askAgain(verdict, ...)` returns the stopped verdict at once and
+// loops on the answers instead, so the second, gentler question never happens
+// -- and the tool goes back to reporting "no answer" for exactly the class it
+// was taught to settle. A sweep found it surviving.
+//
+// The fixture stands in for a deadline rather than waiting for one. testCmd
+// passes no -timeout, so a real one is ten minutes; verdictFor reads what `go
+// test` PRINTS, so a fixture printing that line exercises the same path in
+// milliseconds. What it models is real and is why the second raise exists: a
+// bound whose cost grows with its value always stops the run a thousandfold
+// up, and maxObserveAttempts sat unanswered for exactly that reason.
+func TestABoundTheThousandfoldCannotSettleIsAnsweredByTheSmallRaise(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "bounds")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("building the command: %v\n%s", err, out)
+	}
+
+	work := t.TempDir()
+	if err := os.Mkdir(filepath.Join(work, "pkg"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"go.mod": "module probe\n\ngo 1.25\n",
+		"pkg/probe.go": "package probe\n\n" +
+			"const maxSlow = 3\n\n" +
+			"func Slow(n int) bool { return n <= maxSlow }\n",
+		// Raised a thousandfold this says what a suite stopped by its own
+		// deadline says, and exits without a test having objected. Raised by
+		// two it answers: Slow(4) comes back true, which it must not.
+		"pkg/probe_test.go": "package probe\n\n" +
+			"import (\n\t\"fmt\"\n\t\"os\"\n\t\"testing\"\n)\n\n" +
+			"func TestSlow(t *testing.T) {\n" +
+			"\tif maxSlow > 1000 {\n" +
+			"\t\tfmt.Println(\"panic: test timed out after 10m0s\")\n" +
+			"\t\tos.Exit(1)\n\t}\n" +
+			"\tif !Slow(3) || Slow(4) {\n\t\tt.Fatal(\"wrong\")\n\t}\n}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run := exec.Command(bin, "pkg")
+	run.Dir = work
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("running the command: %v\n%s", err, out)
+	}
+	said := string(out)
+
+	// Held, by the second question. Without it the first verdict stands and
+	// the bound is counted as one nothing could answer.
+	if !strings.Contains(said, "1 held, 0 not, 0 would not build, 0 no answer") {
+		t.Errorf("a bound the thousandfold could not settle was not answered by "+
+			"the small raise:\n%s", said)
+	}
+	// And said so rather than only counted: a run that stops is the one
+	// verdict that tells somebody nothing, so its absence is the point.
+	if strings.Contains(said, "no answer\n\nmaxSlow") || strings.Contains(said, "could not be settled") {
+		t.Errorf("the report still carries maxSlow as unanswered:\n%s", said)
+	}
+}
