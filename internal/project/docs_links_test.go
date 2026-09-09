@@ -725,6 +725,7 @@ func TestBothCommandRunnersGuardInTheSameOrder(t *testing.T) {
 // track is a check reading something that is not part of the repository.
 func TestDocPagesIsEveryPageInTheRepository(t *testing.T) {
 	inRoot(t)
+	needsCheckout(t, "which pages the repository tracks")
 
 	// Asked of git rather than of the filesystem, and that is not a detail:
 	// walking the directory found notes/engineering-log.md, which is a working

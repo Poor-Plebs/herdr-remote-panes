@@ -39,6 +39,7 @@ import (
 // BUILT plugin carries a real revision, and that is what makes the answer below
 // evidence rather than a tautology.
 func TestARunningDaemonReportsTheBuildItIsRunning(t *testing.T) {
+	needsCheckout(t, "what build a plugin built here reports")
 	inRoot(t)
 
 	binary := filepath.Join(t.TempDir(), "herdr-remote-panes")
@@ -57,7 +58,10 @@ func TestARunningDaemonReportsTheBuildItIsRunning(t *testing.T) {
 	if fields := strings.Fields(strings.SplitN(string(out), "\n", 2)[0]); len(fields) == 2 {
 		installed = fields[1]
 	}
-	// The fixture's own check, and what it is worth exactly: with no revision
+	// A build stamped with no revision is the copy this runs in rather than a
+	// defect, so that case is skipped above and fails in CI -- see
+	// needsCheckout. This is the fixture's own check, and what it is worth
+	// exactly: with no revision
 	// to compare against, the first assertion below still fails but blames the
 	// daemon, and the second passes vacuously, since StaleMessageFor goes
 	// quiet whenever the installed build is empty or unknown. This names the

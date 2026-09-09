@@ -183,6 +183,33 @@ func (s *saidWhat) String() string {
 	return s.b.String()
 }
 
+// needsCheckout skips a test that can only be answered inside a git checkout,
+// and fails instead when CI is the one asking.
+//
+// The mutation sweep copies the tree to a temporary directory to mutate it and
+// takes no .git with it, so a test that FAILS without a repository makes its
+// whole package unsweepable. That is a real cost for checks CI runs on every
+// push regardless, and it was being paid: two tests here failed that way and
+// internal/project could not be swept at all.
+//
+// Skipping is only safe because the other half is enforceable. Nothing in a
+// test run without -v tells a check that passed from one that never ran, so a
+// silent skip is the failure this exists to avoid -- and in CI, where the
+// repository is always there, its absence is the checkout being wrong rather
+// than a tree with nothing to answer.
+func needsCheckout(t *testing.T, what string) {
+	t.Helper()
+	if err := exec.Command("git", "rev-parse", "--git-dir").Run(); err == nil {
+		return
+	}
+	if os.Getenv("CI") != "" {
+		t.Fatalf("no git repository in CI, so %s did not run; "+
+			"actions/checkout needs fetch-depth: 0", what)
+	}
+	t.Skipf("not a git repository, so %s cannot be asked "+
+		"(this is the mutation sweep's copy of the tree; CI fails instead)", what)
+}
+
 // previousRelease is the newest release tag that is not the commit under test.
 //
 // A shallow clone has no tags, and a test that quietly skips when it cannot
@@ -192,27 +219,10 @@ func previousRelease(t *testing.T) string {
 	t.Helper()
 
 	// No repository at all is not the same as a repository without tags, and
-	// only the second is a problem. The mutation sweep copies the tree to a
-	// temporary directory to mutate it, and copies no .git with it -- so
-	// failing on that would mean this package could never be swept, which is
-	// a real cost for a check that CI runs on every push regardless.
-	//
-	// A shallow clone still fails below: it has a .git and no tags, which is
-	// a clone that cannot answer the question rather than a tree that was
-	// never asked to.
-	if err := exec.Command("git", "rev-parse", "--git-dir").Run(); err != nil {
-		if os.Getenv("CI") != "" {
-			// The claim that CI runs this has to be enforceable, or it is the
-			// same silent skip in a better disguise: nothing in a test run
-			// without -v distinguishes a check that passed from one that was
-			// not run. A checkout there without a repository is the checkout
-			// being wrong, not a tree with nothing to answer.
-			t.Fatal("no git repository in CI, so the upgrade check did not run; " +
-				"actions/checkout needs fetch-depth: 0")
-		}
-		t.Skip("not a git repository, so there is no release to upgrade from " +
-			"(this is the mutation sweep's copy of the tree; CI fails instead)")
-	}
+	// only the second is a problem. A shallow clone still fails below: it has
+	// a .git and no tags, which is a clone that cannot answer the question
+	// rather than a tree that was never asked to.
+	needsCheckout(t, "which release to upgrade from")
 	// A particular jump can be asked for, which is how somebody several
 	// versions behind can be told whether their upgrade works rather than
 	// guessed at.

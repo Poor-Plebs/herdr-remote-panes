@@ -40,7 +40,7 @@
 ./internal/picker (since d3fa765)	2026-08-30	2	2	0	0
 ./internal/picker (since v0.4.4)	2026-08-30	2	2	0	0
 ./internal/picker (since v0.4.7)	2026-08-31	11	10	1	0
-./internal/project	2026-08-28	8	8	0	0
+./internal/project	2026-09-09	8	8	0	0	0	0
 ./internal/remote	2026-08-28	52	51	1	0
 ./internal/sshconfig	2026-08-29	44	43	1	0
 ./internal/sshconfig (since v0.4.6)	2026-08-31	5	5	0	0
@@ -56,7 +56,7 @@
 ./internal/text	2026-08-28	60	55	5	0
 ./internal/text (since v0.4.6)	2026-08-31	3	3	0	0
 ./internal/version	2026-09-09	12	11	1	0	0	0
-./tools/bounds	2026-09-01	5	5	0	0
-./tools/deletions	2026-09-05	10	10	0	0
+./tools/bounds	2026-09-09	9	8	1	0	0	1
+./tools/deletions	2026-09-09	10	10	0	0	0	0
 ./tools/herdrcheck	2026-09-09	110	106	4	0	0	0
 ./tools/mutants	2026-09-01	121	117	4	0
