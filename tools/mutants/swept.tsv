@@ -25,7 +25,7 @@
 ./internal/cli	2026-09-09	85	81	4	0	0	0
 ./internal/cli (since v0.4.4)	2026-08-30	9	9	0	0
 ./internal/cli (since v0.4.8)	2026-08-31	4	4	0	0
-./internal/config	2026-08-29	137	135	2	0
+./internal/config	2026-09-09	171	169	2	0	0	0
 ./internal/config (since v0.4.4)	2026-08-30	20	20	0	0
 ./internal/config (since v0.4.5)	2026-08-30	3	3	0	0
 ./internal/config (since v0.4.6)	2026-08-31	1	1	0	0

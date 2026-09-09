@@ -2308,3 +2308,45 @@ func TestTheEmptyFileAdviceDescribesTheFileItGetsYou(t *testing.T) {
 		t.Errorf("the advice does not say the settings still take their defaults: %q", advice)
 	}
 }
+
+// TestWhatTheFileChoseIsOnlyTheSettingsThisVersionKnows holds writtenKeys' own
+// claim: it and unknownKeys divide the file's keys between them, one reporting
+// what was written and means something, the other what was written and means
+// nothing.
+//
+// Held here rather than through Describe, which is its only consumer and folds
+// the answer into a map keyed by setting name -- so a repeated entry collapses
+// and a name no setting has never matches anything, and BOTH of the things this
+// guard prevents are invisible from there. A sweep turned `!ok || seen[field]`
+// into `!ok && seen[field]` and the whole package passed. Measured, that
+// version answers ["" "hosts" "mode"] for a file with one key that is no
+// setting, and ["hosts" "mode" "mode"] for one that spells a setting two ways:
+// wrong in a way nothing downstream can see today, and waiting for the first
+// reader that does not fold.
+func TestWhatTheFileChoseIsOnlyTheSettingsThisVersionKnows(t *testing.T) {
+	for _, row := range []struct {
+		what, raw string
+		want      []string
+	}{
+		{"a setting written once", `{"mode":"ssh","hosts":[]}`,
+			[]string{"hosts", "mode"}},
+		// The decoder folds case, so these are ONE setting: the file chose it
+		// once however many ways it spells it, and Describe looks it up by the
+		// field's own name.
+		{"the same setting spelled two ways", `{"mode":"ssh","Mode":"attach","hosts":[]}`,
+			[]string{"hosts", "mode"}},
+		// unknownKeys' half of the file, and not a nameless entry here either.
+		{"a key that is no setting", `{"mode":"ssh","not_a_setting":1,"hosts":[]}`,
+			[]string{"hosts", "mode"}},
+		{"nothing but keys that are no setting", `{"nonsense":1}`, nil},
+	} {
+		t.Run(row.what, func(t *testing.T) {
+			got := writtenKeys([]byte(row.raw))
+			// Compared whole. Checking that each wanted name is present would
+			// pass on the extra "" and the repeat, which are the whole point.
+			if strings.Join(got, "|") != strings.Join(row.want, "|") {
+				t.Errorf("writtenKeys(%s) = %q, want %q", row.raw, got, row.want)
+			}
+		})
+	}
+}
