@@ -223,6 +223,14 @@ func TestABoundHeldToItselfIsRecognised(t *testing.T) {
 		{"the front dropped rather than the end", "s, n := \"ab\", 1\nif len(s) > n {\ns = s[n:]\n}\n_ = s", false},
 		{"a different bound in the slice", "s, n, m := \"ab\", 1, 2\nif len(s) > n {\ns = s[:m]\n}\n_ = s", false},
 		{"another slice truncated", "s, o, n := \"ab\", \"cd\", 1\nif len(s) > n {\no = o[:n]\n}\n_ = o", false},
+		// The measured slice truncated INTO another name. The one above
+		// truncates a different slice; this one truncates the right slice and
+		// puts it somewhere else, so at the boundary o becomes s rather than
+		// staying what it was -- which is the whole of what a clamp means. It
+		// is the row that holds `name != lhs`: with that test widened, the
+		// slice expression matches and this reads as a bound.
+		{"the measured slice truncated into another name",
+			"s, o, n := \"ab\", \"cd\", 1\nif len(s) > n {\no = s[:n]\n}\n_ = o", false},
 
 		// Two things assigned at once. The branch is not holding one value to
 		// one bound, and reading only the first of them would call a swap a
