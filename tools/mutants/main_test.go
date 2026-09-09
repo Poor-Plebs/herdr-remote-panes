@@ -1388,10 +1388,7 @@ func TestARunThatEndedWithoutATestObjectingIsNotCaught(t *testing.T) {
 // found wrong in the sibling tool, where every bound with a blank line over it
 // was reported one line early.
 func TestTheSweepSaysWhichMutationSurvivedAndWhere(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "mutants")
-	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
-		t.Fatalf("building the command: %v\n%s", err, out)
-	}
+	bin := buildCommand(t)
 
 	// Two identical lines, one pinned by its test both ways and one merely
 	// called. The pair is the control: a run that reported every mutation as a
@@ -1472,10 +1469,7 @@ func TestTheSweepSaysWhichMutationSurvivedAndWhere(t *testing.T) {
 // had ever swept -- which is the confusion that function's own comment says it
 // exists to end, and it has already misled a reader here.
 func TestASweepIsRecordedWhetherOrNotItFoundAnything(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "mutants")
-	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
-		t.Fatalf("building the command: %v\n%s", err, out)
-	}
+	bin := buildCommand(t)
 
 	// TWO held and one loose, not one of each. With a single caught mutation
 	// beside a single survivor the two counts are equal, and every assertion
@@ -1650,10 +1644,7 @@ func TestASweepThatFoundNothingSaysWhichNothing(t *testing.T) {
 // package that nothing covers, a call site handing over a count it did not
 // measure still passes the two above.
 func TestTheCommandSaysWhichNothingItFound(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "mutants")
-	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
-		t.Fatalf("building the command: %v\n%s", err, out)
-	}
+	bin := buildCommand(t)
 
 	const addOnly = "package probe\n\n" +
 		"// Add is covered, and addition is not an operator this flips.\n" +
@@ -1778,4 +1769,30 @@ func TestTheSweepRecordDescribesItself(t *testing.T) {
 				"the older 6", count, width)
 		}
 	}
+}
+
+// buildCommand builds this tool for a test to run, and does not ask go to
+// stamp it with where it came from.
+//
+// -buildvcs=false because these tests must not care whether the tree they are
+// running in is a checkout, and there is one case where it is not: when this
+// package is the one being SWEPT. The sweep works on a copy with no .git, and
+// go then refuses the build outright rather than quietly skipping the stamp --
+// "error obtaining VCS status ... is not using a known version control
+// system". The tests failed there, so the tool would not start on a package
+// whose tests do not pass, and tools/mutants became the one package its own
+// tool could never sweep. Nothing said so: its row in swept.tsv simply stopped
+// moving.
+//
+// Nothing here reads a build stamp, so asking for none costs nothing. That is
+// not true everywhere -- internal/project has a test that needs the stamp and
+// skips outside a checkout instead, which is the other answer to the same
+// question.
+func buildCommand(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "mutants")
+	if out, err := exec.Command("go", "build", "-buildvcs=false", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("building the command: %v\n%s", err, out)
+	}
+	return bin
 }
