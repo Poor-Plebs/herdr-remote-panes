@@ -45,6 +45,59 @@ func TestTheMachinesHerdrVersionIsKept(t *testing.T) {
 	}
 }
 
+func TestAVersionIsKeptToTheLineItIsOn(t *testing.T) {
+	// firstLine has one caller and it hands over the machine's stdout as it
+	// came, so what this does with an odd first line is what the kept version
+	// becomes. The boundary is a blank line before the version: that puts the
+	// newline at index nought, and "the newline is at nought" reads the same
+	// as "there is no newline at all" to anything asking whether the index is
+	// merely positive. Read that way this keeps the whole of the output
+	// instead of the line the version is on, and the version becomes
+	// something that spans lines -- which is then printed in a row beside the
+	// machine's name.
+	//
+	// No version is the better answer than a version that is really several,
+	// and it is the answer this gives. The sibling of this line, in Bin, is
+	// held by construction because its input is trimmed before it is asked;
+	// this one is not, so the reasoning about that one does not reach here.
+	for _, c := range []struct {
+		what string
+		out  string
+		want string
+	}{
+		{"the one line --version prints", "herdr 9.9.9", "herdr 9.9.9"},
+		{"a version and then more", "herdr 9.9.9\nbuilt today", "herdr 9.9.9"},
+		{"a blank line before it", "\nherdr 9.9.9", ""},
+		{"nothing but a newline", "\n", ""},
+		{"nothing at all", "", ""},
+	} {
+		if got := firstLine(c.out); got != c.want {
+			t.Errorf("%s: firstLine(%q) = %q, want %q", c.what, c.out, got, c.want)
+		}
+	}
+}
+
+func TestAKeptVersionNeverSpansLines(t *testing.T) {
+	// The property the machine rows depend on, held at the call site and not
+	// only at the helper: a machine whose stdout begins with a blank line is
+	// the one that can put a newline into the middle of a version.
+	fakeSSH(t, remoteCommandIs+`
+case "$last" in
+  *command\ -v\ herdr*) echo /usr/bin/herdr; exit 0;;
+  *--version*) printf '\nherdr 9.9.9\nbuilt today\n'; exit 0;;
+esac
+exit 0`)
+
+	c := New("bot", "")
+	if err := c.CheckHerdr(); err != nil {
+		t.Fatalf("CheckHerdr: %v", err)
+	}
+	if got := c.HerdrVersion(); strings.Contains(got, "\n") {
+		t.Errorf("the version kept from a machine that printed a blank line "+
+			"before it is %q, which spans lines", got)
+	}
+}
+
 func TestRemoteCommandClearsSocketOverrides(t *testing.T) {
 	// HERDR_SOCKET_PATH outranks HERDR_SESSION when Herdr resolves which
 	// server to talk to, so it must be cleared before the remote invocation.
