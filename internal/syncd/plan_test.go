@@ -5418,3 +5418,49 @@ func TestTheUnreadableConfigWarningSaysWhatIsStillPossible(t *testing.T) {
 		t.Errorf("the warning does not say what the unreadable file cost: %q", warning)
 	}
 }
+
+// theSettledWait is what reopenSettled has to be, written out here rather than
+// read from it so that this cannot move with the code.
+//
+// `make bounds` never asked about it. That tool sweeps the constants NAMED
+// max*, which is what its own target line says, and every other bound in this
+// tree -- the timeouts, the waits, the intervals -- is outside it. Twelve of
+// them were falsified by hand on 2026-09-09 by making each tiny, and eleven
+// failed a test that named them. This one did not: both tests that care about
+// it set their own value, one to an hour and one to a millisecond, so the
+// DEFAULT was held by nothing and could be anything at all.
+const theSettledWait = 30 * time.Second
+
+// TestHowLongATerminalStaysUpBeforeAMachineCountsAsSteady pins that number,
+// because it is not a preference.
+//
+// It decides when a machine's run of dropped terminals is forgiven. The
+// comment at the call site says what a wrong one costs, and it is a bug this
+// repository has already had: a machine that accepts a connection and then
+// drops it has a terminal that is up for a moment on EVERY pass, so counting
+// that as recovery reset the tally every time -- the giving-up that
+// planGiveUp promises could not happen, and such a machine had a pane opened
+// and shut every couple of seconds for as long as the session lasted.
+//
+// What the daemon DOES at this bound is held by the two integration tests that
+// set it themselves, one either side; that pair is what says the number is
+// obeyed, and this says what the number is.
+func TestHowLongATerminalStaysUpBeforeAMachineCountsAsSteady(t *testing.T) {
+	if reopenSettled != theSettledWait {
+		t.Errorf("reopenSettled = %v, want %v: shorter forgives a machine that is "+
+			"dropping terminals as fast as it opens them, longer gives up on one "+
+			"that had recovered", reopenSettled, theSettledWait)
+	}
+
+	// And what it costs, which is the half somebody would notice. Recovery is
+	// counted in POLLS, not in seconds: the check runs once per reconcile, so
+	// what matters is how many passes a terminal has to survive at the fastest
+	// poll a machine can be asked to keep up with. Two or three would be a
+	// machine that flaps and is forgiven for it, which is the shape above.
+	passes := theSettledWait / config.MinPollInterval
+	if passes < 20 {
+		t.Errorf("a terminal survives %d polls at the fastest interval (%v) before "+
+			"the machine counts as steady, which is too few to tell recovery from "+
+			"a machine that drops one every pass", passes, config.MinPollInterval)
+	}
+}
