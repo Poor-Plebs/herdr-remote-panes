@@ -164,6 +164,26 @@ func startsHere(before string) bool {
 	return false
 }
 
+// upToDelimiter cuts an invocation at the quote or substitution it sits in, so
+// `herdr pane list` written inside `ssh box '...'` does not come back with the
+// closing quote stuck to it and reported as a command Herdr does not have.
+//
+// One function because subcommandsIn and flagsIn had the same three lines and
+// the same delimiter set written out twice. Two identical lines are two
+// decisions as far as anything reading them is concerned: a judgement about
+// one is not a judgement about the other, which is what read.tsv refuses to
+// let one entry cover.
+//
+// The offset is never nought here, and cannot be: both callers are reached
+// from invocationsIn only after it has checked that rest begins with a space
+// or a tab, and neither is in the set.
+func upToDelimiter(rest string) string {
+	if cut := strings.IndexAny(rest, "'\"`)|;#"); cut >= 0 {
+		return rest[:cut]
+	}
+	return rest
+}
+
 // subcommandsIn takes the leading subcommands of an invocation and stops at the
 // first word that is not one.
 //
@@ -175,9 +195,7 @@ func startsHere(before string) bool {
 // inside `ssh box '...'` comes back with the closing quote stuck to it and is
 // reported as a command Herdr does not have.
 func subcommandsIn(rest string) []string {
-	if cut := strings.IndexAny(rest, "'\"`)|;#"); cut >= 0 {
-		rest = rest[:cut]
-	}
+	rest = upToDelimiter(rest)
 	var words []string
 	for _, word := range strings.Fields(rest) {
 		if !isSubcommand(word) {
@@ -197,9 +215,7 @@ func subcommandsIn(rest string) []string {
 // never begin with a dash, so the whole of what follows can be scanned: what
 // is a flag and what is a subcommand cannot be confused.
 func flagsIn(rest string) []string {
-	if cut := strings.IndexAny(rest, "'\"`)|;#"); cut >= 0 {
-		rest = rest[:cut]
-	}
+	rest = upToDelimiter(rest)
 	var out []string
 	for _, word := range strings.Fields(rest) {
 		if name, _, _ := strings.Cut(word, "="); isFlag(name) {

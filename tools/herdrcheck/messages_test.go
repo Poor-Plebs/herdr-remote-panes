@@ -33,6 +33,14 @@ const source = "" +
 	"\n" +
 	"var built = \"Check `herdr plugin log list --plugin \" + pluginID + \"`.\"\n" +
 	"\n" +
+	"var after = \"Then run `herdr workspace focus \" + id + \"` to go back.\"\n" +
+	"\n" +
+	"var before = target + \" is unreachable: try `herdr terminal attach` there.\"\n" +
+	"\n" +
+	"var id = \"w3\"\n" +
+	"\n" +
+	"var target = \"bot\"\n" +
+	"\n" +
 	"var pluginID = \"poorplebs.remote-panes\"\n"
 
 func messagesIn(t *testing.T, text string) []toldCommand {
@@ -58,6 +66,14 @@ func TestTheCommandsTheMessagesGiveAreRead(t *testing.T) {
 		"session attach",       // in backticks, mid-sentence
 		"plugin action invoke", // split across two literals to fit the line
 		"plugin log list",      // in backticks, with a flag after it
+		// The two halves of a concatenation, which decide what stringAt does
+		// with an operand it cannot read. `built` above has the same shape as
+		// the first, and its command is in the advice slice as well -- so
+		// losing it changed nothing anybody could see, and all three
+		// comparisons on that line survived a sweep. These two commands come
+		// from nowhere else in this fixture.
+		"workspace focus", // computed on the RIGHT, after the command
+		"terminal attach", // computed on the LEFT, before it
 	} {
 		if !got[want] {
 			t.Errorf("a message says to run `herdr %s` and it was not read", want)

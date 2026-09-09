@@ -39,7 +39,9 @@ const page = "" +
 	"  bot  2 ssh  mirroring off: no herdr found on the machine — set herdr_bin\n" +
 	"```\n" +
 	"\n" +
-	"herdr-remote-panes: 2026/08/27 09:02:41 could not accept on the control socket\n"
+	"herdr-remote-panes: 2026/08/27 09:02:41 could not accept on the control socket\n" +
+	"\n" +
+	"    herdr\tworkspace list\n"
 
 func TestTheCommandsTheDocsGiveAreRead(t *testing.T) {
 	dir := t.TempDir()
@@ -66,6 +68,11 @@ func TestTheCommandsTheDocsGiveAreRead(t *testing.T) {
 		"pane close",        // the same, with an argument after it
 		"pane run",          // an indented block, stopping at <pane-id>
 		"plugin config-dir", // inside $(...), stopping at the plugin name
+		// Separated from `herdr` by a TAB rather than a space, which is the
+		// other half of the guard that stops herdr-remote-panes and herdr_bin
+		// being read as invocations. Dropping the tab from it leaves this one
+		// unread, and every other line in this page uses a space.
+		"workspace list",
 	} {
 		if !got[want] {
 			t.Errorf("the docs give `herdr %s` and it was not read as a command", want)

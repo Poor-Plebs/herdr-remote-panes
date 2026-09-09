@@ -58,5 +58,5 @@
 ./internal/version	2026-09-09	12	11	1	0	0	0
 ./tools/bounds	2026-09-01	5	5	0	0
 ./tools/deletions	2026-09-05	10	10	0	0
-./tools/herdrcheck	2026-09-09	111	104	7	0	0	6
+./tools/herdrcheck	2026-09-09	110	106	4	0	0	0
 ./tools/mutants	2026-09-01	121	117	4	0

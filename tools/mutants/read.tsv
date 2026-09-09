@@ -143,3 +143,18 @@ internal/syncd/daemon.go	> -> >=	if machine.took > slowestTook {	reconcileOnce
 # part only if the space is lost and found again in one connection, which is
 # forgetWorkspace followed by a rediscovery, and the flag is there for that.
 internal/syncd/daemon.go	! -> 	if chosen.Label != label && !state.borrowedRemoteSpace {
+
+# Reached from invocationsIn only, and only once it has checked that rest
+# begins with a space or a tab -- neither of which is in that set, so the
+# delimiter is never at offset nought and the two spellings cannot disagree.
+tools/herdrcheck/docs.go	>= -> >	if cut := strings.IndexAny(rest, "'\"`)|;#"); cut >= 0 {
+
+# Whatever this rejects, the walk visits the operands on their own afterwards,
+# and a backticked command lying wholly inside one half is read from that half.
+# Measured with both shapes in the fixture: a computed operand on the right
+# (`workspace focus`) and on the left (`terminal attach`) are still found with
+# the concatenation refused. Flipping the left test alone is NOT equivalent and
+# is caught.
+tools/herdrcheck/messages.go	&& -> ||	if !lok && !rok {
+tools/herdrcheck/messages.go	! -> 	if !lok && !rok {
+
