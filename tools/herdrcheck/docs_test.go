@@ -186,3 +186,56 @@ func TestAnArgumentIsNotAFlag(t *testing.T) {
 		}
 	}
 }
+
+// TestWhatCountsAsANameInAFlag walks the edges of the character classes, which
+// the words above never reach.
+//
+// None of them holds an "a", a digit, or a hyphen where one is not allowed --
+// and a word that fails the `--` prefix never enters the loop at all, so the
+// classes were reached only by four flags that happen to agree. A mutation
+// sweep flipped every comparison in that line and every one survived: with
+// `c <= 'a'` a flag containing an "a" stops being a flag, which is most of
+// them, and `--placement` is in these pages.
+//
+// The pairs are what make it a boundary rather than an example: the character
+// itself and the one next to it, on each side of each class.
+func TestWhatCountsAsANameInAFlag(t *testing.T) {
+	for _, word := range []string{
+		"--a", "--z", // the letters, at both ends
+		"--label",      // an ordinary flag with an "a" in it, as the pages have
+		"--x0", "--x9", // the digits, at both ends
+		"--no-focus", // a hyphen, which is allowed after the first character
+		"--a-0",      // all three classes in one name
+	} {
+		if !isFlag(word) {
+			t.Errorf("%q is a flag and was not read as one", word)
+		}
+	}
+	for _, word := range []string{
+		"--A", "--Z", // upper case is not a flag name here
+		"--`", "--{", // the characters either side of a and z
+		"--/", "--:", // the characters either side of 0 and 9
+		"---x",  // a hyphen FIRST, which is the `i > 0` in that line
+		"--a:b", // an ordinary name with one character out of class
+		"--aA",  // out of class after the first, which the last conjunct covers
+	} {
+		if isFlag(word) {
+			t.Errorf("%q was read as a flag", word)
+		}
+	}
+}
+
+// TestWhatCountsAsASubcommand is the same edges for the other predicate, which
+// takes letters and hyphens and no digits at all.
+func TestWhatCountsAsASubcommand(t *testing.T) {
+	for _, word := range []string{"a", "z", "attach", "log-list"} {
+		if !isSubcommand(word) {
+			t.Errorf("%q is a subcommand and was not read as one", word)
+		}
+	}
+	for _, word := range []string{"", "A", "Z", "`", "{", "-attach", "log_list", "v2", "log:list"} {
+		if isSubcommand(word) {
+			t.Errorf("%q was read as a subcommand", word)
+		}
+	}
+}
