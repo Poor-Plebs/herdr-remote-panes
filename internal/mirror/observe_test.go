@@ -41,7 +41,29 @@ func observeSSH(t *testing.T, script string) *remote.Client {
 	return remote.New("bot", "")
 }
 
+// theStreamBound is how long whatItWrote waits for a stream to come back.
+//
+// Not a timing claim about the code: every caller here ends on its own in
+// well under a second, the slowest being the oversized frame at 0.4s, so this
+// is a bound on how the fixture FAILS rather than on what it measures. Load
+// can only make a stream slower, and the margin to the slowest is seventy
+// times over.
+//
+// Without it a streamOnce that never returns takes the whole package to `go
+// test`'s own ten-minute deadline, on three CI jobs, and the panic names a
+// goroutine rather than the claim. That is not hypothetical: dropping the
+// Kill from the abandoned-stream path below leaves cmd.Wait() waiting on a
+// live process, and TestOneEnormousFrameDoesNotEndTheMirror hangs there
+// exactly that way -- the mutation sweep reported it as a non-answer for
+// that reason rather than as a line nothing holds.
+const theStreamBound = 30 * time.Second
+
 // whatItWrote runs a stream and returns what it put on the terminal.
+//
+// HONEST LIMIT: when the bound fires the streamOnce goroutine is left where
+// it stopped, so the run reports a failing test with a goroutine still in it.
+// That is what a fixture giving up costs, and it is the cheaper end of the
+// trade: the alternative is the ten minutes of silence this replaces.
 func whatItWrote(t *testing.T, client *remote.Client, winch <-chan os.Signal) (string, error) {
 	t.Helper()
 	read, write, err := os.Pipe()
@@ -58,7 +80,18 @@ func whatItWrote(t *testing.T, client *remote.Client, winch <-chan os.Signal) (s
 		done <- string(out)
 	}()
 
-	streamErr := streamOnce(client, "term_1", 80, 24, winch)
+	streamed := make(chan error, 1)
+	go func() { streamed <- streamOnce(client, "term_1", 80, 24, winch) }()
+
+	var streamErr error
+	select {
+	case streamErr = <-streamed:
+	case <-time.After(theStreamBound):
+		t.Fatalf("the stream did not come back within %s: streamOnce is waiting "+
+			"for something that never arrives, so this is a hang rather than a "+
+			"wrong answer", theStreamBound)
+	}
+
 	write.Close()
 	return <-done, streamErr
 }

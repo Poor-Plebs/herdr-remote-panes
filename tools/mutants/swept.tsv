@@ -33,7 +33,7 @@
 ./internal/herdrcli	2026-09-09	60	60	0	0	0	0
 ./internal/logfile	2026-09-09	11	11	0	0	0	0
 ./internal/logfile (since v0.4.4)	2026-08-30	2	2	0	0
-./internal/mirror	2026-09-09	135	122	11	2	0	0
+./internal/mirror	2026-09-09	135	123	11	1	0	0
 ./internal/mirror (since v0.4.8)	2026-08-31	1	1	0	0
 ./internal/mirror/ (mirror.go)	2026-09-06	58	53	2	0
 ./internal/picker	2026-09-09	129	112	17	0	0	0
