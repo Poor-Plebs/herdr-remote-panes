@@ -456,9 +456,50 @@ func TestPlanShellName(t *testing.T) {
 
 	// Names are compared as they are drawn, so a format that hides the number
 	// does not make every terminal collide forever.
+	//
+	// The empty map holds nothing about that: it returns at the first
+	// candidate without comparing anything, so every label function passes it
+	// alike. The case the sentence is really about is one where such a label
+	// is ALREADY taken, and that is where this looped for ever -- no candidate
+	// can ever be free, because they all render the same. The answer is the
+	// plain name, the labels collide, and the pane opens, which is what
+	// validate.go's warning about a format with neither {name} nor {pane}
+	// says happens.
 	sameForAll := func(string) string { return "terminal@bot" }
-	if got := planShellName(map[string]bool{}, sameForAll); got != "shell" {
+	if got := shellNameWithin(t, map[string]bool{}, sameForAll); got != "shell" {
 		t.Errorf("terminal = %q, want %q", got, "shell")
+	}
+	if got := shellNameWithin(t, map[string]bool{"terminal@bot": true}, sameForAll); got != "shell" {
+		t.Errorf("terminal under a format that hides the number = %q, want %q", got, "shell")
+	}
+}
+
+// theShellNameBound is how long shellNameWithin waits for a name.
+//
+// Not a timing claim: the search is a handful of map lookups and returns in
+// microseconds. It is a bound on how this FAILS, because the defect it guards
+// against is an unbounded search rather than a wrong answer -- and an
+// unbounded one takes the whole package to `go test`'s own deadline on three
+// CI jobs, reporting a goroutine dump rather than the claim.
+const theShellNameBound = 10 * time.Second
+
+// shellNameWithin runs planShellName and fails rather than waiting on it.
+//
+// HONEST LIMIT: when the bound fires the search goroutine is left spinning for
+// the rest of the run, which is what giving up on a loop costs. The run still
+// ends, and says which claim broke.
+func shellNameWithin(t *testing.T, taken map[string]bool, label func(string) string) string {
+	t.Helper()
+	done := make(chan string, 1)
+	go func() { done <- planShellName(taken, label) }()
+	select {
+	case name := <-done:
+		return name
+	case <-time.After(theShellNameBound):
+		t.Fatalf("planShellName did not come back within %s: it is searching "+
+			"without end, which is what happens when every candidate renders "+
+			"as the same label", theShellNameBound)
+		return ""
 	}
 }
 

@@ -446,7 +446,22 @@ func planNeedsTerminal(liveTerminals int) bool {
 // label renders what a name would be shown as, so what is compared is what is
 // actually drawn rather than a guess at how the format will treat it.
 func planShellName(taken map[string]bool, label func(string) string) string {
-	for n := 1; ; n++ {
+	// Bounded, because what is compared is the LABEL and a format can render
+	// every candidate the same. A label_format with neither {name} nor {pane}
+	// ignores the candidate entirely -- validate.go warns about exactly that
+	// and loads the config anyway -- and the call site hands this a zero
+	// herdrcli.Pane, so {pane} and {agent} are empty there too and only {name}
+	// can tell two candidates apart. With one such terminal already open
+	// nothing is ever free, and this used to spin here for ever: the daemon
+	// stops opening terminals on that machine altogether, rather than naming
+	// them alike as the warning promises.
+	//
+	// Among len(taken)+1 candidates at least one label is free WHENEVER the
+	// format distinguishes them, since taken holds at most len(taken) of them.
+	// So reaching the end means the format does not distinguish them, and the
+	// answer is the plain name: the labels collide, which is the warned-about
+	// outcome, and the pane opens.
+	for n := 1; n <= len(taken)+1; n++ {
 		name := "shell"
 		if n > 1 {
 			name = fmt.Sprintf("shell %d", n)
@@ -455,6 +470,7 @@ func planShellName(taken map[string]bool, label func(string) string) string {
 			return name
 		}
 	}
+	return "shell"
 }
 
 // maxHostAttempts is how many times a machine is tried before it is left alone.
