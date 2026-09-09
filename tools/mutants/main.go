@@ -331,6 +331,13 @@ func verdictFor(out []byte, err error) string {
 	switch {
 	case err == nil:
 		return "survived"
+	case strings.Contains(string(out), "--- FAIL:"):
+		// A test objected, and that is the answer whatever else the run did
+		// afterwards. A mutation can fail one test and leave another waiting
+		// for something that never comes, so the panic below is reached by
+		// runs that DID hold the line -- reading those as a non-answer sends
+		// somebody to adjudicate by hand what the output already settles.
+		return "caught"
 	case strings.Contains(string(out), "panic: test timed out"):
 		return "hung"
 	}

@@ -21,7 +21,7 @@
 #
 # package	swept	mutations	caught	survived	hung	no-build	unexplained
 .	2026-09-05	0	0	0	0
-./internal/capped	2026-09-01	5	4	1	0
+./internal/capped	2026-09-09	5	4	1	0	0	0
 ./internal/cli	2026-09-09	85	81	4	0	0	0
 ./internal/cli (since v0.4.4)	2026-08-30	9	9	0	0
 ./internal/cli (since v0.4.8)	2026-08-31	4	4	0	0
@@ -31,9 +31,9 @@
 ./internal/config (since v0.4.6)	2026-08-31	1	1	0	0
 ./internal/config (since v0.4.8)	2026-08-31	5	5	0	0
 ./internal/herdrcli	2026-09-09	60	60	0	0	0	0
-./internal/logfile	2026-08-28	9	9	0	0
+./internal/logfile	2026-09-09	11	11	0	0	0	0
 ./internal/logfile (since v0.4.4)	2026-08-30	2	2	0	0
-./internal/mirror	2026-08-28	134	123	11	0
+./internal/mirror	2026-09-09	135	122	11	2	0	0
 ./internal/mirror (since v0.4.8)	2026-08-31	1	1	0	0
 ./internal/mirror/ (mirror.go)	2026-09-06	58	53	2	0
 ./internal/picker	2026-09-09	129	112	17	0	0	0
@@ -53,7 +53,7 @@
 ./internal/syncd (since v0.4.5)	2026-08-30	3	3	0	0
 ./internal/syncd (since v0.4.8)	2026-08-31	7	6	1	0
 ./internal/syncd (state.go)	2026-09-07	29	29	0	0	0	0
-./internal/text	2026-08-28	60	55	5	0
+./internal/text	2026-09-09	63	58	5	0	0	0
 ./internal/text (since v0.4.6)	2026-08-31	3	3	0	0
 ./internal/version	2026-09-09	12	11	1	0	0	0
 ./tools/bounds	2026-09-09	9	9	0	0	0	0

@@ -1383,6 +1383,20 @@ func TestARunThatEndedWithoutATestObjectingIsNotCaught(t *testing.T) {
 			failed, "caught",
 		},
 		{
+			// Both at once, which is what internal/mirror:689 really printed:
+			// four tests failed on the spot and a fifth then sat waiting for a
+			// stream that never ended. Every other row here carries EITHER a
+			// failing test OR the panic, so none of them can tell "it timed
+			// out" apart from "it timed out and nothing objected" -- and the
+			// second is what the row above means by hung.
+			"a test objected and the run then ran out of time",
+			"--- FAIL: TestObserveEndsWhenTheTerminalDoes (0.00s)\n" +
+				"    observe_test.go:107: a stream that ended cleanly reported stopped reading\n" +
+				"panic: test timed out after 120s\n\ngoroutine 1 [running]:\n" +
+				"FAIL\tinternal/mirror\t120.01s\n",
+			failed, "caught",
+		},
+		{
 			// Deliberate, and a weaker claim than the word suggests: the run
 			// finished, badly, and the mutation is not surviving -- but no
 			// test objected either. Two of mirror.go's 58 are this.
