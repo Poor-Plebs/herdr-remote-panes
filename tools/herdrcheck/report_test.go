@@ -116,6 +116,29 @@ func TestARunWithNothingWrongExitsNought(t *testing.T) {
 	if !strings.Contains(out, "take what this plugin sends") {
 		t.Errorf("a clean run does not say so:\n%s", out)
 	}
+	// And a clean run carries NONE of the drift sentences, which is the zero
+	// edge these checks were missing. Each decides with `len(x) > 0`, which
+	// reads as obviously right; a mutation sweep of this package found that
+	// all of them could be `>= 0` with nothing failing. That prints a sentence
+	// about an empty list on every clean run -- "does not name them" with
+	// nothing before it -- and returns the same nought, so everything watching
+	// the exit code goes on passing and the line is the only place it shows.
+	schema := reportLine(t, out, "api schema")
+	if !strings.Contains(schema, "ok,") {
+		t.Errorf("a clean run's api schema line does not say ok: %q", schema)
+	}
+	if strings.Contains(schema, "does not name") {
+		t.Errorf("a clean run reports a status the mapping does not name: %q", schema)
+	}
+	manifest := reportLine(t, out, "plugin manifest")
+	if !strings.Contains(manifest, "ok,") {
+		t.Errorf("a clean run's plugin manifest line does not say ok: %q", manifest)
+	}
+	if strings.Contains(manifest, "nothing was found for") {
+		t.Errorf("a clean run says one of the manifest's settings went "+
+			"unchecked: %q", manifest)
+	}
+
 	// And it says what it asked about. A run that printed only the summary
 	// would be a checker nobody could tell had looked at the right things --
 	// which is how `--placement popup` was sent for as long as it was.
@@ -530,6 +553,32 @@ func TestAStatusHerdrReportsAndTheMappingDoesNotNameIsDrift(t *testing.T) {
 	if !strings.Contains(out.String(), "waiting") {
 		t.Errorf("the report does not name the status that has no name here:\n%s",
 			out.String())
+	}
+	// One is "it" and several are "them". The sentence reads as a fault in the
+	// checker otherwise, and the choice was held by nothing: the sweep flipped
+	// `len(unnamed) == 1` and no test minded.
+	if said := reportLine(t, out.String(), "api schema"); !strings.Contains(said, "does not name it") {
+		t.Errorf("one unnamed status is not called \"it\": %q", said)
+	}
+}
+
+// TestSeveralStatusesWithNoNameAreCalledThemRatherThanIt is the other half of
+// that choice, and the reason it is a separate row: with one fixture the two
+// spellings cannot be told apart, which is how the decision came to be held by
+// nothing at all.
+func TestSeveralStatusesWithNoNameAreCalledThemRatherThanIt(t *testing.T) {
+	var out strings.Builder
+	report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		herdrSchema{
+			PaneFields: everyPaneField(),
+			Enums:      withAgentStatus("idle", "waiting", "pausing"),
+		}, theManifest())
+
+	said := reportLine(t, out.String(), "api schema")
+	if !strings.Contains(said, "does not name them") {
+		t.Errorf("two unnamed statuses are not called \"them\": %q", said)
 	}
 }
 
