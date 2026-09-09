@@ -1865,3 +1865,31 @@ func TestASweepThatCannotBeRecordedSaysSo(t *testing.T) {
 		t.Errorf("a record that was written said %q", quiet)
 	}
 }
+
+// TestTheCaretLandsOnAnOperatorThatStartsTheLine walks the edge the two tables
+// above step over.
+//
+// One holds three operators in the middle of a line, the other two columns far
+// outside it -- minus five and five hundred -- so the guard that decides
+// whether a caret can be placed is only ever asked about values nowhere near
+// its boundary. A sweep flipped both of its comparisons and neither failed.
+//
+// Nought is reachable, and this is how: gofmt keeps a binary operator at the
+// end of the line it wraps, but a UNARY one begins the next, so `!ok` in a
+// wrapped condition puts the mutated character first. Suppressing the caret
+// there is the failure the caret exists to prevent -- several mutations on one
+// line, told apart by nothing.
+func TestTheCaretLandsOnAnOperatorThatStartsTheLine(t *testing.T) {
+	// Two tabs, then the operator: column three, and nought once the
+	// indentation is stripped.
+	out := pointAt(mutation{source: "\t\t!ok && rest {", column: 3, old: "!"})
+
+	lines := strings.Split(out, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("an operator at the start of the line lost its caret: %q", out)
+	}
+	if at := strings.Index(lines[1], "^"); at != strings.Index(lines[0], "!") {
+		t.Errorf("the caret is at %d and the operator at %d:\n%s",
+			at, strings.Index(lines[0], "!"), out)
+	}
+}
