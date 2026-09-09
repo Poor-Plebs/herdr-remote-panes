@@ -158,3 +158,9 @@ tools/herdrcheck/docs.go	>= -> >	if cut := strings.IndexAny(rest, "'\"`)|;#"); c
 tools/herdrcheck/messages.go	&& -> ||	if !lok && !rok {
 tools/herdrcheck/messages.go	! -> 	if !lok && !rok {
 
+# An early exit rather than the thing that keeps comments and blank lines out
+# of the record: neither has a tab in it, so the len(parts) check below takes
+# it out anyway. Both functions read the same file the same way, so both
+# carry the same line and each is named.
+tools/mutants/main.go	|| -> &&	if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {	readSurvivors
+tools/mutants/main.go	|| -> &&	if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {	staleTriage

@@ -1796,3 +1796,59 @@ func buildCommand(t *testing.T) string {
 	}
 	return bin
 }
+
+// TestASweepThatCannotBeRecordedSaysSo holds the one line that turns a record
+// nobody could write into something somebody sees.
+//
+// The row is written beside the tool, and a sweep does not fail when it cannot
+// be written: the answer is already on the screen. So the warning is the whole
+// of what is left, and it was held by nothing. Inverting its guard prints
+// "could not record" after every successful sweep and says nothing when the
+// write really fails -- and the package stayed green, which is how a row that
+// silently never lands gets read as a package with nothing to answer for.
+func TestASweepThatCannotBeRecordedSaysSo(t *testing.T) {
+	stderr := os.Stderr
+	t.Cleanup(func() { os.Stderr = stderr })
+
+	// A file rather than a pipe: all of it has to be readable afterwards, and
+	// a pipe nobody is draining holds only what fits in it.
+	said := func(path string) string {
+		t.Helper()
+		f, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Stderr = f
+		recordSweep(path, "./internal/thing", "", nil,
+			sweepCounts{mutations: 7, caught: 6, survived: 1})
+		os.Stderr = stderr
+		_ = f.Close()
+		raw, err := os.ReadFile(f.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+
+	// A directory cannot be written over, so this is a write that really
+	// fails rather than one refused earlier for some other reason.
+	blocked := filepath.Join(t.TempDir(), "swept.tsv")
+	if err := os.Mkdir(blocked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := said(blocked)
+	if !strings.Contains(out, "could not record the sweep") {
+		t.Errorf("a record that could not be written did not say so: %q", out)
+	}
+	// Named, because the path is the whole of what somebody does about it.
+	if !strings.Contains(out, blocked) {
+		t.Errorf("the warning does not name the file it could not write: %q", out)
+	}
+
+	// And the control, which is what the inverted guard fails: a write that
+	// works says nothing at all. Without this row a tool that complains after
+	// every successful sweep passes the assertions above.
+	if quiet := said(filepath.Join(t.TempDir(), "swept.tsv")); quiet != "" {
+		t.Errorf("a record that was written said %q", quiet)
+	}
+}
