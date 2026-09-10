@@ -276,6 +276,12 @@ against is not something this plugin knows, and guessing would demote a machine
 that works. It is there because it is the first thing worth knowing when a
 mirror is behaving oddly and everything else looks fine.
 
+If a connected machine has no such line, it did not say which version it is
+running. The version is read from the first line the machine prints, so a login
+that begins with a blank one leaves nothing to read — and the plugin would
+rather say nothing than write the machine's name with no version after it,
+which reads like an answer and is not one.
+
 **A machine says `ssh` when you asked it to mirror.** In the menu it reads
 `connected · 2 open · herdr not found`. Mirroring needs Herdr on
 the machine, and it was not found. Usually it is simply not installed there;
