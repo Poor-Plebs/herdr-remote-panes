@@ -174,7 +174,8 @@ func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []tol
 	fmt.Fprintln(w)
 	problems += askAbout(w, ask, said, "a message gives it at")
 
-	problems += askTheSchema(w, schema.PaneFields, schema.EnvelopeFields, schema.Enums)
+	problems += askTheSchema(w, schema.PaneFields, schema.EnvelopeFields, schema.ResultFields,
+		schema.Enums)
 	problems += askTheManifest(w, manifest, schema.Enums)
 
 	fmt.Fprintln(w)
@@ -206,10 +207,10 @@ func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []tol
 		fmt.Fprintf(w, "\nthe wire-format recordings in internal/herdrcli/testdata are "+
 			"from %s, and re-capturing against %s is no longer the only way to see a field "+
 			"move: the fields a pane carries and the ones the envelope is read by are "+
-			"checked against this Herdr's schema above, every run. What only the recordings "+
-			"hold now is the workspace and tab fields the parsers read -- workspace_id, "+
-			"label, tab_id -- which the schema describes as WorkspaceInfo and TabInfo and "+
-			"nothing here asks about yet.\n", recorded, asked)
+			"checked against this Herdr's schema above, every run -- the pane's, the "+
+			"envelope's, and the keys and fields the parsers reach for inside a result. "+
+			"What a re-capture would still add is the one thing a schema cannot say: that "+
+			"Herdr SENDS what it declares.\n", recorded, asked)
 	}
 	return 0
 }
@@ -402,7 +403,7 @@ func accepts(schema herdrSchema, help, flag, value string) bool {
 // A field the schema no longer declares is a PROBLEM and not a note. Unlike the
 // version numbers above, this is drift proven: the parser reads a name that the
 // Herdr installed here says nothing about.
-func askTheSchema(w io.Writer, declared, envelope map[string]bool, enums map[string][]string) int {
+func askTheSchema(w io.Writer, declared, envelope, results map[string]bool, enums map[string][]string) int {
 	if declared == nil {
 		fmt.Fprintf(w, "\n%-24s the schema could not be read, so the fields the "+
 			"parsers depend on were not checked\n", "api schema")
@@ -437,6 +438,27 @@ func askTheSchema(w io.Writer, declared, envelope map[string]bool, enums map[str
 		if len(gone) > 0 {
 			fmt.Fprintf(w, "\n%-24s does not declare %s on the response envelope, and the "+
 				"parsers read them\n", "api schema", strings.Join(gone, ", "))
+			return len(gone)
+		}
+	}
+	// And the inside of the answer: the key each parser reaches through, and
+	// the fields it reads once there. A wrapper renamed at the far end does
+	// not fail a parse -- ParseWorkspaceList would find no "workspaces" field
+	// and say the reply was one it cannot read, which is how a machine's own
+	// space comes to look missing, and a missing space is what makes this
+	// plugin create one with a terminal in it on somebody's machine.
+	//
+	// Nil is "not checked" rather than "nothing is missing", as above.
+	if results != nil {
+		gone := []string{}
+		for _, field := range resultJSONFields() {
+			if !results[field] {
+				gone = append(gone, field)
+			}
+		}
+		if len(gone) > 0 {
+			fmt.Fprintf(w, "\n%-24s does not declare %s, and the parsers reach for them\n",
+				"api schema", strings.Join(gone, ", "))
 			return len(gone)
 		}
 	}
@@ -484,10 +506,10 @@ func askTheSchema(w io.Writer, declared, envelope map[string]bool, enums map[str
 		return len(unnamed)
 	}
 
-	fmt.Fprintf(w, "\n%-24s ok, all %d fields herdrcli.Pane reads are declared and all %d "+
-		"the envelope is read by, every flag with an enum has one, and every status Herdr "+
-		"reports has a name\n",
-		"api schema", len(paneJSONFields()), len(envelopeJSONFields()))
+	fmt.Fprintf(w, "\n%-24s ok, all %d fields herdrcli.Pane reads are declared, all %d the "+
+		"envelope is read by and all %d the parsers reach for inside a result, every flag "+
+		"with an enum has one, and every status Herdr reports has a name\n",
+		"api schema", len(paneJSONFields()), len(envelopeJSONFields()), len(resultJSONFields()))
 	return 0
 }
 
@@ -513,6 +535,7 @@ func paneJSONFields() []string {
 type herdrSchema struct {
 	PaneFields     map[string]bool
 	EnvelopeFields map[string]bool
+	ResultFields   map[string]bool
 	Enums          map[string][]string
 }
 
@@ -521,6 +544,7 @@ func askHerdrSchema(bin string) herdrSchema {
 	return herdrSchema{
 		PaneFields:     paneSchemaFields(bin),
 		EnvelopeFields: envelopeSchemaFields(bin),
+		ResultFields:   resultSchemaFields(bin),
 		Enums:          schemaEnums(bin),
 	}
 }
@@ -566,6 +590,94 @@ func schemaEnums(bin string) map[string][]string {
 		walk(child, key)
 	}
 	return found
+}
+
+// resultSchemaFields is what the installed Herdr declares about the result
+// bodies this plugin unwraps, addressed as "<result type>.<field>" and
+// "<object>.<field>".
+//
+// The envelope was the outside of the answer; this is the inside. Herdr
+// describes every result as one variant of ResponseResult, each tagged by a
+// `type` const, and the objects they carry as named definitions -- so the key
+// a parser reaches through (workspaces, workspace, tab, root_pane, panes,
+// plugin_pane) and the fields it then reads (workspace_id, label, tab_id) are
+// both declared, and neither was being asked about. They were left to the
+// RECORDINGS, which are a capture of one version.
+func resultSchemaFields(bin string) map[string]bool {
+	out, err := exec.Command(bin, "api", "schema", "--json").Output()
+	if err != nil {
+		return nil
+	}
+	var doc struct {
+		Schemas struct {
+			Success struct {
+				Defs struct {
+					Result struct {
+						OneOf []struct {
+							Properties map[string]struct {
+								Const string `json:"const"`
+							} `json:"properties"`
+						} `json:"oneOf"`
+					} `json:"ResponseResult"`
+					Workspace struct {
+						Properties map[string]json.RawMessage `json:"properties"`
+					} `json:"WorkspaceInfo"`
+					Tab struct {
+						Properties map[string]json.RawMessage `json:"properties"`
+					} `json:"TabInfo"`
+				} `json:"$defs"`
+			} `json:"success_response"`
+		} `json:"schemas"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		return nil
+	}
+	found := map[string]bool{}
+	for _, variant := range doc.Schemas.Success.Defs.Result.OneOf {
+		// The variant names itself in the const of its "type" property; the
+		// rest of its properties are what a result of that kind carries.
+		kind := variant.Properties["type"].Const
+		if kind == "" {
+			continue
+		}
+		for name := range variant.Properties {
+			if name != "type" {
+				found[kind+"."+name] = true
+			}
+		}
+	}
+	for name := range doc.Schemas.Success.Defs.Workspace.Properties {
+		found["WorkspaceInfo."+name] = true
+	}
+	for name := range doc.Schemas.Success.Defs.Tab.Properties {
+		found["TabInfo."+name] = true
+	}
+	return found
+}
+
+// resultJSONFields is what this plugin reaches for inside a result.
+//
+// The wrapper keys are addresses rather than a copy of anything: a parser
+// reaches through them by name and this is the checker saying which. The
+// fields of a workspace come off herdrcli.Workspace, so one added there is
+// checked without anybody remembering to add it here.
+func resultJSONFields() []string {
+	fields := []string{
+		"pane_list.panes",
+		"workspace_list.workspaces",
+		"workspace_created.workspace", "workspace_created.tab", "workspace_created.root_pane",
+		"tab_created.tab", "tab_created.root_pane",
+		"plugin_pane_opened.plugin_pane",
+		"TabInfo.tab_id",
+	}
+	t := reflect.TypeOf(herdrcli.Workspace{})
+	for i := 0; i < t.NumField(); i++ {
+		if tag := strings.Split(t.Field(i).Tag.Get("json"), ",")[0]; tag != "" && tag != "-" {
+			fields = append(fields, "WorkspaceInfo."+tag)
+		}
+	}
+	sort.Strings(fields)
+	return fields
 }
 
 // envelopeSchemaFields is what the installed Herdr declares about the envelope

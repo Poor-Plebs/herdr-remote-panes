@@ -286,13 +286,12 @@ func TestARunSaysWhenTheRecordingsAreDueARefresh(t *testing.T) {
 		t.Errorf("the report does not name the Herdr it asked (%q), so a reader cannot "+
 			"tell what the recordings are stale against:\n%s", theAskedVersion, out)
 	}
-	// And what is genuinely left to them, which is the actionable half.
-	for _, name := range []string{"workspace_id", "tab_id"} {
-		if !strings.Contains(out, name) {
-			t.Errorf("the note does not say %q is still held only by the recordings:\n%s",
-				name, out)
-		}
-	}
+	// NOT the list of what is still held only by the recordings. That was
+	// asserted here for one hour and broke the moment the schema check grew to
+	// cover the workspace and tab fields it named -- which is the whole point
+	// of the note shrinking, so the test was pinning the thing designed to
+	// move. What identifies this note across every version of it is that it
+	// names the two Herdrs, so a reader can see what is stale against what.
 }
 
 // TestRecordingsMatchingTheHerdrAskedAreNotMentioned is the other half: a
@@ -369,11 +368,72 @@ func everyEnvelopeField() map[string]bool {
 	return declared
 }
 
+// everyResultField is a schema that declares the whole inside of an answer.
+//
+// Built from what the parsers reach for, like everyPaneField and
+// everyEnvelopeField: a hand-written fixture would be a second copy of the
+// same list and the check would pass against whichever was wrong.
+func everyResultField() map[string]bool {
+	declared := map[string]bool{}
+	for _, f := range resultJSONFields() {
+		declared[f] = true
+	}
+	return declared
+}
+
 func aSchemaThatDeclaresEverything() herdrSchema {
 	return herdrSchema{
 		PaneFields:     everyPaneField(),
 		EnvelopeFields: everyEnvelopeField(),
+		ResultFields:   everyResultField(),
 		Enums:          theEnums(),
+	}
+}
+
+// TestAResultKeyTheSchemaDropsIsDrift holds the inside of the answer.
+//
+// A wrapper renamed at the far end does not fail a parse: ParseWorkspaceList
+// would find no "workspaces" field and report a reply it cannot read, which
+// reads here as this machine having no workspace -- and a missing workspace is
+// what makes the plugin create one, with a terminal in it, on somebody's
+// machine. That is why the key is worth holding and not only the fields under
+// it.
+func TestAResultKeyTheSchemaDropsIsDrift(t *testing.T) {
+	for _, gone := range []string{"workspace_list.workspaces", "WorkspaceInfo.workspace_id"} {
+		t.Run(gone, func(t *testing.T) {
+			short := everyResultField()
+			delete(short, gone)
+
+			var out strings.Builder
+			code := report(&out, answering(everything()),
+				[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+				nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+				herdrSchema{
+					PaneFields:     everyPaneField(),
+					EnvelopeFields: everyEnvelopeField(),
+					ResultFields:   short,
+					Enums:          theEnums(),
+				}, theManifest())
+
+			if code == 0 {
+				t.Errorf("a schema that no longer declares %s passed:\n%s", gone, out.String())
+			}
+			if !strings.Contains(out.String(), gone) {
+				t.Errorf("the report does not name what went:\n%s", out.String())
+			}
+		})
+	}
+
+	// The control: declaring the lot says nothing about results at all.
+	var fine strings.Builder
+	if code := report(&fine, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		aSchemaThatDeclaresEverything(), theManifest()); code != 0 {
+		t.Errorf("a schema declaring every result field exited %d:\n%s", code, fine.String())
+	}
+	if strings.Contains(fine.String(), "the parsers reach for them") {
+		t.Errorf("a complete schema was reported as drift:\n%s", fine.String())
 	}
 }
 
