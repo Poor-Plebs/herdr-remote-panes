@@ -236,8 +236,9 @@ machine can make this write: a failure reason on disk, and an agent's name.
 An unheld bound is something to read rather than a failure, since some are not
 observable at all — the size of a ring buffer changes nothing a test can see.
 
-`make herdr` asks the installed Herdr, one `--help` at a time, whether every
-command, flag and restricted value this plugin sends is still one it takes.
+`make herdr` asks the installed Herdr whether every command, flag and
+restricted value this plugin sends is still one it takes: its bundled schema
+where there is one, and `--help` for the rest.
 Nothing that builds checks any of that: a renamed flag, or a value Herdr
 stopped accepting, compiles perfectly and fails at the far end, one action at a
 time. The stand-in the tests run against cannot catch it either, being written
@@ -252,7 +253,8 @@ Herdr on the machine and CI has none, and a check that cannot run everywhere is
 one people learn to ignore where it can. What it reads is
 `internal/herdrcli.Dependencies`, and a test in that package holds the list to
 the code, so what is asked about cannot fall behind what is sent. It only ever
-asks for `--help`, because a checker that opened a pane to find out would be
+asks: `--version`, `api schema --json`, and `<command> --help`. Nothing it runs
+changes anything, because a checker that opened a pane to find out would be
 worse than the drift it looks for.
 
 It reads the pages as well. They send a reader to Herdr commands this plugin
