@@ -679,7 +679,15 @@ func TestABuildThatFailedSaysWhatTheCompilerSaid(t *testing.T) {
 
 	run := exec.Command(bin, "./pkg")
 	run.Dir = work
-	run.Env = append(os.Environ(), "TMPDIR="+t.TempDir())
+	// The stand-in ceiling, as sweptRun does and for the same reason: this
+	// tool refuses to start where `systemd-run --user` cannot impose a memory
+	// ceiling, which is two of the three CI jobs. Without it the command exits
+	// 2 having looked at nothing, and the test reports that as a failure of
+	// the thing it is about -- which it did, on macOS, the first time this ran
+	// anywhere but here.
+	run.Env = append(os.Environ(),
+		"TMPDIR="+t.TempDir(),
+		"PATH="+standInCeiling(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("running the command: %v\n%s", err, out)
