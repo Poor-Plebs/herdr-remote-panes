@@ -137,13 +137,6 @@ internal/capped/capped.go	> -> >=	if room := Max - c.Buf.Len(); room > 0 {	Write
 # naming either of two equally slow machines is the same answer
 internal/syncd/daemon.go	> -> >=	if machine.took > slowestTook {	reconcileOnce
 
-# findRemoteWorkspace runs only while the space is unknown, and what it finds
-# is remembered -- so this line is reached once per connect and the flag it
-# reads is false every time it gets there. Both spellings say it once. They
-# part only if the space is lost and found again in one connection, which is
-# forgetWorkspace followed by a rediscovery, and the flag is there for that.
-internal/syncd/daemon.go	! -> 	if chosen.Label != label && !state.borrowedRemoteSpace {
-
 # Reached from invocationsIn only, and only once it has checked that rest
 # begins with a space or a tab -- neither of which is in that set, so the
 # delimiter is never at offset nought and the two spellings cannot disagree.

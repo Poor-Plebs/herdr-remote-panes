@@ -46,6 +46,7 @@
 ./internal/sshconfig (since v0.4.6)	2026-08-31	5	5	0	0
 ./internal/syncd	2026-08-28	350	318	32	0
 ./internal/syncd (ask.go)	2026-09-10	4	4	0	0	0	0
+./internal/syncd (daemon.go)	2026-09-10	272	245	24	3	0	1
 ./internal/syncd (daemon.go, since 1c47ae4)	2026-08-28	5	5	0	0
 ./internal/syncd (plan.go)	2026-09-09	78	74	4	0	0	0
 ./internal/syncd (since 30daff2)	2026-08-29	3	1	2	0
