@@ -116,10 +116,32 @@ func main() {
 		}
 	}
 
-	muts, skipped, untouched, err := mutationsIn(work, pkg, only, covered, changed)
+	muts, skipped, untouched, unknown, err := mutationsIn(work, pkg, only, covered, changed)
 	check(err)
+	if len(unknown) > 0 {
+		// A name this package does not have is a mistyped command rather than
+		// an answer about the code, and the two used to share one sentence:
+		// "has no covered lines, or no file of that name" offers a fact about
+		// the tests as an explanation for a file that is not there. The
+		// likeliest cause is the SPELLING, since the match is on the bare file
+		// name -- `./ask.go` and `internal/syncd/ask.go` both miss a file the
+		// package has -- so what it does have is printed beside the complaint
+		// and the reader can see the difference rather than infer it.
+		//
+		// Said and not exited on: this is a finder, it prints what it found
+		// and leaves the status to mean the run itself, and a name that
+		// matched nothing is still worth saying when the other names matched
+		// something.
+		fmt.Printf("%s has no file called %s. It has: %s\n",
+			pkg, strings.Join(unknown, ", "), strings.Join(shippingNames(untouched, muts), ", "))
+	}
 	if len(muts) == 0 {
-		fmt.Println(nothingToMutate(pkg, since, os.Args[2:], len(covered), skipped))
+		if len(unknown) == 0 {
+			// Only where every name asked for is a file the package has;
+			// otherwise the line above is the answer and this one would offer
+			// a second, vaguer account of the same thing.
+			fmt.Println(nothingToMutate(pkg, since, os.Args[2:], len(covered), skipped))
+		}
 		if since == "" && len(only) == 0 {
 			// Written down anyway, because a sweep that found nothing is
 			// still a sweep and this is the silence the record exists to
@@ -131,10 +153,9 @@ func main() {
 			//
 			// Only where the whole package was swept. A restricted run that
 			// found nothing says nothing about the package, which is what
-			// this file is read for -- and where files were named, nothing
-			// here can tell a file with no covered lines from a name
-			// matching no file, so a row for it could record a sweep of
-			// something that is not there.
+			// this file is read for. A name matching no file is told apart
+			// now and answered on its own line, so that is no longer the
+			// reason; what remains is the first one, and it is enough.
 			recordSweep(sweptPath, pkg, since, os.Args[2:], sweepCounts{})
 		}
 		return
@@ -345,21 +366,28 @@ func verdictFor(out []byte, err error) string {
 }
 
 // mutationsIn lists what can be changed in a package's own files.
-func mutationsIn(work, pkg string, only map[string]bool, covered map[string]map[int]bool, changed map[string]map[int]bool) ([]mutation, int, []string, error) {
+func mutationsIn(work, pkg string, only map[string]bool, covered map[string]map[int]bool, changed map[string]map[int]bool) ([]mutation, int, []string, []string, error) {
 	dir := filepath.Join(work, filepath.Clean(strings.TrimPrefix(pkg, "./")))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, 0, nil, nil, err
 	}
 
 	var out []mutation
 	var untouched []string
+	// Which of the names asked for the package actually has. A name matching
+	// nothing is a different answer from a file with no covered lines, and
+	// they used to share a sentence: `FILES=./ask.go` names a real file this
+	// package has, spelled with a prefix the match never sees, and was told
+	// its file might have no covered lines.
+	present := map[string]bool{}
 	skipped := 0
 	for _, entry := range entries {
 		name := entry.Name()
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
+		present[name] = true
 		if len(only) > 0 && !only[name] {
 			// Named but not asked for. Reported at the end, because sweeping a
 			// package file by file is how a package comes to be called swept
@@ -371,11 +399,11 @@ func mutationsIn(work, pkg string, only map[string]bool, covered map[string]map[
 		}
 		rel, err := filepath.Rel(work, filepath.Join(dir, name))
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, 0, nil, nil, err
 		}
 		found, err := mutationsInFile(filepath.Join(dir, name), rel)
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, 0, nil, nil, err
 		}
 		for _, m := range found {
 			// The line the mutation is on, not the line coverage counts it
@@ -399,7 +427,14 @@ func mutationsIn(work, pkg string, only map[string]bool, covered map[string]map[
 		return out[i].offset < out[j].offset
 	})
 	sort.Strings(untouched)
-	return out, skipped, untouched, nil
+	var unknown []string
+	for name := range only {
+		if !present[name] {
+			unknown = append(unknown, name)
+		}
+	}
+	sort.Strings(unknown)
+	return out, skipped, untouched, unknown, nil
 }
 
 // mutationsInFile parses rather than matching text: a "&&" inside a string
@@ -734,6 +769,25 @@ func wasRead(read map[string]string, m mutation) bool {
 	return here
 }
 
+// shippingNames is every file of the package this run could have mutated,
+// gathered from the two lists that already know: the ones passed over because
+// they were not asked for, and the ones the mutations came from.
+func shippingNames(untouched []string, muts []mutation) []string {
+	seen := map[string]bool{}
+	for _, name := range untouched {
+		seen[name] = true
+	}
+	for _, m := range muts {
+		seen[filepath.Base(m.file)] = true
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // nothingToMutate says WHICH nothing a run found, for a sweep that had no
 // mutation to try.
 //
@@ -761,7 +815,12 @@ func nothingToMutate(pkg, since string, named []string, covered, skipped int) st
 		return fmt.Sprintf("nothing to mutate: no covered lines in %s have changed since %s",
 			pkg, since)
 	case len(named) > 0:
-		return fmt.Sprintf("nothing to mutate: %s has no covered lines, or no file of that name",
+		// Reached only where every name asked for is a file this package has:
+		// a name matching nothing is answered before this, by its own line.
+		// It used to end "or no file of that name", which made a fact about
+		// the tests and a mistyped argument one sentence with no way to tell
+		// which had happened.
+		return fmt.Sprintf("nothing to mutate: no covered lines in %s",
 			strings.Join(named, ", "))
 	case covered == 0:
 		return "nothing to mutate: no covered lines in that package"

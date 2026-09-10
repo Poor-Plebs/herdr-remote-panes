@@ -630,7 +630,7 @@ func TestASweepSaysWhichFilesItDidNotLookAt(t *testing.T) {
 		}
 	}
 
-	_, _, untouched, err := mutationsIn(work, "./internal/thing",
+	_, _, untouched, _, err := mutationsIn(work, "./internal/thing",
 		map[string]bool{"one.go": true}, map[string]map[int]bool{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -643,7 +643,7 @@ func TestASweepSaysWhichFilesItDidNotLookAt(t *testing.T) {
 
 	// A whole-package sweep leaves nothing, and saying so on every run would
 	// be noise on the runs that need none.
-	_, _, untouched, err = mutationsIn(work, "./internal/thing", nil, map[string]map[int]bool{}, nil)
+	_, _, untouched, _, err = mutationsIn(work, "./internal/thing", nil, map[string]map[int]bool{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -677,7 +677,7 @@ func TestASweepCanBeRestrictedToWhatChanged(t *testing.T) {
 		"internal/thing/one.go": {3: true, 4: true, 5: true},
 	}
 
-	all, _, _, err := mutationsIn(work, "./internal/thing", nil, covered, nil)
+	all, _, _, _, err := mutationsIn(work, "./internal/thing", nil, covered, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -687,7 +687,7 @@ func TestASweepCanBeRestrictedToWhatChanged(t *testing.T) {
 
 	// Only the line that changed.
 	changed := map[string]map[int]bool{"internal/thing/one.go": {4: true}}
-	some, skipped, _, err := mutationsIn(work, "./internal/thing", nil, covered, changed)
+	some, skipped, _, _, err := mutationsIn(work, "./internal/thing", nil, covered, changed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -705,7 +705,7 @@ func TestASweepCanBeRestrictedToWhatChanged(t *testing.T) {
 	// everything: getting this backwards sweeps the whole tree while saying it
 	// is sweeping what changed.
 	none := map[string]map[int]bool{"internal/thing/other.go": {1: true}}
-	empty, _, _, err := mutationsIn(work, "./internal/thing", nil, covered, none)
+	empty, _, _, _, err := mutationsIn(work, "./internal/thing", nil, covered, none)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -991,7 +991,7 @@ func TestTheReportIsGroupedByFileAndInOrder(t *testing.T) {
 		"internal/thing/alpha.go": {3: true, 4: true, 5: true},
 	}
 
-	muts, _, _, err := mutationsIn(work, "./internal/thing", nil, covered, nil)
+	muts, _, _, _, err := mutationsIn(work, "./internal/thing", nil, covered, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1651,7 +1651,7 @@ func TestASweepThatFoundNothingSaysWhichNothing(t *testing.T) {
 		},
 		{
 			"the files named hold nothing to try", "", []string{"one.go", "two.go"}, 3, 7,
-			"nothing to mutate: one.go, two.go has no covered lines, or no file of that name",
+			"nothing to mutate: no covered lines in one.go, two.go",
 		},
 		{
 			"no test ran a line of it", "", nil, 0, 7,
@@ -2211,5 +2211,83 @@ func TestARecordedRowIsReplacedHoweverThePackageWasSpelled(t *testing.T) {
 		if strings.Contains(row, "2026-09-06") {
 			t.Errorf("the superseded row survived the re-sweep: %q", row)
 		}
+	}
+}
+
+// TestANameThePackageDoesNotHaveIsSaidPlainly separates a mistyped argument
+// from a fact about the tests.
+//
+// "nothing to mutate: x.go has no covered lines, or no file of that name" is
+// two answers in one sentence, and the reader cannot tell which they got. They
+// are not close: one is a fact about the package, and the other means the
+// command was wrong and nothing was looked at. The likeliest cause of the
+// second is the SPELLING, because the match is on the bare file name -- so
+// `./probe.go` misses a file the package has, and the old sentence offered "no
+// covered lines" as a possible explanation for a file sitting right there.
+func TestANameThePackageDoesNotHaveIsSaidPlainly(t *testing.T) {
+	bin := buildCommand(t)
+
+	work := t.TempDir()
+	for _, dir := range []string{"pkg", filepath.Join("tools", "mutants")} {
+		if err := os.MkdirAll(filepath.Join(work, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, body := range map[string]string{
+		"go.mod":       "module probe\n\ngo 1.25\n",
+		"pkg/probe.go": "package probe\n\nfunc Held(n int) bool { return n > 3 }\n",
+		"pkg/probe_test.go": "package probe\n\nimport \"testing\"\n\n" +
+			"func TestHeld(t *testing.T) {\n" +
+			"\tif Held(4) != true || Held(3) != false {\n\t\tt.Fatal(\"boundary\")\n\t}\n}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	say := func(t *testing.T, args ...string) string {
+		t.Helper()
+		run := exec.Command(bin, args...)
+		run.Dir = work
+		run.Env = append(os.Environ(), "TMPDIR="+t.TempDir())
+		out, err := run.CombinedOutput()
+		if err != nil {
+			t.Fatalf("running the command: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+
+	for _, c := range []struct{ what, named string }{
+		{"a name nothing in the package matches", "nosuch.go"},
+		// The one that reads as an answer about the code and is not: a real
+		// file, spelled the way a path would be.
+		{"a real file spelled with a prefix", "./probe.go"},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			said := say(t, "./pkg", c.named)
+			if !strings.Contains(said, "has no file called "+c.named) {
+				t.Errorf("the run did not say the name was not there: %q", said)
+			}
+			// And what it does have, which is what makes a misspelling
+			// visible rather than something to work out.
+			if !strings.Contains(said, "probe.go") {
+				t.Errorf("the run did not say which files the package has: %q", said)
+			}
+			if strings.Contains(said, "no covered lines") {
+				t.Errorf("a name that matched nothing was offered a fact about "+
+					"coverage as an explanation: %q", said)
+			}
+		})
+	}
+
+	// The control: a file the package really has is swept, and none of the
+	// above is said about it. Without this the check passes against a command
+	// that complains whatever it is given.
+	said := say(t, "./pkg", "probe.go")
+	if strings.Contains(said, "has no file called") {
+		t.Errorf("a file the package has was reported as missing: %q", said)
+	}
+	if !strings.Contains(said, "mutations") {
+		t.Errorf("the named file was not swept at all: %q", said)
 	}
 }
