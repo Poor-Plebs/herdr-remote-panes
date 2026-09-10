@@ -19,3 +19,11 @@
 
 # Working notes, kept locally rather than published.
 /notes/
+
+# The release notes, which docs/development.md has you write here and hand to
+# `git tag -F` and `gh release create --notes-file`. Nothing in that procedure
+# removes it, so it sits in the root untracked -- at the one moment this
+# repository has already lost that argument twice, the entries above being what
+# is left of it. `/notes/` does not cover it: these patterns are root-anchored
+# and that one is a directory.
+/notes.md
