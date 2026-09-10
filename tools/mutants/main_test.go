@@ -1947,6 +1947,11 @@ func overtakenPackages(rows []string) []string {
 		}
 		what, date := fields[0], fields[1]
 		pkg, annotation, restricted := strings.Cut(what, " (")
+		// Keyed on the canonical spelling, or a trailing slash hides a stale
+		// row from this: the record holds `./internal/mirror/ (mirror.go)`
+		// beside rows for `./internal/mirror`, and comparing them as typed
+		// reads one package as two and finds nothing to complain about.
+		pkg = canonicalPkg(pkg)
 		switch {
 		case !restricted:
 			whole[pkg] = row{date}
@@ -2013,6 +2018,16 @@ func TestNoPackageRowIsOvertakenByItsOwnFiles(t *testing.T) {
 			nil,
 		},
 		{
+			// The blind spot this check had when it was written: one package,
+			// two spellings, and the stale row invisible behind the slash.
+			"a package row overtaken by a file row spelled with a trailing slash",
+			[]string{
+				"./internal/mirror\t2026-08-28\t134\t123\t11\t0",
+				"./internal/mirror/ (mirror.go)\t2026-09-06\t58\t53\t2\t0",
+			},
+			[]string{"./internal/mirror"},
+		},
+		{
 			"a file row that also names a revision still counts as a file row",
 			[]string{
 				"./internal/syncd\t2026-08-28\t350\t318\t32\t0",
@@ -2041,5 +2056,111 @@ func TestNoPackageRowIsOvertakenByItsOwnFiles(t *testing.T) {
 			"files, so the first line a reader finds for them is the stale one: %v. "+
 			"Either re-sweep the package whole, or drop the row the file rows have "+
 			"replaced", got)
+	}
+}
+
+// TestOnePackageHasOneSpelling holds the name the record is keyed on.
+func TestOnePackageHasOneSpelling(t *testing.T) {
+	for _, c := range []struct{ typed, want string }{
+		{"./internal/mirror", "./internal/mirror"},
+		// What shell completion supplies, and what put a second row for one
+		// package into the checked-in record.
+		{"./internal/mirror/", "./internal/mirror"},
+		{"internal/mirror", "./internal/mirror"},
+		{"./internal/mirror/.", "./internal/mirror"},
+		// The root package is spelled "." and must not become "./.".
+		{".", "."},
+		{"./", "."},
+	} {
+		if got := canonicalPkg(c.typed); got != c.want {
+			t.Errorf("canonicalPkg(%q) = %q, want %q", c.typed, got, c.want)
+		}
+	}
+}
+
+// filesNamedFor is the union of files the record's file rows name for a
+// package, and whether that package also has a whole-package row.
+func filesNamedFor(rows []string, pkg string) (named map[string]bool, whole bool) {
+	named = map[string]bool{}
+	for _, line := range rows {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 || strings.HasPrefix(line, "#") {
+			continue
+		}
+		what, annotation, restricted := strings.Cut(fields[0], " (")
+		if canonicalPkg(what) != pkg {
+			continue
+		}
+		if !restricted {
+			whole = true
+			continue
+		}
+		for _, word := range strings.FieldsFunc(annotation, func(r rune) bool {
+			return r == ' ' || r == ',' || r == ')'
+		}) {
+			if strings.HasSuffix(word, ".go") {
+				named[word] = true
+			}
+		}
+	}
+	return named, whole
+}
+
+// TestAPackageAnsweredForOnlyByItsFilesNamesThemAll closes what dropping a
+// whole-package row opened.
+//
+// A package swept file by file can have its whole-package row removed once the
+// file rows cover it -- that is what happened to internal/syncd, whose row was
+// older than the files that replaced it. The coverage is the whole of the
+// argument for removing it, and nothing held the coverage: add a fifth file to
+// such a package and the record answers for the four it knew about, in rows
+// that all look current.
+func TestAPackageAnsweredForOnlyByItsFilesNamesThemAll(t *testing.T) {
+	raw, err := os.ReadFile("swept.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Split(strings.TrimPrefix(string(raw), sweptHeader), "\n")
+
+	pkgs := map[string]bool{}
+	for _, line := range rows {
+		if fields := strings.Split(line, "\t"); len(fields) >= 2 && !strings.HasPrefix(line, "#") {
+			what, _, _ := strings.Cut(fields[0], " (")
+			pkgs[canonicalPkg(what)] = true
+		}
+	}
+	if len(pkgs) < 5 {
+		t.Fatalf("only %d packages read from the record, so this looks at almost nothing", len(pkgs))
+	}
+
+	checked := 0
+	for pkg := range pkgs {
+		named, whole := filesNamedFor(rows, pkg)
+		if whole || len(named) == 0 {
+			continue // answered for as a whole, or not by files at all
+		}
+		checked++
+		dir := filepath.Join("..", "..", strings.TrimPrefix(pkg, "./"))
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("reading %s: %v", dir, err)
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			if !named[name] {
+				t.Errorf("%s is answered for only by file rows, and %s is named by "+
+					"none of them, so nothing in the record says it was ever swept",
+					pkg, name)
+			}
+		}
+	}
+	// Without this the loop above passes by finding nothing to check, which is
+	// what it would do if the parsing broke or every package regained a
+	// whole-package row.
+	if checked == 0 {
+		t.Error("no package is answered for only by its files, so this held nothing")
 	}
 }

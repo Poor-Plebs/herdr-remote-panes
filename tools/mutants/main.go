@@ -75,7 +75,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: go run ./tools/mutants <package> [file.go ...]")
 		os.Exit(2)
 	}
-	pkg := os.Args[1]
+	pkg := canonicalPkg(os.Args[1])
 	only := map[string]bool{}
 	for _, name := range os.Args[2:] {
 		only[name] = true
@@ -822,6 +822,26 @@ const sweptHeader = "# What has been swept, and when. One line per package or\n"
 	"# Re-sweep before reading one closely.\n" +
 	"#\n" +
 	"# package\tswept\tmutations\tcaught\tsurvived\thung\tno-build\tunexplained\n"
+
+// canonicalPkg is the one spelling of a package name this tool uses.
+//
+// The argument arrives however somebody typed it -- `./internal/mirror` and
+// `./internal/mirror/` are the same package to `go test` and to a person, and
+// shell completion supplies the trailing slash. It was already being cleaned
+// for the directory to copy and half-cleaned for the survivors file name,
+// while the RECORD kept it exactly as typed: swept.tsv holds a row for
+// `./internal/mirror/ (mirror.go)` beside rows for `./internal/mirror`, and
+// anything keyed on the package name reads those as two packages. That is the
+// spelling that outlives the run, so it is the one that had to be decided
+// once rather than three times.
+func canonicalPkg(pkg string) string {
+	cleaned := filepath.Clean(pkg)
+	if cleaned == "." {
+		// The root package, which is spelled "." and not "./.".
+		return cleaned
+	}
+	return "./" + strings.TrimPrefix(cleaned, "./")
+}
 
 // recordSweep writes down that this package was looked at.
 //
