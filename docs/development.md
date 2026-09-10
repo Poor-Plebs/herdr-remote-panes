@@ -218,10 +218,16 @@ go test -run XXX -fuzz FuzzDecodeFrame -fuzztime 40s ./internal/mirror/
 ```
 
 `make bounds` raises every `max*` constant in the tree a thousandfold in turn
-and runs that package's own tests. A bound whose loss nothing notices is a
-bound with no test behind it — and the reason to look for those mechanically is
-that they do not look like gaps. Four were found the first time it ran, and
-every one of them had a test that read as though it held the bound:
+and runs that package's own tests. A run that is STOPPED rather than finished
+is asked once more, at double: where a test sizes its own inputs from the
+constant, a thousandfold outruns the deadline every time, and without a second
+and gentler question that whole class comes back as `timed out` — which is an
+answer about the budget and not about the bound.
+
+A bound whose loss nothing notices is a bound with no test behind it — and the
+reason to look for those mechanically is that they do not look like gaps. Four
+were found the first time it ran, and every one of them had a test that read as
+though it held the bound:
 
 ```go
 if n := len([]rune(long.SafeAgent())); n > maxAgentName {
