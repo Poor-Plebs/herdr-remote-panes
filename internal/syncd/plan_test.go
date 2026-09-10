@@ -1348,9 +1348,17 @@ func TestConfigWarningSaysWhichProblemItIs(t *testing.T) {
 		t.Errorf("a good config warned: %q", got)
 	}
 
-	// Several at once. The menu wraps this to two lines and turns the rest
-	// into an ellipsis, so without a count somebody reads one problem and
-	// cannot tell there are others waiting behind it.
+	// Several at once. EVERY one of them has to be in it, because the only
+	// reader of this warning is `status`, which prints it whole.
+	//
+	// This used to assert a leading count and the words "`status` lists
+	// them", and the reason written here was that the menu wraps the warning
+	// to two lines and ellipsises the rest. The menu does not read this
+	// warning at all -- it works the same problems out from its own read of
+	// the file and drops this one, saying so where it does it -- so both were
+	// held on behalf of somebody who never sees them, and what the real reader
+	// got was `status` telling them to run `status`.
+	//
 	// From the defaults rather than a bare literal, which would leave every
 	// other setting empty and complaining about that instead.
 	cfg := config.Defaults()
@@ -1359,16 +1367,15 @@ func TestConfigWarningSaysWhichProblemItIs(t *testing.T) {
 	cfg.Hosts = []config.Host{{Target: "bot", Placement: "sideways"}}
 	several := withConfig(&Daemon{}, cfg)
 	got = several.configWarning()
-	if !strings.Contains(got, "3 problems") {
-		t.Errorf("warning = %q, want it to say how many there are", got)
+	for _, want := range []string{"shh", "sideways", "poll_interval"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("warning = %q, want every problem in it, including %q", got, want)
+		}
 	}
-	if !strings.Contains(got, "status") {
-		t.Errorf("warning = %q, want it to say where the rest can be read", got)
-	}
-	// The first one is still there in full: a count with nothing to act on is
-	// worse than the one problem it replaced.
-	if !strings.Contains(got, "shh") {
-		t.Errorf("warning = %q, want the first problem still spelled out", got)
+	// And no advice to run the command that is printing this. The reader of
+	// this sentence is already looking at the list.
+	if strings.Contains(got, "`status`") {
+		t.Errorf("warning = %q, and its only reader is `status` itself", got)
 	}
 
 	// And one problem is not counted at all. "1 problems" is wrong twice over

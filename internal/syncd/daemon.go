@@ -1372,14 +1372,19 @@ func (d *Daemon) configWarning() string {
 			"by name: %v", d.configErr)
 	}
 	if problems := d.config().Problems(); len(problems) > 0 {
-		// The count first, because this is drawn in a menu that has machines
-		// to show as well: the warning is wrapped to two lines and the rest
-		// becomes an ellipsis, so somebody with three problems reads one of
-		// them and cannot tell there are others. `status` prints the lot.
-		if len(problems) > 1 {
-			return fmt.Sprintf("check the plugin config, %d problems (`status` lists them): %s",
-				len(problems), strings.Join(problems, "; "))
-		}
+		// Every one of them, plainly. This warning has exactly ONE reader --
+		// `status`, which prints it whole -- because the menu works the same
+		// problems out for itself from its own read of the file and drops this
+		// one deliberately, saying so where it does it.
+		//
+		// It used to lead with a count and add "(`status` lists them)", and
+		// both were written for the menu: the count so that a warning cut to
+		// two lines still said how many were behind the ellipsis, and the
+		// pointer so the reader knew where to see them. The menu stopped
+		// reading this and the sentence did not notice. What was left was
+		// `status` telling somebody to run `status` -- measured, not guessed
+		// -- which reads like a bug in a command that is already showing them
+		// the list.
 		return "check the plugin config: " + strings.Join(problems, "; ")
 	}
 	return ""
