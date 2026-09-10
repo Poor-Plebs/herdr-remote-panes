@@ -1923,3 +1923,123 @@ func TestTheCaretLandsOnAnOperatorThatStartsTheLine(t *testing.T) {
 			at, strings.Index(lines[0], "!"), out)
 	}
 }
+
+// overtakenPackages names packages whose whole-package row is older than a row
+// for one of that package's own files.
+//
+// Sweeping a package a file at a time is how a big one gets answered for
+// inside an hour, and it leaves the older whole-package row sitting above the
+// file rows saying something that is no longer true. Nothing rewrites that row
+// -- the tool only replaces the row it is writing -- so it keeps whatever
+// numbers it had, and for a row written before the hung column existed those
+// numbers count a timeout as caught. That is the form that turned out to be
+// hiding a non-answer four times over, so a reader who greps the package name
+// and reads the first line they find gets the worst version of the record.
+func overtakenPackages(rows []string) []string {
+	type row struct{ date string }
+	whole := map[string]row{}
+	newestFile := map[string]row{}
+
+	for _, line := range rows {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 || strings.HasPrefix(line, "#") {
+			continue
+		}
+		what, date := fields[0], fields[1]
+		pkg, annotation, restricted := strings.Cut(what, " (")
+		switch {
+		case !restricted:
+			whole[pkg] = row{date}
+		case strings.Contains(annotation, ".go"):
+			// A file row. Only the newest matters: an older one says nothing
+			// about whether the package row has been overtaken.
+			if cur, ok := newestFile[pkg]; !ok || date > cur.date {
+				newestFile[pkg] = row{date}
+			}
+		}
+		// A `(since ...)` row with no file in it is a partial sweep of the
+		// whole package and is deliberately not counted: it never claimed to
+		// answer for the package, so it cannot overtake the row that does.
+	}
+
+	var out []string
+	for pkg, w := range whole {
+		if f, ok := newestFile[pkg]; ok && f.date > w.date {
+			out = append(out, pkg)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestNoPackageRowIsOvertakenByItsOwnFiles holds the record against the way it
+// is actually written.
+func TestNoPackageRowIsOvertakenByItsOwnFiles(t *testing.T) {
+	for _, c := range []struct {
+		what string
+		rows []string
+		want []string
+	}{
+		{
+			"a package row older than a sweep of one of its files",
+			[]string{
+				"./internal/syncd\t2026-08-28\t350\t318\t32\t0",
+				"./internal/syncd (daemon.go)\t2026-09-10\t272\t245\t24\t3\t0\t1",
+			},
+			[]string{"./internal/syncd"},
+		},
+		{
+			"a package row newer than its file rows, which is an ordinary re-sweep",
+			[]string{
+				"./internal/syncd\t2026-09-11\t383\t352\t28\t3\t0\t0",
+				"./internal/syncd (daemon.go)\t2026-09-10\t272\t245\t24\t3\t0\t1",
+			},
+			nil,
+		},
+		{
+			"file rows with no package row above them at all",
+			[]string{"./internal/syncd (daemon.go)\t2026-09-10\t272\t245\t24\t3\t0\t1"},
+			nil,
+		},
+		{
+			// The control that keeps the file test honest: a `(since ...)` row
+			// never claimed to answer for the package, so however new it is it
+			// cannot overtake the row that did.
+			"a newer restricted-by-revision row is not a file row",
+			[]string{
+				"./internal/syncd\t2026-08-28\t350\t318\t32\t0",
+				"./internal/syncd (since v0.4.8)\t2026-09-30\t7\t6\t1\t0",
+			},
+			nil,
+		},
+		{
+			"a file row that also names a revision still counts as a file row",
+			[]string{
+				"./internal/syncd\t2026-08-28\t350\t318\t32\t0",
+				"./internal/syncd (daemon.go, since 1c47ae4)\t2026-09-10\t5\t5\t0\t0",
+			},
+			[]string{"./internal/syncd"},
+		},
+	} {
+		got := overtakenPackages(c.rows)
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%s: overtaken = %v, want %v", c.what, got, c.want)
+		}
+	}
+
+	// And the record in the repository, which is what the claim is about.
+	raw, err := os.ReadFile("swept.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Split(strings.TrimPrefix(string(raw), sweptHeader), "\n")
+	if len(rows) < 10 {
+		t.Fatalf("only %d rows read, so this is looking at almost nothing", len(rows))
+	}
+	if got := overtakenPackages(rows); len(got) > 0 {
+		t.Errorf("these package rows are older than a sweep of one of their own "+
+			"files, so the first line a reader finds for them is the stale one: %v. "+
+			"Either re-sweep the package whole, or drop the row the file rows have "+
+			"replaced", got)
+	}
+}
