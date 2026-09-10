@@ -476,30 +476,54 @@ func TestStartCommandDetachesAndCleansItsEnvironment(t *testing.T) {
 	}
 
 	// It really did start, and detached rather than dying with its parent.
-	var raw []byte
-	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-		if raw, _ = os.ReadFile(record); len(raw) > 0 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	got := string(raw)
-	if got == "" {
-		t.Fatal("the server was never started")
-	}
-
-	for _, want := range []string{
+	want := []string{
 		"args=server",
 		"session=work",
 		// SSH forwards this machine's sockets, and a Herdr started with those
 		// set would talk back to the session here instead of its own.
 		"socket=unset",
 		"client=unset",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the server saw %q, want %q", strings.TrimSpace(got), want)
+	}
+
+	// Polled for the WHOLE record rather than for any content at all. The
+	// stand-in writes its four lines one echo at a time into a redirect opened
+	// and truncated up front, so the file GROWS: a read that lands between the
+	// echoes sees a prefix, and every line after it reads as one the server
+	// never said. Waiting for len(raw) > 0 was waiting for the first echo.
+	//
+	// That is not hypothetical -- it failed CI on macOS, the busiest of the
+	// three runners, having read exactly the first two lines. Reproduced here
+	// by putting a sleep between the second echo and the third, which gives
+	// the same two errors word for word.
+	var got string
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		raw, _ := os.ReadFile(record)
+		got = string(raw)
+		if whole(got, want) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got == "" {
+		t.Fatal("the server was never started")
+	}
+
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			t.Errorf("the server saw %q, want %q", strings.TrimSpace(got), w)
 		}
 	}
+}
+
+// whole reports whether a record holds every line expected of it, which is
+// what a poll for a file being WRITTEN has to wait for.
+func whole(got string, want []string) bool {
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			return false
+		}
+	}
+	return true
 }
 
 func TestStartCommandWithNoSessionNamed(t *testing.T) {
