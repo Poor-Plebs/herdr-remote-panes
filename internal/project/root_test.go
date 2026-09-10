@@ -3,6 +3,7 @@ package project
 import (
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -434,6 +435,15 @@ func TestTheTreeHoldsOneRepository(t *testing.T) {
 			// The one this repository is.
 			return fs.SkipDir
 		}
+		// A repository under an IGNORED directory is not this one's business.
+		// `notes/` is working notes kept locally and `bin/` is build output;
+		// somebody keeping either in git is doing nothing wrong, and failing
+		// the gate for it would be this check reporting on a private
+		// directory. Asked of git rather than matched against a list of names
+		// here, so it stays right when .gitignore changes.
+		if ignored(filepath.Dir(path)) {
+			return fs.SkipDir
+		}
 		nested = append(nested, path)
 		return fs.SkipDir
 	})
@@ -446,4 +456,9 @@ func TestTheTreeHoldsOneRepository(t *testing.T) {
 			"reports it -- a fixture that ran `git init` somewhere other than a "+
 			"temp directory is the way it happens", path)
 	}
+}
+
+// ignored reports whether git is told to ignore this path.
+func ignored(path string) bool {
+	return exec.Command("git", "check-ignore", "-q", path).Run() == nil
 }
