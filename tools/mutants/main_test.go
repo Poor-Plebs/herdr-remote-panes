@@ -2164,3 +2164,52 @@ func TestAPackageAnsweredForOnlyByItsFilesNamesThemAll(t *testing.T) {
 		t.Error("no package is answered for only by its files, so this held nothing")
 	}
 }
+
+// TestARecordedRowIsReplacedHoweverThePackageWasSpelled holds the record to one
+// row per thing swept, across a change in how the thing is named.
+//
+// The record outlives the run and keeps whatever spelling was typed when each
+// row was written -- `./internal/mirror/ (mirror.go)` is in the checked-in file
+// for exactly that reason. Now that the tool settles on one spelling, a
+// re-sweep of that file has to REPLACE that row rather than write a second one
+// beside it, because the keep-or-drop decision is a string comparison against
+// the key it is about to write. Two rows for one sweep, carrying different
+// numbers with one of them stale for ever, is a worse record than the untidy
+// name it came from -- and it would appear the first time somebody re-swept a
+// file whose row predates this, which is not a moment anybody would be
+// watching for.
+func TestARecordedRowIsReplacedHoweverThePackageWasSpelled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "swept.tsv")
+	// A row as it was written before the tool had one spelling.
+	old := "./internal/mirror/ (mirror.go)\t2026-09-06\t58\t53\t2\t0"
+	if err := os.WriteFile(path, []byte(sweptHeader+old+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	recordSweep(path, canonicalPkg("./internal/mirror/"), "", []string{"mirror.go"},
+		sweepCounts{mutations: 60, caught: 58, survived: 2})
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []string
+	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			rows = append(rows, line)
+		}
+	}
+	if len(rows) != 1 {
+		t.Errorf("%d rows after re-sweeping one file, so the old spelling was kept "+
+			"beside the new one:\n%s", len(rows), raw)
+	}
+	// Asked of the ROWS and not of the file: the header explains that rows
+	// dated before 2026-09-06 have no hung column, so a Contains over the
+	// whole thing matches the explanation and reports a surviving row that is
+	// not there.
+	for _, row := range rows {
+		if strings.Contains(row, "2026-09-06") {
+			t.Errorf("the superseded row survived the re-sweep: %q", row)
+		}
+	}
+}

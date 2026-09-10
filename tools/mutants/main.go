@@ -843,6 +843,20 @@ func canonicalPkg(pkg string) string {
 	return "./" + strings.TrimPrefix(cleaned, "./")
 }
 
+// canonicalWhat is a record key with its package name in the one spelling.
+//
+// A key is a package and, when the sweep was restricted, what restricted it.
+// Only the package half can have been spelled more than one way, so only that
+// half is put back through canonicalPkg -- the file list and the revision are
+// written by this tool and are already exact.
+func canonicalWhat(what string) string {
+	pkg, annotation, restricted := strings.Cut(what, " (")
+	if !restricted {
+		return canonicalPkg(pkg)
+	}
+	return canonicalPkg(pkg) + " (" + annotation
+}
+
 // recordSweep writes down that this package was looked at.
 //
 // read.tsv holds the survivors somebody read and left, so a package with no
@@ -882,7 +896,11 @@ func recordSweep(path, pkg, since string, files []string, c sweepCounts) {
 			if existing == "" || strings.HasPrefix(existing, "#") {
 				continue
 			}
-			if strings.SplitN(existing, "\t", 2)[0] == what {
+			// Compared in the one spelling, not as written: a row from
+			// before canonicalPkg existed carries the package name however it
+			// was typed, and comparing the two as they stand keeps such a row
+			// beside the very row that replaces it.
+			if canonicalWhat(strings.SplitN(existing, "\t", 2)[0]) == what {
 				continue
 			}
 			kept = append(kept, existing)
