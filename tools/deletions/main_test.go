@@ -593,3 +593,116 @@ func TestASweepThatCannotRestoreSaysWhichFileIsStillShort(t *testing.T) {
 		t.Errorf("the file was put back after all, so nothing failed:\n%s", still)
 	}
 }
+
+// TestASweepThatCouldTryNothingSaysWhy holds the one case where a build
+// failure is worth printing.
+//
+// Build failures are ordinarily noise: deleting a line that orphans a variable
+// is the usual way to land there, and the report deliberately keeps them to a
+// count so the survivors are not buried. But a sweep where NOTHING could be
+// tried has answered nothing at all about the package, and then the only thing
+// worth knowing is why -- which used to be thrown away with the compiler's
+// output, leaving the number 1 and no way to tell an ordinary orphaned
+// variable from a build that fell over for its own reasons.
+//
+// It cost a CI failure to find: a fixture whose one candidate would not build
+// finished in a third of a second instead of being held open for twenty, and
+// the run that reported it could say only "1 would not build".
+func TestASweepThatCouldTryNothingSaysWhy(t *testing.T) {
+	var nothing found
+	nothing.add("would not build", "pkg/probe.go:3  keep()\n      "+
+		"./pkg/probe.go:4:2: declared and not used: n")
+
+	var out strings.Builder
+	report(&out, "./pkg", nothing)
+	got := out.String()
+
+	if !strings.Contains(got, "says nothing about the") {
+		t.Errorf("a sweep that tried nothing did not say so:\n%s", got)
+	}
+	if !strings.Contains(got, "declared and not used: n") {
+		t.Errorf("the report does not carry what the compiler said:\n%s", got)
+	}
+
+	// The control, and the reason the arm is narrow: a sweep that DID answer
+	// keeps build failures to the count, or every orphaned variable is printed
+	// above the survivors somebody is meant to read.
+	var answered found
+	answered.add("caught", "pkg/probe.go:1  caughtLine()")
+	answered.add("SURVIVED", "pkg/probe.go:2  looseLine()")
+	answered.add("would not build", "pkg/probe.go:3  keep()\n      "+
+		"./pkg/probe.go:4:2: declared and not used: n")
+
+	var busy strings.Builder
+	report(&busy, "./pkg", answered)
+	if said := busy.String(); strings.Contains(said, "declared and not used") {
+		t.Errorf("a sweep that answered still printed a build failure:\n%s", said)
+	} else if !strings.Contains(said, "looseLine()") {
+		t.Errorf("the survivor is missing from an ordinary report:\n%s", said)
+	}
+}
+
+// TestABuildThatFailedSaysWhatTheCompilerSaid holds the CAPTURE, which the
+// report test above cannot.
+//
+// That one hands `report` an entry with the reason already in it, so it holds
+// the printing and passes whatever sweep does -- measured: throwing the
+// compiler's output away again leaves it green. This runs the built command
+// over a package whose one deletable statement cannot be removed without
+// orphaning a variable, so the deletion genuinely does not compile, and asks
+// what reaches the terminal.
+func TestABuildThatFailedSaysWhatTheCompilerSaid(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "deletions")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("building the command: %v\n%s", err, out)
+	}
+
+	work := t.TempDir()
+	if err := os.Mkdir(filepath.Join(work, "pkg"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The log call is the only statement worth removing, and removing it
+	// leaves the import unused -- a compile error rather than a test failure,
+	// which is the whole point of the fixture and is the shape this
+	// repository already records as the commonest way to land there.
+	for name, body := range map[string]string{
+		"go.mod": "module probe\n\ngo 1.25\n",
+		"pkg/probe.go": "package probe\n\nimport \"log\"\n\n" +
+			"func Held(n int) int {\n\tlog.Printf(\"n=%d\", n)\n\treturn n\n}\n",
+		"pkg/probe_test.go": "package probe\n\nimport \"testing\"\n\n" +
+			"func TestHeld(t *testing.T) {\n\tif Held() != 3 {\n\t\tt.Fatal(\"no\")\n\t}\n}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run := exec.Command(bin, "./pkg")
+	run.Dir = work
+	run.Env = append(os.Environ(), "TMPDIR="+t.TempDir())
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("running the command: %v\n%s", err, out)
+	}
+	said := string(out)
+
+	if !strings.Contains(said, "1 would not build") {
+		t.Fatalf("the fixture did not reach the case this is about:\n%s", said)
+	}
+	if !strings.Contains(said, "says nothing about the") {
+		t.Errorf("a sweep that could try nothing did not say so:\n%s", said)
+	}
+	// The compiler's own words, which is the half that was being thrown away.
+	// Not "declared and not used", which is the message for an orphaned
+	// VARIABLE; an orphaned import says this, and writing the wrong one down
+	// was how the first draft of this test failed against working code.
+	if !strings.Contains(said, `"log" imported and not used`) {
+		t.Errorf("the run does not say why the build failed:\n%s", said)
+	}
+	// And not go build's own "# probe/pkg" header, which names the package and
+	// says nothing about what is wrong with it -- the first line kept used to
+	// be that one.
+	if strings.Contains(said, "# probe/pkg") {
+		t.Errorf("the reason kept is the package header rather than the error:\n%s", said)
+	}
+}

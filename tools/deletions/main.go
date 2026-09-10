@@ -226,8 +226,11 @@ func main() {
 	var f found
 	started, lastReport := time.Now(), time.Now()
 	for i, c := range todo {
-		verdict := sweep(c.path, c.original, c.lines, c.at, *root, pkg, limit)
+		verdict, why := sweep(c.path, c.original, c.lines, c.at, *root, pkg, limit)
 		where := fmt.Sprintf("%s:%d  %s", c.path, c.at+1, strings.TrimSpace(c.lines[c.at]))
+		if why != "" {
+			where += "\n      " + why
+		}
 		f.add(verdict, where)
 		// Every 25, or every minute, whichever comes first. A sweep of the
 		// daemon is one build and one test run per statement for three hundred
@@ -252,9 +255,10 @@ func main() {
 // this file has a test and the wiring that assembles them had none -- which is
 // the shape this command's own doc comment says it was written to find.
 type found struct {
-	counts map[string]int
-	loose  []string
-	hung   []string
+	counts  map[string]int
+	loose   []string
+	hung    []string
+	unbuilt []string
 }
 
 // add records one statement's verdict, keeping the location of the ones worth
@@ -273,6 +277,8 @@ func (f *found) add(verdict, where string) {
 		f.loose = append(f.loose, where)
 	case "hung":
 		f.hung = append(f.hung, where)
+	case "would not build":
+		f.unbuilt = append(f.unbuilt, where)
 	}
 }
 
@@ -297,10 +303,27 @@ func report(w io.Writer, pkg string, f found) {
 	for _, one := range f.hung {
 		fmt.Fprintln(w, "  hung or killed: "+one)
 	}
+	// Build failures are ordinarily not worth reading: deleting a line that
+	// orphans a variable or an import is the usual way to land there, and
+	// listing every one buries the survivors, which is what this report is
+	// for. The exception is a sweep that answered NOTHING ELSE -- no verdict
+	// came from running a test, so the run said nothing about the package and
+	// the only thing worth knowing is why it could not try.
+	//
+	// That is not hypothetical: a fixture whose one candidate would not build
+	// finished in a third of a second instead of being held open for twenty,
+	// and all anybody could see afterwards was the number 1.
+	if f.counts["caught"]+f.counts["SURVIVED"]+f.counts["hung"] == 0 && len(f.unbuilt) > 0 {
+		fmt.Fprint(w, "\nNothing here could be tried, so this says nothing about the\n"+
+			"package. What the compiler said:\n\n")
+		for _, one := range f.unbuilt {
+			fmt.Fprintln(w, "  "+one)
+		}
+	}
 }
 
 // sweep removes one line, runs the package's tests, and puts the file back.
-func sweep(path, original string, lines []string, i int, root, pkg string, limit time.Duration) string {
+func sweep(path, original string, lines []string, i int, root, pkg string, limit time.Duration) (verdict, why string) {
 	// Recorded before the file is touched, so an interrupt between the write
 	// and the restore still knows what to put back.
 	inFlight.Lock()
@@ -314,10 +337,21 @@ func sweep(path, original string, lines []string, i int, root, pkg string, limit
 	}()
 
 	if err := os.WriteFile(path, []byte(withoutLine(lines, i)), 0o644); err != nil {
-		return "would not build"
+		// Nothing was compiled, so calling this a build failure is the wrong
+		// word for it -- the count is the same and the reason is not.
+		return "would not build", "could not write the file: " + err.Error()
 	}
-	if buildCmd(root, pkg).Run() != nil {
-		return "would not build"
+	if out, err := buildCmd(root, pkg).CombinedOutput(); err != nil {
+		// The compiler's own words, kept. Deleting a line that leaves a
+		// variable or an import unused is the ORDINARY way to land here and
+		// says so plainly; a build that failed for any other reason looks
+		// nothing like that, and used to be indistinguishable from it because
+		// this threw the message away and counted the two together.
+		//
+		// It cost a CI failure to learn: a sweep whose one candidate would not
+		// build finished in a third of a second instead of being held open,
+		// and all anybody could see afterwards was the number 1.
+		return "would not build", firstLine(string(out))
 	}
 
 	cmd := testCmd(root, pkg)
@@ -331,11 +365,11 @@ func sweep(path, original string, lines []string, i int, root, pkg string, limit
 	}()
 	select {
 	case <-done:
-		return verdictFor(string(out), failed, false)
+		return verdictFor(string(out), failed, false), ""
 	case <-time.After(limit):
 		_ = cmd.Process.Kill()
 		<-done
-		return verdictFor(string(out), failed, true)
+		return verdictFor(string(out), failed, true), ""
 	}
 }
 
@@ -378,6 +412,27 @@ func candidatesIn(paths []string) ([]candidate, error) {
 		}
 	}
 	return out, nil
+}
+
+// firstLine is the first thing a compiler said, which is the part worth
+// keeping.
+//
+// go build prints one line per error and can print many; the first names the
+// file and what is wrong with it, and the rest are usually consequences of it.
+// A whole build log under every entry would bury the list it is annotating.
+func firstLine(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// go build heads each package's errors with "# import/path", which
+		// names where and says nothing about what. Taking it left the reason
+		// reading "# probe/pkg", which is the file path this entry already
+		// carries -- so the one line kept was the one adding nothing.
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		return trimmed
+	}
+	return "the build failed and said nothing"
 }
 
 // buildCmd compiles the package in the tree being swept.
