@@ -399,7 +399,12 @@ func aSchemaThatDeclaresEverything() herdrSchema {
 // machine. That is why the key is worth holding and not only the fields under
 // it.
 func TestAResultKeyTheSchemaDropsIsDrift(t *testing.T) {
-	for _, gone := range []string{"workspace_list.workspaces", "WorkspaceInfo.workspace_id"} {
+	// The third is the nested one: plugin_pane being declared says nothing
+	// about the pane inside it, and that inner key is what parseOpenedPane
+	// reaches for to learn the pane id.
+	for _, gone := range []string{
+		"workspace_list.workspaces", "WorkspaceInfo.workspace_id", "PluginPaneInfo.pane",
+	} {
 		t.Run(gone, func(t *testing.T) {
 			short := everyResultField()
 			delete(short, gone)

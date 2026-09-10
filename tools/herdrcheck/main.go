@@ -625,6 +625,9 @@ func resultSchemaFields(bin string) map[string]bool {
 					Tab struct {
 						Properties map[string]json.RawMessage `json:"properties"`
 					} `json:"TabInfo"`
+					PluginPane struct {
+						Properties map[string]json.RawMessage `json:"properties"`
+					} `json:"PluginPaneInfo"`
 				} `json:"$defs"`
 			} `json:"success_response"`
 		} `json:"schemas"`
@@ -652,6 +655,9 @@ func resultSchemaFields(bin string) map[string]bool {
 	for name := range doc.Schemas.Success.Defs.Tab.Properties {
 		found["TabInfo."+name] = true
 	}
+	for name := range doc.Schemas.Success.Defs.PluginPane.Properties {
+		found["PluginPaneInfo."+name] = true
+	}
 	return found
 }
 
@@ -668,6 +674,12 @@ func resultJSONFields() []string {
 		"workspace_created.workspace", "workspace_created.tab", "workspace_created.root_pane",
 		"tab_created.tab", "tab_created.root_pane",
 		"plugin_pane_opened.plugin_pane",
+		// And the pane INSIDE it. parseOpenedPane reaches through
+		// plugin_pane to a nested "pane", and its own comment says what
+		// losing that costs: a caller that cannot learn the pane id cannot
+		// track the pane and reopens it on every reconcile. The outer key
+		// being declared says nothing about the inner one.
+		"PluginPaneInfo.pane",
 		"TabInfo.tab_id",
 	}
 	t := reflect.TypeOf(herdrcli.Workspace{})
