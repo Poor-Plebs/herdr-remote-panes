@@ -66,7 +66,11 @@ func withRemoteHerdrRunning(t *testing.T, up bool) (func(string) fakeHerdr, func
 		"last=\"\"; prev=\"\"; for a in \"$@\"; do prev=\"$last\"; last=\"$a\"; done\n" +
 		"case \"$last\" in\n" +
 		"  *command\\ -v\\ herdr*) echo " + fakeHerdrBin + "; exit 0;;\n" +
-		"  *--version*) echo 'herdr 0.8.0'; exit 0;;\n" +
+		// ${VAR-default}, so an UNSET variable keeps the answer every other
+		// test here has always had, and a variable set to the empty string
+		// answers with a blank line -- which is a machine whose version
+		// cannot be read, and is the case the daemon's own guard is about.
+		"  *--version*) echo \"${HRP_TEST_REMOTE_VERSION-herdr 0.8.0}\"; exit 0;;\n" +
 		"  true) exit 0;;\n" +
 		"  *\\ server*) : > " + running + "; exit 0;;\n" +
 		"esac\n" +
@@ -5818,5 +5822,62 @@ func TestAMirrorHerdrWouldNotCloseWhenMirroringStopsIsTriedAgain(t *testing.T) {
 		t.Errorf("the mirror %s is still here once Herdr would close it: the "+
 			"machine is on plain ssh now, so what is left is a dead pane wearing "+
 			"its name", mirrored)
+	}
+}
+
+// TestAMachinesVersionIsSaidOnlyWhenThereIsOne holds the line that answers the
+// first question anybody asks about a mirror behaving oddly.
+//
+// What a machine is running is fetched anyway -- the check is whether the
+// binary runs, and running it prints the version -- and prepareRemote logs it
+// once per machine rather than once per pass. The guard in front of it decides
+// which of two things happens when the version could not be read, and neither
+// half was held: with the guard inverted a machine WITH a version says nothing
+// at all, and a machine WITHOUT one gets a line naming it and then nothing,
+// which is the log entry somebody consults reading as though the machine were
+// running a program with no name.
+//
+// The empty case is reachable rather than theoretical. HerdrVersion keeps a
+// version to the line it is on, so a machine whose login prints a blank line
+// before its output has no version to report -- which is what the stand-in is
+// asked for here.
+func TestAMachinesVersionIsSaidOnlyWhenThereIsOne(t *testing.T) {
+	for _, c := range []struct {
+		what    string
+		version string
+		wantSay bool
+	}{
+		{"a machine that says what it is running", "herdr 9.9.9", true},
+		{"a machine whose version cannot be read", "", false},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			t.Setenv("HRP_TEST_REMOTE_VERSION", c.version)
+			// The local side first: it is what puts a writable directory at
+			// the front of PATH, which is where the ssh stand-in is written.
+			withFakeHerdr(t)
+			withRemoteHerdr(t)
+			logged := captureLog(t)
+
+			d := New(machineConfig("bot"))
+			if err := d.prepareRemote(remote.New("bot", "")); err != nil {
+				t.Fatalf("prepareRemote: %v", err)
+			}
+
+			said := logged.String()
+			if c.wantSay && !strings.Contains(said, "bot: "+c.version) {
+				t.Errorf("the version was not said: log is %q, want a line naming %q",
+					said, c.version)
+			}
+			// Naming the machine and then nothing is worse than silence: it
+			// reads as an answer to "what is it running" and is not one.
+			for _, line := range strings.Split(said, "\n") {
+				if strings.HasSuffix(strings.TrimSpace(line), "bot:") {
+					t.Errorf("a line names the machine and gives no version: %q", line)
+				}
+			}
+			if !c.wantSay && strings.Contains(said, "bot: herdr") {
+				t.Errorf("a version was reported for a machine that gave none: %q", said)
+			}
+		})
 	}
 }
