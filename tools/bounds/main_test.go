@@ -1001,3 +1001,67 @@ func TestABoundTheThousandfoldCannotSettleIsAnsweredByTheSmallRaise(t *testing.T
 		t.Errorf("the report still carries maxSlow as unanswered:\n%s", said)
 	}
 }
+
+// noCeilingOnPath puts a `systemd-run` on PATH that refuses.
+//
+// Whether a real one exists differs by machine -- this repository's own CI has
+// it on one job of three -- so masking it is what makes the question the same
+// everywhere. It exits non-zero without running anything, which is exactly
+// what ceiling() reads.
+func noCeilingOnPath(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "systemd-run"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestASweepWithNoCeilingSaysSoRatherThanLookingBounded holds the sentence the
+// whole degradation rests on.
+//
+// This tool does not refuse when there is no memory ceiling -- unlike
+// tools/deletions, which exits, because a deleted loop increment can come from
+// any statement while a bound only takes the machine where its test sizes its
+// own input from it. Carrying on is the right call and it has a price: the
+// report that comes out looks exactly like a bounded run's. The warning is the
+// only thing separating the two, and the comment beside `bounded` says why
+// that matters -- "really there is worse than a missing one: the run looks
+// bounded".
+//
+// Nothing held it. Measured: with the warning neutralised the whole package
+// passed, so it could have been dropped in a tidy-up and every number this
+// tool prints would have gone on reading as though a ceiling were in force.
+func TestASweepWithNoCeilingSaysSoRatherThanLookingBounded(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "bounds")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("building the command: %v\n%s", err, out)
+	}
+
+	work := t.TempDir()
+	if err := os.WriteFile(filepath.Join(work, "probe.go"),
+		[]byte("package probe\n\nconst maxThing = 4\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.Command(bin, ".")
+	run.Dir = work
+	run.Env = append(os.Environ(),
+		"PATH="+noCeilingOnPath(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// Apart, because the complaint belongs on stderr and a tally that swallowed
+	// it would read as a clean run.
+	var out, said bytes.Buffer
+	run.Stdout, run.Stderr = &out, &said
+	_ = run.Run()
+
+	if !strings.Contains(said.String(), "No memory ceiling available here") {
+		t.Errorf("a run with no ceiling did not say so:\nstderr:\n%s\nstdout:\n%s",
+			said.String(), out.String())
+	}
+	// And what it costs, not merely that something was missing: a reader who
+	// is told only "no ceiling" cannot tell whether it matters.
+	if !strings.Contains(said.String(), "take the machine down") {
+		t.Errorf("the warning does not say what the risk is:\n%s", said.String())
+	}
+}
