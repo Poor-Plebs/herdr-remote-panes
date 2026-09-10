@@ -12,6 +12,17 @@
 /deletions
 /herdrcheck
 
+# And where they land when the build is run from the tool's OWN directory,
+# which is the ordinary way to build one: `cd tools/mutants && go build` names
+# the binary after the directory and writes it there, not at the root. The
+# entries above are root-anchored and cover none of these -- a 4 MB
+# tools/mutants/mutants turned up untracked during the tool sweeps once, and
+# reproducing it is one command.
+/tools/mutants/mutants
+/tools/bounds/bounds
+/tools/deletions/deletions
+/tools/herdrcheck/herdrcheck
+
 # `go build .` from here writes this, and once got as far as a tagged release
 # commit before anybody looked. The Makefile and build.sh both build to bin/,
 # so a binary with this name is never wanted.

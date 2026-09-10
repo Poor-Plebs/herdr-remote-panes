@@ -402,3 +402,48 @@ func TestDocumentationThatIsAllPlanSaysSoRatherThanComingBackEmpty(t *testing.T)
 		})
 	}
 }
+
+// TestTheTreeHoldsOneRepository fails on a git repository inside this one.
+//
+// A test that runs `git init` builds its fixture in a temp directory, and one
+// that gets the directory wrong builds it in the tree instead -- which is not
+// a failure anywhere, because the parent repository already tracks the files
+// that land in it and reports nothing untracked. It is quiet in the worst way:
+// `git status` run from inside such a directory answers about the WRONG
+// repository, so a clean tree reads as five modified files and a deleted one.
+//
+// That is not hypothetical. One sat in tools/mutants for six days, committed
+// on 2026-09-04 by a fixture with no temp directory, holding this package's
+// files and a 4 MB binary -- and the only trace anybody noticed at the time was
+// the binary turning up untracked, which was written down as unexplained. The
+// tests that made it have since been fixed; nothing would have said so, and
+// nothing would notice the next one.
+func TestTheTreeHoldsOneRepository(t *testing.T) {
+	root := inRoot(t)
+	needsCheckout(t, "the check for a repository inside this one")
+
+	var nested []string
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() || entry.Name() != ".git" {
+			return nil
+		}
+		if path == filepath.Join(root, ".git") {
+			// The one this repository is.
+			return fs.SkipDir
+		}
+		nested = append(nested, path)
+		return fs.SkipDir
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range nested {
+		t.Errorf("%s is a git repository inside this one. `git status` run from "+
+			"there answers about it rather than about this tree, and nothing else "+
+			"reports it -- a fixture that ran `git init` somewhere other than a "+
+			"temp directory is the way it happens", path)
+	}
+}
