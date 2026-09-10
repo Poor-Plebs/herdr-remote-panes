@@ -174,7 +174,7 @@ func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []tol
 	fmt.Fprintln(w)
 	problems += askAbout(w, ask, said, "a message gives it at")
 
-	problems += askTheSchema(w, schema.PaneFields, schema.Enums)
+	problems += askTheSchema(w, schema.PaneFields, schema.EnvelopeFields, schema.Enums)
 	problems += askTheManifest(w, manifest, schema.Enums)
 
 	fmt.Fprintln(w)
@@ -204,8 +204,12 @@ func report(w io.Writer, ask asker, deps []herdrcli.Dependency, docs, said []tol
 	// not proven, and only re-capturing says which.
 	if recorded != "" && recorded != asked {
 		fmt.Fprintf(w, "\nthe wire-format recordings in internal/herdrcli/testdata are "+
-			"from %s. Re-capture them against %s: a field that moved shows up there and "+
-			"nowhere else.\n", recorded, asked)
+			"from %s, and re-capturing against %s is no longer the only way to see a field "+
+			"move: the fields a pane carries and the ones the envelope is read by are "+
+			"checked against this Herdr's schema above, every run. What only the recordings "+
+			"hold now is the workspace and tab fields the parsers read -- workspace_id, "+
+			"label, tab_id -- which the schema describes as WorkspaceInfo and TabInfo and "+
+			"nothing here asks about yet.\n", recorded, asked)
 	}
 	return 0
 }
@@ -398,7 +402,7 @@ func accepts(schema herdrSchema, help, flag, value string) bool {
 // A field the schema no longer declares is a PROBLEM and not a note. Unlike the
 // version numbers above, this is drift proven: the parser reads a name that the
 // Herdr installed here says nothing about.
-func askTheSchema(w io.Writer, declared map[string]bool, enums map[string][]string) int {
+func askTheSchema(w io.Writer, declared, envelope map[string]bool, enums map[string][]string) int {
 	if declared == nil {
 		fmt.Fprintf(w, "\n%-24s the schema could not be read, so the fields the "+
 			"parsers depend on were not checked\n", "api schema")
@@ -414,6 +418,27 @@ func askTheSchema(w io.Writer, declared map[string]bool, enums map[string][]stri
 		fmt.Fprintf(w, "\n%-24s does not declare %s, and herdrcli.Pane reads them\n",
 			"api schema", strings.Join(missing, ", "))
 		return len(missing)
+	}
+	// And the envelope every answer arrives in. Checked here rather than left
+	// to the recordings, which are a capture of one version: a rename at the
+	// far end would empty every error code, so every refusal would read as one
+	// this plugin does not recognise -- and ignoreNotFound would stop treating
+	// "already gone" as success, which is the whole of how a reconciling pass
+	// tolerates a pane somebody closed by hand.
+	//
+	// Nil is "not checked" rather than "nothing is missing", as above.
+	if envelope != nil {
+		gone := []string{}
+		for _, field := range envelopeJSONFields() {
+			if !envelope[field] {
+				gone = append(gone, field)
+			}
+		}
+		if len(gone) > 0 {
+			fmt.Fprintf(w, "\n%-24s does not declare %s on the response envelope, and the "+
+				"parsers read them\n", "api schema", strings.Join(gone, ", "))
+			return len(gone)
+		}
 	}
 	// And every schema type this checker pairs a flag with is one the schema
 	// still defines. A pairing that has gone stale sends accepts back to the
@@ -459,9 +484,10 @@ func askTheSchema(w io.Writer, declared map[string]bool, enums map[string][]stri
 		return len(unnamed)
 	}
 
-	fmt.Fprintf(w, "\n%-24s ok, all %d fields herdrcli.Pane reads are declared, every "+
-		"flag with an enum has one, and every status Herdr reports has a name\n",
-		"api schema", len(paneJSONFields()))
+	fmt.Fprintf(w, "\n%-24s ok, all %d fields herdrcli.Pane reads are declared and all %d "+
+		"the envelope is read by, every flag with an enum has one, and every status Herdr "+
+		"reports has a name\n",
+		"api schema", len(paneJSONFields()), len(envelopeJSONFields()))
 	return 0
 }
 
@@ -485,13 +511,18 @@ func paneJSONFields() []string {
 // every reader has to treat that as "not checked" rather than as "nothing is
 // declared".
 type herdrSchema struct {
-	PaneFields map[string]bool
-	Enums      map[string][]string
+	PaneFields     map[string]bool
+	EnvelopeFields map[string]bool
+	Enums          map[string][]string
 }
 
 // askHerdrSchema asks the installed Herdr for its bundled schema.
 func askHerdrSchema(bin string) herdrSchema {
-	return herdrSchema{PaneFields: paneSchemaFields(bin), Enums: schemaEnums(bin)}
+	return herdrSchema{
+		PaneFields:     paneSchemaFields(bin),
+		EnvelopeFields: envelopeSchemaFields(bin),
+		Enums:          schemaEnums(bin),
+	}
 }
 
 // schemaEnums is every named type in the schema that lists the strings it
@@ -535,6 +566,67 @@ func schemaEnums(bin string) map[string][]string {
 		walk(child, key)
 	}
 	return found
+}
+
+// envelopeSchemaFields is what the installed Herdr declares about the envelope
+// it wraps every answer in: the two top-level names, and the error body's own.
+//
+// Read because the parsers depend on these and nothing was asking. The pane
+// fields have been checked here since the schema arrived; the envelope was
+// left to the RECORDINGS, which are captures of one version and cannot notice
+// the real thing changing shape. The schema can, and it is printed offline by
+// the binary already installed.
+func envelopeSchemaFields(bin string) map[string]bool {
+	out, err := exec.Command(bin, "api", "schema", "--json").Output()
+	if err != nil {
+		return nil
+	}
+	var doc struct {
+		Schemas struct {
+			Success struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"success_response"`
+			Error struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+				Defs       struct {
+					ErrorBody struct {
+						Properties map[string]json.RawMessage `json:"properties"`
+					} `json:"ErrorBody"`
+				} `json:"$defs"`
+			} `json:"error_response"`
+		} `json:"schemas"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		return nil
+	}
+	found := map[string]bool{}
+	for name := range doc.Schemas.Success.Properties {
+		found[name] = true
+	}
+	for name := range doc.Schemas.Error.Properties {
+		found[name] = true
+	}
+	for name := range doc.Schemas.Error.Defs.ErrorBody.Properties {
+		found["error."+name] = true
+	}
+	return found
+}
+
+// envelopeJSONFields is what this plugin reads off an envelope.
+//
+// "result" and "error" are the two the unwrapping asks for by name; the rest
+// come off ErrorBody, so a field added there is checked without anybody
+// remembering to add it here.
+func envelopeJSONFields() []string {
+	fields := []string{"result", "error"}
+	t := reflect.TypeOf(herdrcli.ErrorBody{})
+	for i := 0; i < t.NumField(); i++ {
+		if tag := strings.Split(t.Field(i).Tag.Get("json"), ",")[0]; tag != "" && tag != "-" {
+			fields = append(fields, "error."+tag)
+		}
+	}
+	sort.Strings(fields)
+	return fields
 }
 
 // paneSchemaFields asks the installed Herdr for its bundled schema and returns

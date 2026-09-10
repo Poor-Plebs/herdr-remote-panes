@@ -263,9 +263,16 @@ func TestAFlagThatWentGatesTheRunToo(t *testing.T) {
 // said when that was due, so they sat at 0.8.2 while the Herdr on the machine
 // became 0.9.0 and every test went on passing.
 //
-// It is a note and not a problem: a moved field is possible rather than proven,
-// and only re-capturing says which. So the exit code stays nought and the run
-// still says everything else was fine.
+// It is a note and not a problem: a moved field is possible rather than proven.
+// So the exit code stays nought and the run still says everything else was fine.
+//
+// It used to say only re-capturing could tell, and that is no longer true --
+// the fields a pane carries and the ones the envelope is read by are checked
+// against the installed Herdr's schema on every run. So this holds what the
+// note IDENTIFIES rather than how it is phrased: both versions, so a reader
+// can see what is stale against what, and the names that really are held only
+// by the recordings. Matching the old imperative was what broke here when the
+// sentence stopped overstating.
 func TestARunSaysWhenTheRecordingsAreDueARefresh(t *testing.T) {
 	out, code := aRun(t, answering(everything()))
 	if code != 0 {
@@ -275,9 +282,16 @@ func TestARunSaysWhenTheRecordingsAreDueARefresh(t *testing.T) {
 		t.Errorf("the report does not say which Herdr the recordings came from (%q):\n%s",
 			theRecordedVersion, out)
 	}
-	if !strings.Contains(out, "Re-capture them against "+theAskedVersion) {
-		t.Errorf("the report does not say to re-capture them against the Herdr it "+
-			"asked (%q):\n%s", theAskedVersion, out)
+	if !strings.Contains(out, theAskedVersion) {
+		t.Errorf("the report does not name the Herdr it asked (%q), so a reader cannot "+
+			"tell what the recordings are stale against:\n%s", theAskedVersion, out)
+	}
+	// And what is genuinely left to them, which is the actionable half.
+	for _, name := range []string{"workspace_id", "tab_id"} {
+		if !strings.Contains(out, name) {
+			t.Errorf("the note does not say %q is still held only by the recordings:\n%s",
+				name, out)
+		}
 	}
 }
 
@@ -342,8 +356,63 @@ func theManifest() map[string][]string {
 	}
 }
 
+// everyEnvelopeField is a schema that declares the whole envelope.
+//
+// Built from what the parsers read, like everyPaneField: a fixture written out
+// by hand would be a second copy of the same list, and the check would pass
+// against whichever of the two was wrong.
+func everyEnvelopeField() map[string]bool {
+	declared := map[string]bool{}
+	for _, f := range envelopeJSONFields() {
+		declared[f] = true
+	}
+	return declared
+}
+
 func aSchemaThatDeclaresEverything() herdrSchema {
-	return herdrSchema{PaneFields: everyPaneField(), Enums: theEnums()}
+	return herdrSchema{
+		PaneFields:     everyPaneField(),
+		EnvelopeFields: everyEnvelopeField(),
+		Enums:          theEnums(),
+	}
+}
+
+// TestAnEnvelopeFieldTheSchemaDropsIsDrift holds the response envelope the way
+// the pane fields have been held since the schema arrived.
+//
+// The envelope was left to the RECORDINGS, which are a capture of one version
+// and cannot notice the real thing changing shape. What a rename there costs is
+// not a parse error: Code is what IsNotFound reads, so every refusal would stop
+// being recognised as "already gone" and a reconciling pass would treat a pane
+// somebody closed by hand as a failure.
+func TestAnEnvelopeFieldTheSchemaDropsIsDrift(t *testing.T) {
+	short := everyEnvelopeField()
+	delete(short, "error.code")
+
+	var out strings.Builder
+	code := report(&out, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		herdrSchema{PaneFields: everyPaneField(), EnvelopeFields: short, Enums: theEnums()},
+		theManifest())
+
+	if code == 0 {
+		t.Errorf("a schema that no longer declares error.code passed:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "error.code") {
+		t.Errorf("the report does not name the field that went:\n%s", out.String())
+	}
+	// The control: with it declared, nothing is said and the run is clean.
+	var fine strings.Builder
+	if code := report(&fine, answering(everything()),
+		[]herdrcli.Dependency{{Command: []string{"pane", "close"}, Flags: []string{"--plugin"}}},
+		nil, nil, theAskedVersion, theDeclaredMinimum, theAskedVersion,
+		aSchemaThatDeclaresEverything(), theManifest()); code != 0 {
+		t.Errorf("a schema declaring the whole envelope exited %d:\n%s", code, fine.String())
+	}
+	if strings.Contains(fine.String(), "on the response envelope") {
+		t.Errorf("a complete envelope was reported as drift:\n%s", fine.String())
+	}
 }
 
 // TestAValueTheSchemaDoesNotDeclareIsDrift holds the value check against the

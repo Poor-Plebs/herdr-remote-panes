@@ -116,10 +116,20 @@ func hasSpace(s string) bool {
 
 type envelope struct {
 	Result json.RawMessage `json:"result"`
-	Error  *struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	} `json:"error"`
+	Error  *ErrorBody      `json:"error"`
+}
+
+// ErrorBody is the error Herdr puts in that envelope, named rather than
+// anonymous so a checker can read the wire names off it.
+//
+// Herdr's own schema calls this ErrorBody and requires both fields of it. What
+// this plugin does with them is not decoration: Code is what IsNotFound reads
+// to tell "the pane is already gone" from a real refusal, and both go into the
+// APIError a caller sees. A rename at the far end would leave every code empty,
+// so every refusal would read as one this plugin does not recognise.
+type ErrorBody struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 // RunError makes sense of a Herdr command that exited non-zero.
