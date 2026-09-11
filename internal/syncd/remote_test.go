@@ -6649,3 +6649,100 @@ func TestTerminalsWaitingToComeBackStayInTheRecord(t *testing.T) {
 		t.Errorf("%d terminals came back for a machine that had two", got)
 	}
 }
+
+// shellTabs is the tabs this end has a terminal in, which is how a placement
+// shows: `tab` gives each one a tab of its own and `split` shares them.
+func shellTabs(here func() fakeHerdr) []string {
+	seen := map[string]bool{}
+	for _, pane := range here().Panes {
+		if label, _ := pane["label"].(string); label == "" {
+			continue
+		}
+		if tab, _ := pane["tab_id"].(string); tab != "" {
+			seen[tab] = true
+		}
+	}
+	var out []string
+	for tab := range seen {
+		out = append(out, tab)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestATerminalThatDropsComesBackWhereItWas(t *testing.T) {
+	// The comment on `placement` says what that field is for: a mirror opened
+	// again -- the link dropped, Herdr restarted, the pane went -- goes back
+	// where it was, "without it the machine's ordinary setting applies
+	// instead, which defaults to split, and terminals somebody opened as tabs
+	// come back as one tab with all of them inside it".
+	//
+	// Plain SSH terminals had the same record, in shellPlacement, and the
+	// reopen read nothing. Measured: three terminals in three tabs, the last
+	// one's link drops, and it came back split into another tab -- three
+	// terminals across two tabs -- with its recorded placement changed from
+	// "tab" to the machine's default. Restoring after a RESTART was right all
+	// along; it is the drop during a session that had nowhere to read from,
+	// because forgetPane drops the record and the reopen runs after the lock
+	// is let go.
+	here := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	// Two more, each asked for as a tab of its own. Two, because the first
+	// terminal in an empty space becomes a tab whatever it asked for, so
+	// dropping that one would prove nothing.
+	for i := 0; i < 2; i++ {
+		if reply := d.dispatch(Command{Cmd: "open", Host: "bot", Placement: "tab"}); !reply.OK {
+			t.Fatalf("open: %s", reply.Message)
+		}
+		d.reconcileAll()
+	}
+
+	panes, tabs := panesFor(here(), "bot"), len(shellTabs(here))
+	if panes != 3 || tabs != 3 {
+		t.Fatalf("%d terminals across %d tabs; the fixture wants three, each in its own, or a "+
+			"replacement landing in an existing tab says nothing", panes, tabs)
+	}
+
+	d.mu.Lock()
+	last := d.hosts["bot"].shellPlacement[len(d.hosts["bot"].shellPlacement)-1]
+	d.mu.Unlock()
+	// The other control: the one being dropped really was asked for as a tab.
+	if last.where != "tab" {
+		t.Fatalf("the terminal about to be dropped is recorded as placed %q, not \"tab\"", last.where)
+	}
+
+	terminalDied(t, last.paneID, "bot is not reachable over ssh: exit status 255: Connection reset by peer")
+	d.reconcileAll()
+	d.reconcileAll()
+
+	if got := panesFor(here(), "bot"); got != 3 {
+		t.Fatalf("%d terminals after one dropped, want the three there were; it did not come back "+
+			"at all, so where it came back says nothing", got)
+	}
+	if got := len(shellTabs(here)); got != 3 {
+		t.Errorf("the three terminals are across %d tabs after one dropped and came back, want three; "+
+			"the replacement took the machine's usual placement instead of the tab it stood in for", got)
+	}
+	d.mu.Lock()
+	var placed []string
+	for _, shell := range d.hosts["bot"].shellPlacement {
+		placed = append(placed, shell.where)
+	}
+	d.mu.Unlock()
+	// And the record has to keep it, or the next restart puts it back wrong.
+	tabsRecorded := 0
+	for _, where := range placed {
+		if where == "tab" {
+			tabsRecorded++
+		}
+	}
+	if tabsRecorded != 2 {
+		t.Errorf("%d of the placements are recorded as \"tab\" after the drop (%v), want the two that "+
+			"were asked for that way", tabsRecorded, placed)
+	}
+}

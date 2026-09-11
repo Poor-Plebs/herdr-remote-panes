@@ -2892,6 +2892,23 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 					log.Printf("%s: terminal %s dropped, reopening", state.host.Target, paneID)
 					state.lastReopen = time.Now()
 					state.reopenShell = true
+					// Where it was, so the replacement lands where the terminal
+					// it stands in for was put. forgetPane below drops that
+					// record and the reopen happens after the lock is let go, so
+					// the place has to be handed over here or it is gone. The
+					// queue is the one a restart's terminals wait in, and both
+					// are the same thing: a place with no terminal in it yet.
+					//
+					// Without it a terminal opened as a tab whose link drops
+					// comes back as the machine's usual placement, which is the
+					// outcome the comment on `placement` above says that field
+					// exists to prevent for a MIRROR. Plain terminals had the
+					// record and nothing read it.
+					for _, shell := range state.shellPlacement {
+						if shell.paneID == paneID {
+							state.restoreShellsAs = append(state.restoreShellsAs, shell.where)
+						}
+					}
 				}
 			}
 			// Read the failure marker before forgetting the pane, since that
