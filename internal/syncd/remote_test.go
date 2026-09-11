@@ -6871,3 +6871,74 @@ func TestARecordWithACountAndNoPlacesKeepsTheCount(t *testing.T) {
 			"a machine whose snapshot predates the places loses them on the first pass", got)
 	}
 }
+
+func TestTheListingCountsTheTerminalsComingBackToo(t *testing.T) {
+	// The listing says how many plain terminals a machine has, and it said the
+	// ones that were UP. While a restore is running -- a second or two on any
+	// ordinary start, and as long as Herdr refuses to open a pane -- that is
+	// not how many the machine has, and it disagreed with the record written
+	// in the same pass: the listing said none, the record said two.
+	//
+	// It is not only a number on a screen. internal/picker asks before turning
+	// mirroring on BECAUSE doing so closes plain terminals, and it asks only
+	// when there are terminals to lose (worthAskingBeforeToggle, held there by
+	// a table of its own). A count of none is how that question does not get
+	// asked at the moment the terminals are easiest to lose -- the menu is
+	// most likely to be opened just after a start, which is exactly the
+	// window. The menu's half was right; what fed it was not.
+	withFakeHerdr(t)
+	cfg := machineConfig("bot")
+
+	first := New(cfg)
+	if reply := first.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	first.reconcileAll()
+	if reply := first.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
+		t.Fatalf("open: %s", reply.Message)
+	}
+	first.reconcileAll()
+	first.persist()
+
+	// The control: with them up the listing counts them, so what changes below
+	// is the window and not the fixture.
+	up := first.status()
+	if len(up) != 1 || up[0].Terminals != 2 {
+		t.Fatalf("the listing says %+v with two terminals up", up)
+	}
+
+	// Herdr restarts and will not open a pane yet, which holds the window open
+	// long enough to read.
+	refuseOnMachine(t, os.Getenv(fakeHerdrState), "plugin pane open")
+	second := New(cfg)
+	if reply := second.dispatch(Command{Cmd: "connect", Host: "bot"}); reply.OK {
+		t.Fatal("connecting reported success while Herdr was refusing to open a pane")
+	}
+	for pass := 0; pass < 3; pass++ {
+		second.reconcileAll()
+	}
+	second.persist()
+
+	// The other control: the machine really is mid-restore, with nothing up
+	// and two waiting. Without this the numbers below agree by having nothing
+	// to disagree about.
+	second.mu.Lock()
+	panes, waiting := len(second.hosts["bot"].shellPanes), second.hosts["bot"].restoreShells
+	second.mu.Unlock()
+	if panes != 0 || waiting != 2 {
+		t.Fatalf("%d terminals up and %d waiting; the window this is about has none up", panes, waiting)
+	}
+
+	listing := second.status()
+	if len(listing) != 1 {
+		t.Fatalf("want one machine in the listing, got %d", len(listing))
+	}
+	if got := listing[0].Terminals; got != 2 {
+		t.Errorf("the listing says %d terminals for a machine with two coming back; the menu draws "+
+			"that number and decides from it whether turning mirroring on costs anything", got)
+	}
+	if got, recorded := listing[0].Terminals, loadSnapshot().Hosts["bot"].Shells; got != recorded {
+		t.Errorf("the listing says %d terminals and the record says %d, written in the same pass "+
+			"about the same machine", got, recorded)
+	}
+}

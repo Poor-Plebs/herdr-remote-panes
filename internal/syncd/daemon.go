@@ -2018,7 +2018,7 @@ func (d *Daemon) status() []HostInfo {
 			AtCapacity:    state.atCapacity,
 			OutsideShared: state.outsideShared,
 			SharedName:    state.duplicateSpaces,
-			Terminals:     len(state.shellPanes),
+			Terminals:     terminalsHeld(state),
 			Mirroring:     d.config().Mirrors(state.host),
 			GaveUp:        state.gaveUp,
 			Unmirrored:    len(state.abandoned),
@@ -2520,6 +2520,28 @@ func (d *Daemon) reconcileOnce() {
 	}
 }
 
+// terminalsHeld is how many plain SSH terminals a machine HAS: the panes that
+// are up, and the ones recorded and still waiting to come back after a restart
+// or a dropped link.
+//
+// One function because there are two readers -- the record the next daemon
+// starts from, and the listing the menu draws -- and they were worked out
+// separately. The listing said none while the record said two, which is not
+// only a wrong number on a screen: the menu asks before turning mirroring on
+// BECAUSE plain terminals are closed by it, and it asks only when there are
+// terminals to lose. Reading none is how that question does not get asked at
+// the moment the terminals are most easily lost.
+//
+// restoreShells has the last word when it is larger: a snapshot written before
+// the places were recorded has a count and no list.
+func terminalsHeld(state *hostSync) int {
+	held := len(state.shellPlacement) + len(state.restoreShellsAs)
+	if state.restoreShells > held {
+		held = state.restoreShells
+	}
+	return held
+}
+
 // persist records the current mirror bookkeeping for the next daemon.
 func (d *Daemon) persist() {
 	d.mu.Lock()
@@ -2554,21 +2576,10 @@ func (d *Daemon) persist() {
 		// Appended rather than maxed, because this one is CONSUMED as each
 		// terminal is placed: what is left in it is what has not been placed.
 		shellPlacements = append(shellPlacements, state.restoreShellsAs...)
-		// Counted from the list above rather than worked out a second way,
-		// which is what made the two disagree: one place per terminal the
-		// machine has is exactly what that list is, whether the terminal is up
-		// or waiting. Deriving the count from anything else means two answers
-		// to one question, and a terminal queued by a DROP reached the places
-		// while the count -- read off restoreShells, which only a restart sets
-		// -- did not. The record then said two terminals and three places, and
-		// a daemon starting from it brought back two.
-		//
-		// restoreShells still has the last word when it is larger: a snapshot
-		// written before the places were recorded has the count and no list.
-		shells := len(shellPlacements)
-		if state.restoreShells > shells {
-			shells = state.restoreShells
-		}
+		// The same count the listing gives, from the same place. Worked out
+		// here separately it said two terminals against three places, because
+		// a terminal queued by a DROP reached the places and not the count.
+		shells := terminalsHeld(state)
 		current.Hosts[target] = hostSnapshot{
 			Mirrors:         mirrors,
 			Dismissed:       dismissed,
