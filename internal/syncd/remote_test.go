@@ -5978,3 +5978,199 @@ func TestAMachinesVersionIsSaidOnlyWhenThereIsOne(t *testing.T) {
 		})
 	}
 }
+
+// saidTwice runs passes more reconcile passes over a machine nothing is
+// touching and answers with every line the daemon said more than once, the
+// timestamp cut off so two sayings of one line count as two. The second answer
+// is how many lines it said in all, which the caller needs to tell a daemon
+// that is quiet from a fixture that never got anywhere.
+func saidTwice(t *testing.T, d *Daemon, logged *safeLog, passes int) (map[string]int, int) {
+	t.Helper()
+	for i := 0; i < passes; i++ {
+		d.reconcileAll()
+	}
+	counts := map[string]int{}
+	said := 0
+	for _, line := range strings.Split(logged.String(), "\n") {
+		// "2026/09/11 03:14:07 bot: ..." -- the date and the time are what
+		// differ between two sayings of one line, so the line is what is left.
+		fields := strings.SplitN(line, " ", 3)
+		if len(fields) < 3 {
+			continue
+		}
+		counts[fields[2]]++
+		said++
+	}
+	twice := map[string]int{}
+	for line, n := range counts {
+		if n > 1 {
+			twice[line] = n
+		}
+	}
+	return twice, said
+}
+
+func TestNothingIsSaidTwiceOnceAMachineHasSettled(t *testing.T) {
+	// A pass comes round every couple of seconds, so a line said on each one
+	// is thirty a minute into the file somebody opens to find out what
+	// happened -- which rolls at a quarter of a megabyte, so the complaint
+	// fills the place the explanation would have been. Three notices in the
+	// reconcile path are gated against exactly that, and a fourth, the mirror
+	// limit, was not: it said itself on every pass for as long as a machine
+	// sat over the limit. That one was found by reading the handful of lines
+	// that announce the daemon doing less, which is a guess at where the next
+	// one will be.
+	//
+	// This asks the behaviour instead of the lines. Put a machine into a state
+	// worth saying something about, stop touching anything, and let the daemon
+	// run: whatever it repeats with nothing changing is a line that repeats
+	// for as long as the state lasts.
+	//
+	// EVERY ROW CARRIES A CONTROL, because a silence is also what a fixture
+	// that never reached its state sounds like -- each one asks the daemon
+	// what it thinks the machine's state is before reading its quiet as an
+	// answer.
+	for _, row := range []struct {
+		name    string
+		set     func(t *testing.T) *Daemon
+		reached func(HostInfo) bool
+		is      string
+	}{
+		{
+			name: "a plain ssh machine",
+			set: func(t *testing.T) *Daemon {
+				withFakeHerdr(t)
+				d := New(machineConfig("bot"))
+				if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+					t.Fatalf("connect: %s", reply.Message)
+				}
+				d.reconcileAll()
+				return d
+			},
+			reached: func(h HostInfo) bool { return h.Connected && !h.Mirroring },
+			is:      "connected without mirroring",
+		},
+		{
+			name: "a machine being mirrored",
+			set: func(t *testing.T) *Daemon {
+				here := withFakeHerdr(t)
+				there, machineState := withRemoteHerdr(t)
+				cfg := machineConfig("bot")
+				cfg.Hosts[0].Mode = "attach"
+				cfg.Scope = "all"
+				d := New(cfg)
+				if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+					t.Fatalf("connect: %s", reply.Message)
+				}
+				addPaneOn(t, machineState, "w-theirs", "work")
+				settle(t, d, here, 4, there)
+				return d
+			},
+			reached: func(h HostInfo) bool { return h.Mirroring && h.Mirrors > 0 },
+			is:      "mirroring something",
+		},
+		{
+			name: "a machine at the mirror limit",
+			set: func(t *testing.T) *Daemon {
+				here := withFakeHerdr(t)
+				there, machineState := withRemoteHerdr(t)
+				cfg := machineConfig("bot")
+				cfg.Hosts[0].Mode = "attach"
+				cfg.Scope = "all"
+				cfg.MaxMirrors = 2
+				d := New(cfg)
+				if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+					t.Fatalf("connect: %s", reply.Message)
+				}
+				for i := 0; i < 8; i++ {
+					addPaneOn(t, machineState, "w-theirs", fmt.Sprintf("runaway-%d", i))
+				}
+				settle(t, d, here, 4, there)
+				return d
+			},
+			reached: func(h HostInfo) bool { return h.AtCapacity },
+			is:      "over the limit",
+		},
+		{
+			name: "a machine with terminals in its own spaces",
+			set: func(t *testing.T) *Daemon {
+				here := withFakeHerdr(t)
+				there, machineState := withRemoteHerdr(t)
+				cfg := machineConfig("bot")
+				cfg.Hosts[0].Mode = "attach"
+				d := New(cfg)
+				if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+					t.Fatalf("connect: %s", reply.Message)
+				}
+				addWorkspaceOn(t, machineState, "w-own", "their own space")
+				addPaneOn(t, machineState, "w-own", "theirs")
+				settle(t, d, here, 4, there)
+				return d
+			},
+			reached: func(h HostInfo) bool { return h.OutsideShared > 0 },
+			is:      "holding terminals the scope does not mirror",
+		},
+		{
+			name: "a machine that has been given up on",
+			set: func(t *testing.T) *Daemon {
+				withFakeHerdr(t)
+				withUnreachableMachine(t)
+				cfg := machineConfig("bot")
+				cfg.Hosts[0].Mode = "attach"
+				d := New(cfg)
+				d.dispatch(Command{Cmd: "connect", Host: "bot"})
+				for i := 0; i < 6; i++ {
+					d.reconcileAll()
+				}
+				return d
+			},
+			reached: func(h HostInfo) bool { return h.GaveUp },
+			is:      "given up on",
+		},
+		{
+			name: "a machine with no herdr on it",
+			set: func(t *testing.T) *Daemon {
+				withFakeHerdr(t)
+				withMachineLackingHerdr(t)
+				cfg := machineConfig("bot")
+				cfg.Hosts[0].Mode = "attach"
+				d := New(cfg)
+				d.dispatch(Command{Cmd: "connect", Host: "bot"})
+				d.reconcileAll()
+				return d
+			},
+			reached: func(h HostInfo) bool { return h.NoHerdr },
+			is:      "without herdr",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			d := row.set(t)
+
+			// The control. Without it a row whose fixture quietly stopped
+			// short is the quietest row of all.
+			hosts := d.status()
+			if len(hosts) != 1 {
+				t.Fatalf("want one machine in the status, got %d", len(hosts))
+			}
+			if !row.reached(hosts[0]) {
+				t.Fatalf("the fixture did not leave the machine %s, so its silence says nothing: %+v",
+					row.is, hosts[0])
+			}
+
+			logged := captureLog(t)
+			twice, said := saidTwice(t, d, logged, 6)
+			if len(twice) == 0 {
+				return
+			}
+			var lines []string
+			for line, n := range twice {
+				lines = append(lines, fmt.Sprintf("    %dx  %s", n, line))
+			}
+			sort.Strings(lines)
+			t.Errorf("a machine %s, with nothing changing, was told about %d time(s) over six passes "+
+				"(%d lines in all). A pass comes round every couple of seconds, so this is said for as "+
+				"long as the state lasts:\n%s",
+				row.is, len(twice), said, strings.Join(lines, "\n"))
+		})
+	}
+}
