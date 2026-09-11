@@ -213,6 +213,11 @@ type hostSync struct {
 	// acting. So the setting looks like it did nothing, and this is what says
 	// otherwise.
 	overLimit bool
+	// turnedOff is a machine the configuration in force has `disabled`, which
+	// this one was connected before it said so. Asked of the live config each
+	// pass rather than of host below, which is the copy taken at connect and
+	// so cannot have changed.
+	turnedOff bool
 	// outsideShared is how many terminals the machine has in spaces of its own,
 	// which the default scope does not mirror. Not a failure -- it is the
 	// setting doing what it says -- but indistinguishable from one without
@@ -2697,11 +2702,45 @@ func (d *Daemon) pollReachable(state *hostSync) error {
 	return err
 }
 
+// configTurnsOff reports whether the configuration in force has this machine
+// disabled. Asked by target of the live config, and answering false for a
+// machine the config does not name at all -- one reached by typing a target,
+// or picked out of ~/.ssh/config, was never turned off in the first place.
+func (d *Daemon) configTurnsOff(target string) bool {
+	for _, h := range d.config().Hosts {
+		if h.Target == target {
+			return h.Disabled
+		}
+	}
+	return false
+}
+
 // reconcileHost brings one host's mirrors in line with its remote panes.
 //
 // Callers hold d.mu. It is given up for the round trip to the machine and
 // taken again, so nothing read before that may be relied on after it.
 func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
+	// A machine turned off in the config after it was connected. `disabled` is
+	// read where machines are CHOSEN -- startup, connect, the snapshot restore
+	// -- and nothing reads it here, so a machine already connected goes on
+	// being polled and mirrored exactly as before. That is deliberate and it
+	// stays: disconnecting it would close panes somebody may be working in,
+	// and TestADisabledMachineIsLeftAlone holds the choosing half.
+	//
+	// What makes the silence worth breaking is the OTHER half, held by
+	// internal/picker's TestAMachineTurnedOffStaysOutOfTheMenuEvenWhileConnected:
+	// the menu deliberately leaves such a machine out, and the menu is the one
+	// screen that would have stopped it. Hidden there and unmentioned here,
+	// the setting reads as having done nothing at all. Said once per spell,
+	// because a machine can sit like this for the whole session.
+	turnedOff := d.configTurnsOff(state.host.Target)
+	if turnedOff && !state.turnedOff {
+		log.Printf("%s: disabled in the config, but it was already connected, so it is still polled "+
+			"and mirrored; disconnecting it is what stops it now, and the menu does not list it "+
+			"while it is disabled", state.host.Target)
+	}
+	state.turnedOff = turnedOff
+
 	// A plain SSH host exposes no panes to discover, so there is nothing to add
 	// or retire. Its terminals are still watched, because one whose connection
 	// drops would otherwise take the machine's whole space with it.

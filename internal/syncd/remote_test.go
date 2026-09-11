@@ -6352,3 +6352,87 @@ func TestLoweringTheMirrorLimitSaysWhatItLeavesBehind(t *testing.T) {
 		t.Errorf("%d mirrors after doing what the line says, want the new limit of 2", got)
 	}
 }
+
+func TestDisablingAMachineThatIsAlreadyConnectedSaysSo(t *testing.T) {
+	// `disabled` is read where machines are chosen -- startup, connect, the
+	// snapshot restore -- and nowhere in the pass, so a machine turned off
+	// while connected carries on exactly as before. Measured: five passes
+	// after the setting changed, still connected, still mirroring two
+	// terminals, polled five times, and the only line said was "the config
+	// changed on disk and has been reread".
+	//
+	// Carrying on is right -- disconnecting would close panes somebody may be
+	// working in -- and the menu deliberately leaves such a machine out, which
+	// internal/picker holds in TestAMachineTurnedOffStaysOutOfTheMenuEvenWhileConnected.
+	// Those two together are what make the silence worth breaking: the setting
+	// appears to do nothing, and the screen that would have stopped the
+	// machine is the one place it is no longer shown.
+	here := withFakeHerdr(t)
+	there, machineState := withRemoteHerdr(t)
+	path := withConfigFile(t, `{"hosts":[{"target":"bot","mode":"attach"}],"scope":"all"}`)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.Scope = "all"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	addPaneOn(t, machineState, "w-theirs", "work")
+	settle(t, d, here, 4, there)
+
+	// The control: it has to be a machine actually being worked, or its
+	// silence afterwards says nothing.
+	if got := panesFor(here(), "bot"); got == 0 {
+		t.Fatal("nothing was mirrored before the setting changed")
+	}
+
+	off := `{"hosts":[{"target":"bot","mode":"attach","disabled":true}],"scope":"all"}`
+	if err := os.WriteFile(path, []byte(off), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The reread goes by modification time, and a file rewritten inside one
+	// clock tick can carry the one it had.
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(path, later, later); err != nil {
+		t.Fatal(err)
+	}
+
+	logged := captureLog(t)
+	mirrored := panesFor(here(), "bot")
+	for i := 0; i < 5; i++ {
+		d.reconcileAll()
+	}
+	said := logged.String()
+
+	if !strings.Contains(said, "disabled in the config") {
+		t.Fatalf("a machine was turned off while connected and nothing said so:\n%s", said)
+	}
+	if !strings.Contains(said, "bot") {
+		t.Errorf("the line does not name the machine:\n%s", said)
+	}
+	// The way out, which is the only one left once the menu stops listing it.
+	if !strings.Contains(said, "disconnecting it") {
+		t.Errorf("the line does not say what stops the machine now:\n%s", said)
+	}
+	if n := strings.Count(said, "disabled in the config"); n != 1 {
+		t.Errorf("said %d times over five passes, want once:\n%s", n, said)
+	}
+	// And what must NOT happen: the panes are somebody's work.
+	if got := panesFor(here(), "bot"); got != mirrored {
+		t.Errorf("%d mirrors after the machine was disabled, want the %d that were already open "+
+			"left alone", got, mirrored)
+	}
+
+	// The advice, followed: disconnecting really is what stops it.
+	if reply := d.dispatch(Command{Cmd: "disconnect", Host: "bot"}); !reply.OK {
+		t.Fatalf("disconnect: %s", reply.Message)
+	}
+	d.reconcileAll()
+	if got := len(d.status()); got != 0 {
+		t.Errorf("the machine is still in the listing after doing what the line says: %d entries", got)
+	}
+	if got := panesFor(here(), "bot"); got != 0 {
+		t.Errorf("%d of its panes are still here after disconnecting", got)
+	}
+}

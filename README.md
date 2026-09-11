@@ -415,7 +415,7 @@ All optional, in `$(herdr plugin config-dir poorplebs.remote-panes)/config.json`
 | `hosts[].target` | – | The machine, as you would type after `ssh` |
 | `hosts[].mode` | `ssh` | `ssh` plain terminal; `attach` or `observe` to mirror. The menu's `m` sets only `ssh` or `attach`, and refuses a machine set to `observe` |
 | `hosts[].label` | the target | How it is named here. Must differ from every other machine's: it names the machine's space, and two machines sharing one would take each other's terminals |
-| `hosts[].disabled` | `false` | Skip it without removing it |
+| `hosts[].disabled` | `false` | Skip it without removing it. It decides which machines are connected to, so a machine already connected when you set it carries on -- its panes are yours and closing them is not this plugin's to do -- and the menu stops listing it, so disconnecting it is what stops it then. The log says so once |
 | `hosts[].session` | the global one | Which Herdr session on *this* machine |
 | `hosts[].placement` | the global one | How *this* machine's terminals are placed |
 | `hosts[].workspace` | the global one | Which space *this* machine's terminals land in |
