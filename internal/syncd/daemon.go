@@ -2503,6 +2503,15 @@ func (d *Daemon) reconcileOnce() {
 				state.restoreShellsAs = state.restoreShellsAs[1:]
 			}
 			err := d.openShellPane(state, where, false)
+			if err != nil && where != "" {
+				// It did not come back, so its place has not been used. Taken
+				// off the front above and put back on the front here: the next
+				// pass tries this terminal again and wants the same place.
+				// Dropping it is how a machine whose Herdr refuses for a while
+				// comes back as a pile of splits in one tab -- which is the
+				// outcome the comment above says the placement exists to stop.
+				state.restoreShellsAs = append([]string{where}, state.restoreShellsAs...)
+			}
 			d.mu.Unlock()
 			if err != nil {
 				log.Printf("reopen terminal on %s: %v", host.Target, err)
@@ -2530,15 +2539,33 @@ func (d *Daemon) persist() {
 			placement[terminalID] = where
 		}
 		// In the order they were opened, which is the order they have to come
-		// back in.
-		shellPlacements := make([]string, 0, len(state.shellPlacement))
+		// back in -- and then the ones still waiting to be opened, which is
+		// the rest of the same list. A machine whose terminals have not come
+		// back yet still HAS them: they are what the last daemon recorded and
+		// what this one is working through. Recording only the panes that are
+		// up wrote the machine down as having fewer than it does, and where
+		// the restore cannot finish -- a Herdr refusing to open a pane -- it
+		// wrote NONE, on the first pass and every pass after, erasing the only
+		// record there is that the machine ever had them.
+		shellPlacements := make([]string, 0, len(state.shellPlacement)+len(state.restoreShellsAs))
 		for _, shell := range state.shellPlacement {
 			shellPlacements = append(shellPlacements, shell.where)
+		}
+		// Appended rather than maxed, because this one is CONSUMED as each
+		// terminal is placed: what is left in it is what has not been placed.
+		shellPlacements = append(shellPlacements, state.restoreShellsAs...)
+		// The count is the other way round, because restoreShells is the TOTAL
+		// the machine had rather than a remainder -- it stays put while the
+		// panes come back under it and is cleared in one go at the end, so
+		// adding the two would count the restored ones twice.
+		shells := len(state.shellPanes)
+		if state.restoreShells > shells {
+			shells = state.restoreShells
 		}
 		current.Hosts[target] = hostSnapshot{
 			Mirrors:         mirrors,
 			Dismissed:       dismissed,
-			Shells:          len(state.shellPanes),
+			Shells:          shells,
 			ShellPlacements: shellPlacements,
 			Placement:       placement,
 		}

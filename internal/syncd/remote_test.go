@@ -6557,3 +6557,95 @@ func TestWhenASettingEditedUnderARunningMachineTakesEffect(t *testing.T) {
 			"%d); the machine's own placement should be deciding now", got, tabs)
 	}
 }
+
+func TestTerminalsWaitingToComeBackStayInTheRecord(t *testing.T) {
+	// The snapshot is the only record of what a machine had open. A daemon
+	// starting up reads it, and works through what it says while the machine
+	// comes back -- so there is a window where the terminals are recorded but
+	// not yet reopened, and persist runs on every pass right through it.
+	//
+	// It wrote down only the panes that were UP. Measured: a machine with two
+	// terminals, a Herdr that will not open a pane, and one pass is enough to
+	// rewrite the record as none -- and every pass after says none again, so
+	// the fact that the machine ever had them is gone from the one place that
+	// knew. The daemon still had it in memory and would still have restored
+	// them; anything that ends the daemon in the meantime loses them.
+	//
+	// A Herdr refusing to open is what makes the window unbounded, but it is
+	// not what makes it a defect: the same window is open for a second or two
+	// on every ordinary start, which is exactly when a machine is most likely
+	// to be waiting on something.
+	here := withFakeHerdr(t)
+	cfg := machineConfig("bot")
+
+	// A machine with two plain SSH terminals, recorded the ordinary way.
+	first := New(cfg)
+	if reply := first.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	first.reconcileAll()
+	if reply := first.dispatch(Command{Cmd: "open", Host: "bot"}); !reply.OK {
+		t.Fatalf("open: %s", reply.Message)
+	}
+	first.reconcileAll()
+	first.persist()
+
+	had := loadSnapshot().Hosts["bot"]
+	if had.Shells != 2 {
+		t.Fatalf("the machine was written down with %d terminals, want the two it has; "+
+			"there is nothing for the rest of this to lose", had.Shells)
+	}
+	if len(had.ShellPlacements) != 2 {
+		t.Fatalf("%d placements recorded for two terminals", len(had.ShellPlacements))
+	}
+
+	// Herdr restarts and will not open a pane, so what the next daemon reads
+	// cannot be put back yet.
+	refuseOnMachine(t, os.Getenv(fakeHerdrState), "plugin pane open")
+	second := New(cfg)
+	// This connect REPORTS failure, and rightly: it could not open the
+	// terminal. The machine is connected all the same, with what the snapshot
+	// said still to be put back, which is the state this is about.
+	if reply := second.dispatch(Command{Cmd: "connect", Host: "bot"}); reply.OK {
+		t.Fatal("connecting reported success while Herdr was refusing to open a pane")
+	}
+	for pass := 0; pass < 3; pass++ {
+		second.reconcileAll()
+	}
+
+	// The control: the restore really is waiting, rather than quietly done.
+	second.mu.Lock()
+	waiting, back := second.hosts["bot"].restoreShells, len(second.hosts["bot"].shellPanes)
+	second.mu.Unlock()
+	if waiting != 2 || back != 0 {
+		t.Fatalf("the fixture left %d terminals waiting and %d already back; this is about the ones "+
+			"still waiting, so it holds nothing unless they are", waiting, back)
+	}
+
+	kept := loadSnapshot().Hosts["bot"]
+	if kept.Shells != 2 {
+		t.Errorf("the record says the machine has %d terminals while %d are waiting to come back; "+
+			"a daemon starting from this brings back that many and the rest are gone",
+			kept.Shells, waiting)
+	}
+	if len(kept.ShellPlacements) != 2 {
+		t.Errorf("%d placements left in the record for %d terminals, so the ones that come back "+
+			"land wherever the default puts them", len(kept.ShellPlacements), waiting)
+	}
+
+	// What that record is FOR: the daemon after this one has to be able to
+	// bring them back. Herdr accepting again is the other half.
+	if err := os.Remove(os.Getenv(fakeHerdrState) + ".refuse"); err != nil {
+		t.Fatal(err)
+	}
+	third := New(cfg)
+	if reply := third.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	for pass := 0; pass < 3; pass++ {
+		third.reconcileAll()
+	}
+	if got := panesFor(here(), "bot"); got != 2 {
+		t.Errorf("%d terminals came back for a machine that had two", got)
+	}
+}
