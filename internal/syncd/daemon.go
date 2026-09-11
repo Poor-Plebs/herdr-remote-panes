@@ -2965,8 +2965,16 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		BackedOff: backedOff,
 		Max:       d.config().MaxMirrors,
 	})
+	// Said when the machine reaches the limit, not on every pass it spends
+	// there. Being at the limit is the setting doing what it says rather than
+	// a fault, so it is a state a machine can sit in for a whole session --
+	// which said each time is thirty lines a minute into the file somebody
+	// opens to find out what happened, for as long as it lasts. The menu
+	// carries the live state on the machine's own row; what the log is for
+	// here is when it started and the name of the setting that changes it.
+	reachedLimit := plan.AtCapacity && !state.atCapacity
 	state.atCapacity = plan.AtCapacity
-	if plan.AtCapacity {
+	if reachedLimit {
 		log.Printf("%s: mirror limit of %d reached, skipping the rest; raise max_mirrors to see them",
 			state.host.Target, d.config().MaxMirrors)
 	}

@@ -658,6 +658,60 @@ func TestMaxMirrorsCapsWhatOneMachineCanFillTheScreenWith(t *testing.T) {
 	}
 }
 
+func TestTheMirrorLimitIsSaidOnceRatherThanEveryPass(t *testing.T) {
+	// The test above holds that the cap is enforced. This holds what the log
+	// says about it, and it was said on every pass -- measured, five passes
+	// with nothing changing gave five lines.
+	//
+	// The sibling one file over says the cost in as many words: a pass comes
+	// round every couple of seconds, so a line said each time is thirty a
+	// minute into a file that rolls at a quarter of a megabyte. What makes
+	// this one worse than the Herdr-is-away line it sits beside is that being
+	// at the limit is not a fault that resolves -- it is the setting doing
+	// what it says, so a machine sits there for the whole session and the
+	// complaint fills the place the explanation would have been.
+	here := withFakeHerdr(t)
+	there, machineState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.Scope = "all"
+	cfg.MaxMirrors = 3
+	d := New(cfg)
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+
+	logged := captureLog(t)
+	for i := 0; i < 10; i++ {
+		addPaneOn(t, machineState, "w-theirs", fmt.Sprintf("runaway-%d", i))
+	}
+	settle(t, d, here, 4, there)
+	// Passes after the limit was reached, with nothing changing on either end.
+	for i := 0; i < 5; i++ {
+		d.reconcileAll()
+	}
+
+	said := logged.String()
+	// The control, and it is the half a fix for the repetition could break
+	// without anything noticing: it has to be said at all.
+	if !strings.Contains(said, "mirror limit") {
+		t.Fatalf("a machine at the limit shows fewer terminals than it has and the log said nothing:\n%s", said)
+	}
+	// The actionable half. The menu draws "· at limit" on the row; the number
+	// and the name of the setting to raise are only here.
+	if !strings.Contains(said, "max_mirrors") {
+		t.Errorf("the line does not name the setting that would mirror the rest:\n%s", said)
+	}
+	if !strings.Contains(said, "bot") {
+		t.Errorf("the line does not name the machine it is about:\n%s", said)
+	}
+	if n := strings.Count(said, "mirror limit"); n != 1 {
+		t.Errorf("said %d times across nine passes at the limit, want once:\n%s", n, said)
+	}
+}
 func TestClosingAMirroredTabClosesItOnTheMachine(t *testing.T) {
 	// Without this, mirroring is two-way for everything except closing: the tab
 	// goes here and the work quietly carries on over there, which is the one
