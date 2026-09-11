@@ -433,7 +433,7 @@ All optional, in `$(herdr plugin config-dir poorplebs.remote-panes)/config.json`
 | `auto_start` | `true` | Start Herdr on the machine when mirroring needs it |
 | `scope` | `shared` | `shared` mirrors the shared space; `all` mirrors everything |
 | `session` | `default` | Which Herdr session on the machine is shared |
-| `max_mirrors` | `32` | Most terminals to mirror per machine. Past it the rest are left alone, and `status` says so. Zero is not "no limit" — it is not a cap at all, so the default goes back, and the plugin says it did |
+| `max_mirrors` | `32` | Most terminals to mirror per machine. Past it the rest are left alone, and `status` says so. Lowering it under a machine that is already mirroring more does not close those panes -- they are terminals you may be working in -- so it applies to that machine when you disconnect and connect again, and the log says so once. Zero is not "no limit" — it is not a cap at all, so the default goes back, and the plugin says it did |
 | `takeover` | `true` | Take over a stale connection left by a closed terminal |
 | `herdr_bin` | found automatically | Where `herdr` lives on the machine |
 

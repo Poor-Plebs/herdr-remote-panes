@@ -6268,3 +6268,87 @@ func TestAMachineOverTheLimitKeepsMirroringTheSameTerminals(t *testing.T) {
 		t.Errorf("%d mirror(s) closed over four passes with nothing asking for them to go", got)
 	}
 }
+
+func TestLoweringTheMirrorLimitSaysWhatItLeavesBehind(t *testing.T) {
+	// The config is reread every pass, so lowering max_mirrors takes effect at
+	// once for anything further -- and does nothing at all to the panes already
+	// open, which is the whole of what somebody sees when they lower it to fit
+	// their screen. Measured before any of this was written: five mirrors, the
+	// setting changed to two, five passes, five mirrors still, and the only
+	// line said was "the config changed on disk and has been reread".
+	//
+	// Leaving them is right. They are terminals somebody may be working in,
+	// and this plugin treats taking one away as worse than not acting. What
+	// was missing is the sentence, and the way to apply the number now.
+	here := withFakeHerdr(t)
+	there, machineState := withRemoteHerdr(t)
+	path := withConfigFile(t, `{"hosts":[{"target":"bot","mode":"attach"}],"scope":"all","max_mirrors":5}`)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.Scope = "all"
+	cfg.MaxMirrors = 5
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	for i := 0; i < 8; i++ {
+		addPaneOn(t, machineState, "w-theirs", fmt.Sprintf("runaway-%d", i))
+	}
+	settle(t, d, here, 5, there)
+
+	// The control: it has to be holding more than the new number will allow,
+	// or there is nothing over the limit and the silence below means nothing.
+	if got := panesFor(here(), "bot"); got != 5 {
+		t.Fatalf("%d mirrors before the setting changed, want the old limit of 5 filled", got)
+	}
+
+	lowered := `{"hosts":[{"target":"bot","mode":"attach"}],"scope":"all","max_mirrors":2}`
+	if err := os.WriteFile(path, []byte(lowered), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The reread is on the modification time, and a file rewritten inside the
+	// same clock tick can carry the one it had.
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(path, later, later); err != nil {
+		t.Fatal(err)
+	}
+
+	logged := captureLog(t)
+	for i := 0; i < 5; i++ {
+		d.reconcileAll()
+	}
+	said := logged.String()
+
+	if !strings.Contains(said, "max_mirrors is now 2") {
+		t.Fatalf("the limit was lowered under a machine already over it and nothing said so:\n%s", said)
+	}
+	if !strings.Contains(said, "bot") {
+		t.Errorf("the line does not name the machine:\n%s", said)
+	}
+	// The advice, which was followed before it was written: disconnecting and
+	// connecting again really does bring the machine down to the new number.
+	if !strings.Contains(said, "connect again") {
+		t.Errorf("the line does not say how to apply the new number:\n%s", said)
+	}
+	if n := strings.Count(said, "max_mirrors is now"); n != 1 {
+		t.Errorf("said %d times over five passes, want once:\n%s", n, said)
+	}
+	// And the half that must NOT happen: the panes stay.
+	if got := panesFor(here(), "bot"); got != 5 {
+		t.Errorf("%d mirrors after the limit was lowered, want the five that were already open left "+
+			"alone -- those are terminals somebody may be working in", got)
+	}
+
+	// Following the advice has to do what it says, or the sentence is a guess.
+	if reply := d.dispatch(Command{Cmd: "disconnect", Host: "bot"}); !reply.OK {
+		t.Fatalf("disconnect: %s", reply.Message)
+	}
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 5, there)
+	if got := panesFor(here(), "bot"); got != 2 {
+		t.Errorf("%d mirrors after doing what the line says, want the new limit of 2", got)
+	}
+}

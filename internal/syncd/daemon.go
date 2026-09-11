@@ -206,6 +206,13 @@ type hostSync struct {
 	// machine with fewer terminals than it has -- and the number is a setting,
 	// so somebody can do something about it if they are told.
 	atCapacity bool
+	// overLimit is a machine holding MORE mirrors than max_mirrors allows,
+	// which is what lowering the setting on a connected machine leaves behind.
+	// They are not closed: those are terminals somebody may be working in, and
+	// taking one away is the outcome this plugin treats as worse than not
+	// acting. So the setting looks like it did nothing, and this is what says
+	// otherwise.
+	overLimit bool
 	// outsideShared is how many terminals the machine has in spaces of its own,
 	// which the default scope does not mirror. Not a failure -- it is the
 	// setting doing what it says -- but indistinguishable from one without
@@ -2978,6 +2985,24 @@ func (d *Daemon) reconcileHost(state *hostSync, index *paneIndex) error {
 		log.Printf("%s: mirror limit of %d reached, skipping the rest; raise max_mirrors to see them",
 			state.host.Target, d.config().MaxMirrors)
 	}
+
+	// The other side of the same setting, and the one that looks like nothing
+	// happened: max_mirrors lowered under a machine that is already mirroring
+	// more than the new number. The config is reread every pass, so the limit
+	// is in force immediately for anything further -- but the panes already
+	// open stay, because closing them takes away terminals somebody may be
+	// working in. Measured, so the advice is what was actually done: those
+	// panes go when the machine is disconnected and connected again, which is
+	// the one way to apply the number now. Said once per spell over the limit,
+	// for the reason above it.
+	max := d.config().MaxMirrors
+	overLimit := max > 0 && len(state.mirrors) > max
+	if overLimit && !state.overLimit {
+		log.Printf("%s: %d terminals are mirrored and max_mirrors is now %d; the ones already open "+
+			"stay -- disconnect the machine and connect again to apply it",
+			state.host.Target, len(state.mirrors), max)
+	}
+	state.overLimit = overLimit
 
 	for _, rp := range plan.Existing {
 		paneID := state.mirrors[rp.TerminalID]
