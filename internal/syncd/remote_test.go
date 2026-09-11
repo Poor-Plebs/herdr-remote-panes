@@ -2016,6 +2016,49 @@ func TestAMachineThatCannotBeReachedIsEventuallyLeftAlone(t *testing.T) {
 	}
 }
 
+func TestAMachineGivenUpOnSaysSoAndSaysWhatWouldTryAgain(t *testing.T) {
+	// The test above proves the dialling stops. This is what somebody reading
+	// the log sees when it does. Without this line the last thing printed is
+	// "reconcile bot: connection refused" -- the same line the pass before it
+	// printed, and the one before that -- and then nothing, with nothing
+	// marking the pass where it stopped trying or saying how to start it
+	// again. The status flag behind the menu is set either way; the log is a
+	// separate reader, and it was the one left guessing.
+	//
+	// The settled half of this branch, where trying again cannot help, says
+	// "not retrying" instead and is held separately. This is the half where
+	// the machine may well come back on its own.
+	withFakeHerdr(t)
+	withUnreachableMachine(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	d := New(cfg)
+
+	logged := captureLog(t)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); reply.OK {
+		t.Fatalf("connecting to an unreachable machine reported success: %s", reply.Message)
+	}
+	for i := 0; i < 10; i++ {
+		d.reconcileAll()
+	}
+
+	said := logged.String()
+	if !strings.Contains(said, "bot: giving up after") {
+		t.Fatalf("a machine that stopped being dialled said nothing about it:\n%s", said)
+	}
+	// The way back. The menu offers "enter to retry" on that line, and this is
+	// where a person reading the log learns the same thing.
+	if !strings.Contains(said, "connect again to retry") {
+		t.Errorf("giving up says nothing about what would try again:\n%s", said)
+	}
+	// Once, at the pass where it gave up -- not on each of the ten that follow,
+	// which is what the menu line would look like if the flag were not checked.
+	if n := strings.Count(said, "bot: giving up after"); n != 1 {
+		t.Errorf("giving up was announced %d times over ten passes, want once:\n%s", n, said)
+	}
+}
+
 func TestGivingUpIsNotForeverIfYouAskAgain(t *testing.T) {
 	// "On a machine that has been given up on, enter is also how you say try
 	// again now" -- the README, and the reason the menu offers "enter to retry"

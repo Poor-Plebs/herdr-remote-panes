@@ -1837,6 +1837,46 @@ func TestAMachineThatRecoversStartsAgainWithACleanSlate(t *testing.T) {
 	}
 }
 
+func TestAMachineWhoseTerminalsKeepDroppingSaysWhyItWasLeftAlone(t *testing.T) {
+	// The other way a machine is given up on, and the same hole in the log.
+	// A machine that accepts the connection and then drops the terminal gets a
+	// pane opened and shut every couple of seconds, and after enough of them
+	// the plugin leaves it alone. What the log showed for that was a run of
+	// "terminal w1:p6 dropped, reopening" -- the same line every pass -- which
+	// then simply stopped, with no pass marked as the one where it gave up and
+	// nothing saying that connecting again starts it over.
+	held := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+	terminalsAreRunning(t, held())
+
+	logged := captureLog(t)
+	// Drops with nothing between them: a terminal that stays up is what starts
+	// the tally again, and this machine never manages one.
+	for i := 0; i < maxHostAttempts; i++ {
+		terminalDied(t, onlyPane(t, held()),
+			"bot is not reachable over ssh: exit status 255: Connection reset by peer")
+		d.reconcileAll()
+	}
+	// A pass after the last straw, to show it goes quiet rather than saying it
+	// again every couple of seconds.
+	d.reconcileAll()
+
+	said := logged.String()
+	if !strings.Contains(said, "dropped terminals") {
+		t.Fatalf("a machine whose terminals kept dropping was left alone and nothing said why:\n%s", said)
+	}
+	if !strings.Contains(said, "connect again to retry") {
+		t.Errorf("giving up says nothing about what would try again:\n%s", said)
+	}
+	if n := strings.Count(said, "dropped terminals"); n != 1 {
+		t.Errorf("giving up was announced %d times, want once:\n%s", n, said)
+	}
+}
+
 func TestInsideAMachinesSpaceNewTerminalGoesToThatMachine(t *testing.T) {
 	// "New terminal on the machine whose space you are in, and go to it" is
 	// what the manifest promises, and it is the whole reason this action is
