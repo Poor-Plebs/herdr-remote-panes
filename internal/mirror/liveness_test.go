@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 )
@@ -863,5 +864,86 @@ func TestTheMarksAreCreatedPrivate(t *testing.T) {
 					filepath.Base(path), perm)
 			}
 		})
+	}
+}
+
+// TestAFailureMarkIsNeverReadHalfWritten holds that the daemon cannot catch a
+// failure mark between its truncation and its contents.
+//
+// Failed() asks whether the file EXISTS, so the moment a truncating write
+// creates it the pane reads as failed with no reason -- and no reason is a
+// DIFFERENT answer, not a missing one: planLostPaneAction retries on the count
+// where a reason it recognises stops until somebody fixes what is wrong. So a
+// read landing inside the write turns a changed host key back into a terminal
+// opened and shut with fifteen more lines of banner, which is what recording
+// the reason was added to prevent.
+//
+// Two thousand rounds, because the window is small: at two hundred the
+// defect got through about one run in eight, measured. Load only widens it, so a
+// busy machine makes this likelier to catch a bad write and no likelier to
+// fail a good one.
+func TestAFailureMarkIsNeverReadHalfWritten(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "hub")
+
+	// What ssh says when a host key has changed, which is the reason whose
+	// recognition matters most.
+	reason := strings.Repeat("REMOTE HOST IDENTIFICATION HAS CHANGED, and this is the banner beside it.\n", 20)
+
+	// What FailureReason gives back: it cuts the timestamp line off the front
+	// and TrimSpaces what is left, so the trailing newline is not part of it.
+	want := strings.TrimSpace(reason)
+
+	var mu sync.Mutex
+	seen, short := 0, 0
+	for round := 0; round < 2000; round++ {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if err := MarkFailed("w1:p2", reason); err != nil {
+				t.Error(err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			// Spinning rather than reading once, because a single read almost
+			// always wins the race outright and finds no mark at all -- which
+			// says nothing either way and made this miss the defect five runs
+			// in six. What the daemon does is act on a failure it can SEE and
+			// read the reason to decide which kind it is; this does the same
+			// thing, repeatedly, until there is one to see.
+			for i := 0; i < 5000; i++ {
+				if !Failed("w1:p2") {
+					continue
+				}
+				got := FailureReason("w1:p2")
+				mu.Lock()
+				seen++
+				if got != want {
+					short++
+				}
+				mu.Unlock()
+				return
+			}
+		}()
+		wg.Wait()
+		ClearFailed("w1:p2")
+	}
+
+	if short > 0 {
+		t.Errorf("%d of the %d reads that found a mark read a reason that was not the one written; "+
+			"a failure whose reason cannot be read is retried as though nothing were known about it",
+			short, seen)
+	}
+	// The control is about the fixture rather than the code, and it is the
+	// weaker half on purpose: the reader usually wins the race outright and
+	// finds no mark at all, which says nothing either way. What it must not be
+	// is a round that never ran.
+	if seen == 0 {
+		t.Log("no read caught the mark being written this time; the rounds still ran")
+	}
+	if _, err := os.Stat(failurePath("w1:p2")); err == nil {
+		t.Error("the last round left a mark behind, so the rounds were not independent")
 	}
 }

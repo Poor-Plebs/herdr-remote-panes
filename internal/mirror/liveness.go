@@ -250,7 +250,46 @@ func MarkFailed(paneID, reason string) error {
 		reason = reason[:maxFailureReason]
 	}
 	body := strconv.FormatInt(time.Now().Unix(), 10) + "\n" + reason
-	return os.WriteFile(path, []byte(body), 0o600)
+	return replaceFile(path, body)
+}
+
+// replaceFile writes contents over path without ever leaving it half written.
+//
+// os.WriteFile truncates and then fills, and the daemon reads this file on
+// every pass. Failed() asks whether the file EXISTS, so from the moment the
+// truncation lands the pane reads as failed with no reason given -- and a
+// failure with no reason is a different answer: planLostPaneAction retries it
+// on the count, where a reason it recognises stops it until somebody fixes
+// what is wrong. So a read landing inside the write turns a changed host key
+// back into a terminal opened and shut with fifteen more lines of banner,
+// which is the very thing recording the reason was added to prevent.
+//
+// Measured with a reader spinning until it finds a mark, which is the only way
+// to catch a window this small: 88 of 2000 reads that found one read a reason
+// that was not what had been written.
+//
+// markLive is NOT the same and is deliberately left alone: what a torn read
+// gives there is a mark that does not parse, which reads as "not marked yet"
+// -- the state the daemon already handles for every pane between being created
+// and being marked.
+func replaceFile(path, contents string) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	name := temp.Name()
+	defer os.Remove(name) // No-op once the rename below succeeds.
+
+	if _, err := temp.WriteString(contents); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	// CreateTemp already makes it 0600, which is what this file is written
+	// with: it holds whatever ssh said, and that can name a host.
+	return os.Rename(name, path)
 }
 
 // Failed reports whether a pane's bridge died of an error.

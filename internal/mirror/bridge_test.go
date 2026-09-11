@@ -706,9 +706,18 @@ func TestThePaneSaysWhichWayTheMarkFailed(t *testing.T) {
 				if err := os.MkdirAll(filepath.Dir(mark), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(mark, []byte("stale"), 0o400); err != nil {
+				if err := os.WriteFile(mark, []byte("stale"), 0o600); err != nil {
 					t.Fatal(err)
 				}
+				// The DIRECTORY, not the mark. The mark is replaced by writing
+				// a temporary beside it and renaming, so a read-only FILE is
+				// no obstacle -- that is the point of doing it that way, and
+				// making the file read-only here stages nothing at all. With
+				// nowhere to put the temporary there is no way to replace it.
+				if err := os.Chmod(filepath.Dir(mark), 0o500); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(filepath.Dir(mark), 0o700) })
 			},
 			want:    "failed but not why",
 			notWant: "read this pane as one you closed",
