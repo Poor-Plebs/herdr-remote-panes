@@ -410,6 +410,12 @@ All optional, in `$(herdr plugin config-dir poorplebs.remote-panes)/config.json`
 }
 ```
 
+Edits are picked up while the plugin is running, but not all at the same
+moment. The settings above the machine list are read on every pass, so a
+change is in force for whatever the plugin does next — it does not undo what
+is already open. A machine's own entry under `hosts` is read when that machine
+is connected, so changing one applies when it is connected again.
+
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `hosts[].target` | – | The machine, as you would type after `ssh` |

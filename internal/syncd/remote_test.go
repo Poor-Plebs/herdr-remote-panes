@@ -6436,3 +6436,124 @@ func TestDisablingAMachineThatIsAlreadyConnectedSaysSo(t *testing.T) {
 		t.Errorf("%d of its panes are still here after disconnecting", got)
 	}
 }
+
+// mirrorTabs is the tabs this end has a mirror in, which is how a placement
+// shows: `tab` gives each mirror one of its own and `split` shares them.
+func mirrorTabs(here func() fakeHerdr) []string {
+	seen := map[string]bool{}
+	for _, pane := range here().Panes {
+		if label, _ := pane["label"].(string); label == "" {
+			continue
+		}
+		if tab, _ := pane["tab_id"].(string); tab != "" {
+			seen[tab] = true
+		}
+	}
+	var out []string
+	for tab := range seen {
+		out = append(out, tab)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestWhenASettingEditedUnderARunningMachineTakesEffect(t *testing.T) {
+	// Both halves of what the settings table promises about editing, because
+	// the two are not the same and nothing said so. The config is reread every
+	// pass, so a setting above the machine list is in force for whatever the
+	// plugin does next. A machine's OWN entry is not: the daemon keeps the
+	// config.Host it was handed when the machine was connected, and every
+	// `d.config().SomethingFor(state.host)` reads a live top-level fallback
+	// behind that frozen copy -- so editing a machine's own line does nothing
+	// until it is connected again.
+	//
+	// Measured with `placement`, which is the one whose effect is visible from
+	// the outside: `tab` gives each mirror a tab of its own and `split` puts
+	// it beside one that is there.
+	here := withFakeHerdr(t)
+	there, machineState := withRemoteHerdr(t)
+	path := withConfigFile(t, `{"hosts":[{"target":"bot","mode":"attach"}],"scope":"all","placement":"tab"}`)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.Scope = "all"
+	cfg.Placement = "tab"
+	d := New(cfg)
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	addPaneOn(t, machineState, "w-theirs", "one")
+	settle(t, d, here, 4, there)
+
+	rewrite := func(contents string) {
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		// The reread goes by modification time, and a file rewritten inside
+		// one clock tick can carry the one it had.
+		later := time.Now().Add(time.Hour)
+		if err := os.Chtimes(path, later, later); err != nil {
+			t.Fatal(err)
+		}
+		d.reconcileAll()
+	}
+
+	// The control for everything below: `tab` really is in force, so a mirror
+	// arriving gets a tab to itself. Without this the counts underneath would
+	// be the same whatever the placement did.
+	panes, tabs := panesFor(here(), "bot"), len(mirrorTabs(here))
+	if panes < 2 || tabs != panes {
+		t.Fatalf("%d mirrors across %d tabs under `tab`; each should have one of its own, "+
+			"so the placement is not deciding anything here", panes, tabs)
+	}
+
+	// THE FIRST HALF: a setting above the machine list, changed underneath.
+	rewrite(`{"hosts":[{"target":"bot","mode":"attach"}],"scope":"all","placement":"split"}`)
+	addPaneOn(t, machineState, "w-theirs", "two")
+	settle(t, d, here, 4, there)
+	if got := panesFor(here(), "bot"); got != panes+1 {
+		t.Fatalf("%d mirrors after another terminal, want %d; nothing arrived, so the tabs below "+
+			"say nothing", got, panes+1)
+	}
+	if got := len(mirrorTabs(here)); got != tabs {
+		t.Errorf("the new mirror opened a tab (%d tabs, was %d) after the top-level placement "+
+			"became `split`; a setting above the machine list is read every pass", got, tabs)
+	}
+
+	// THE SECOND HALF: the machine's own entry, changed underneath. The
+	// top-level stays `split`, so applying the machine's `tab` is the only
+	// thing that can put the next mirror in a tab of its own.
+	panes, tabs = panesFor(here(), "bot"), len(mirrorTabs(here))
+	rewrite(`{"hosts":[{"target":"bot","mode":"attach","placement":"tab"}],"scope":"all","placement":"split"}`)
+	addPaneOn(t, machineState, "w-theirs", "three")
+	settle(t, d, here, 4, there)
+	if got := panesFor(here(), "bot"); got != panes+1 {
+		t.Fatalf("%d mirrors after another terminal, want %d", got, panes+1)
+	}
+	if got := len(mirrorTabs(here)); got != tabs {
+		t.Errorf("the machine's own placement took effect without connecting again (%d tabs, was "+
+			"%d). That may be an improvement, but the settings table says it applies on "+
+			"connecting and something has to say the other thing first", got, tabs)
+	}
+
+	// And connecting again is what applies it, which is what the table tells
+	// somebody to do -- followed here rather than asserted.
+	if reply := d.dispatch(Command{Cmd: "disconnect", Host: "bot"}); !reply.OK {
+		t.Fatalf("disconnect: %s", reply.Message)
+	}
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	settle(t, d, here, 4, there)
+	panes, tabs = panesFor(here(), "bot"), len(mirrorTabs(here))
+	if tabs != panes {
+		t.Fatalf("%d mirrors across %d tabs after connecting again; the machine's own `tab` "+
+			"should be in force now", panes, tabs)
+	}
+	addPaneOn(t, machineState, "w-theirs", "four")
+	settle(t, d, here, 4, there)
+	if got := len(mirrorTabs(here)); got != tabs+1 {
+		t.Errorf("a terminal arriving after the reconnect went into an existing tab (%d tabs, was "+
+			"%d); the machine's own placement should be deciding now", got, tabs)
+	}
+}
