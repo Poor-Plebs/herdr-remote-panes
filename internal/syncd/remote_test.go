@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -6172,5 +6173,98 @@ func TestNothingIsSaidTwiceOnceAMachineHasSettled(t *testing.T) {
 				"long as the state lasts:\n%s",
 				row.is, len(twice), said, strings.Join(lines, "\n"))
 		})
+	}
+}
+
+func TestAMachineOverTheLimitKeepsMirroringTheSameTerminals(t *testing.T) {
+	// The test above holds that the cap is enforced -- that no more than
+	// max_mirrors panes are opened. This holds WHICH ones, pass after pass,
+	// and it is a different claim: at the limit there are more terminals than
+	// places, so every pass chooses, and nothing said the choice had to come
+	// out the same way twice.
+	//
+	// What makes it choose the same way is the tab order, fetched from the
+	// machine before the panes are ordered. A pane listing has no order Herdr
+	// promises, so without it the first few terminals in the listing are
+	// whichever ones the listing happened to put first -- and a machine over
+	// the limit then mirrors a different subset each time. Measured, with the
+	// round trip skipped: the daemon opened a mirror on one pass and closed it
+	// on the next, over and over, which is a pane flashing open and shut every
+	// couple of seconds for as long as the machine stays over the limit.
+	//
+	// This exists because that round trip looks like an easy saving. It is
+	// made on every pass for as long as a machine sits over the limit, and the
+	// function deciding it is called planNeedsTabOrder -- so the tightening
+	// suggests itself, and nothing in the gate failed when I made it.
+	//
+	// WHICH ASSERTION BELOW CATCHES IT: the fill control, eight runs out of
+	// eight -- with the tightening in, the machine settles holding ONE mirror
+	// against a limit of two, so it never reaches the stability loop. That is
+	// worth knowing rather than hiding, because it means the loop underneath
+	// is held by no mutation anybody has found yet; it is written for the
+	// churn that was measured beside the short fill, and it names the damage
+	// in panes. Skipping the round trip WITHOUT the tightening changes nothing
+	// here, measured eight for eight, so do not read this as a test of the
+	// saving.
+	here := withFakeHerdr(t)
+	there, machineState := withRemoteHerdr(t)
+
+	cfg := machineConfig("bot")
+	cfg.Hosts[0].Mode = "attach"
+	cfg.Scope = "all"
+	cfg.MaxMirrors = 2
+	d := New(cfg)
+
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	for i := 0; i < 8; i++ {
+		addPaneOn(t, machineState, "w-theirs", fmt.Sprintf("runaway-%d", i))
+	}
+	settle(t, d, here, 4, there)
+
+	// The controls. There has to BE a choice -- more terminals on the machine
+	// than places for them -- or every pass picks the same set by having no
+	// alternative, and this passes against code that chooses at random.
+	hosts := d.status()
+	if len(hosts) != 1 || !hosts[0].AtCapacity {
+		t.Fatalf("the machine is not over the limit, so nothing is choosing: %+v", hosts)
+	}
+	if got := len(there().Panes); got <= cfg.MaxMirrors {
+		t.Fatalf("the machine has %d terminals for a limit of %d; there is nothing to choose between",
+			got, cfg.MaxMirrors)
+	}
+
+	mirroring := func() []string {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		var ids []string
+		for terminalID := range d.hosts["bot"].mirrors {
+			ids = append(ids, terminalID)
+		}
+		sort.Strings(ids)
+		return ids
+	}
+	first := mirroring()
+	if len(first) != cfg.MaxMirrors {
+		t.Fatalf("%d terminals mirrored, want the limit of %d filled", len(first), cfg.MaxMirrors)
+	}
+	opened, closed := here().Calls["plugin pane open"], here().Calls["plugin pane close"]
+
+	for pass := 1; pass <= 4; pass++ {
+		d.reconcileAll()
+		if now := mirroring(); !slices.Equal(now, first) {
+			t.Fatalf("pass %d mirrors %v where the pass before mirrored %v; the machine is over the "+
+				"limit and nothing on either end changed", pass, now, first)
+		}
+	}
+	// The half somebody watching would see. The set above can only stay the
+	// same if nothing was swapped, but saying it in panes names the damage:
+	// a mirror opened and shut on alternating passes, every couple of seconds.
+	if got := here().Calls["plugin pane open"] - opened; got != 0 {
+		t.Errorf("%d mirror(s) opened over four passes with nothing to mirror them for", got)
+	}
+	if got := here().Calls["plugin pane close"] - closed; got != 0 {
+		t.Errorf("%d mirror(s) closed over four passes with nothing asking for them to go", got)
 	}
 }

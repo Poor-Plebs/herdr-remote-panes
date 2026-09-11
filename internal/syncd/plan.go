@@ -279,6 +279,24 @@ func planStrayPlacement(panesInSameTab int) string {
 //
 // A settled pass opens nothing, and asking anyway was half of what a pass cost
 // a machine -- doubling the time the daemon's lock is held for each one.
+//
+// THE OBVIOUS TIGHTENING HERE IS A DEFECT, AND IT WAS TRIED. A machine at
+// max_mirrors has terminals that are never going to be opened, so this says
+// yes on every pass for as long as it sits there -- and narrowing it to
+// "something planMirrors would actually open", which is the same question that
+// function already answers, looks free. It is not. At the limit the tab order
+// decides WHICH terminals are mirrored and not merely the order they arrive
+// in, and a pane listing has no order Herdr promises. Measured with that
+// change in: the machine ended up mirroring ONE terminal against a limit of
+// two, and the daemon opened a mirror on one pass and closed it on the next --
+// a pane flashing open and shut every couple of seconds, for as long as the
+// machine stayed over the limit.
+//
+// TestAMachineOverTheLimitKeepsMirroringTheSameTerminals fails on that change
+// eight runs out of eight. Note what it does NOT catch: skipping the round
+// trip on its own is harmless here, measured eight for eight, because two
+// terminals already mirrored stay mirrored whatever order the listing comes
+// back in. It is the tightening that does the damage, not the saving.
 func planNeedsTabOrder(panes []herdrcli.Pane, mirrored map[string]string) bool {
 	for _, pane := range panes {
 		if _, ok := mirrored[pane.TerminalID]; !ok {
