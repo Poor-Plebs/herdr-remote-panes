@@ -6746,3 +6746,128 @@ func TestATerminalThatDropsComesBackWhereItWas(t *testing.T) {
 			"were asked for that way", tabsRecorded, placed)
 	}
 }
+
+func TestARecordOfTerminalsAgreesWithItself(t *testing.T) {
+	// The snapshot says how many terminals a machine has AND where each one
+	// goes, and those are two answers to one question. They disagreed: a
+	// terminal whose link drops queues the place it is coming back to, and the
+	// count was read off restoreShells, which only a RESTART sets. So the
+	// record said two terminals and three places, and a daemon starting from
+	// it brought back two -- the dropped one gone for good, and a place left
+	// over to put a later terminal in the wrong tab.
+	//
+	// The count comes off the list now, so the two cannot drift apart. This
+	// holds the invariant rather than the arithmetic: one place per terminal
+	// the machine has, up or waiting.
+	here := withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	d.reconcileAll()
+	for i := 0; i < 2; i++ {
+		if reply := d.dispatch(Command{Cmd: "open", Host: "bot", Placement: "tab"}); !reply.OK {
+			t.Fatalf("open: %s", reply.Message)
+		}
+		d.reconcileAll()
+	}
+	d.persist()
+
+	at := loadSnapshot().Hosts["bot"]
+	if at.Shells != 3 || len(at.ShellPlacements) != 3 {
+		t.Fatalf("at rest the record says %d terminals and %d places, want three of each; "+
+			"the window below is about what happens to a record that starts right",
+			at.Shells, len(at.ShellPlacements))
+	}
+
+	d.mu.Lock()
+	last := d.hosts["bot"].shellPlacement[len(d.hosts["bot"].shellPlacement)-1]
+	d.mu.Unlock()
+
+	// One terminal's link drops, and this end will not open its replacement,
+	// which is what holds the window open long enough to read.
+	refuseOnMachine(t, os.Getenv(fakeHerdrState), "plugin pane open")
+	terminalDied(t, last.paneID, "bot is not reachable over ssh: exit status 255: Connection reset by peer")
+	for pass := 0; pass < 3; pass++ {
+		d.reconcileAll()
+	}
+	d.persist()
+
+	// The control: the replacement really is still waiting, so the record is
+	// being written mid-operation rather than at rest.
+	d.mu.Lock()
+	up, queued := len(d.hosts["bot"].shellPanes), len(d.hosts["bot"].restoreShellsAs)
+	d.mu.Unlock()
+	if up != 2 || queued != 1 {
+		t.Fatalf("%d terminals up and %d waiting; this is about the window where one is waiting, "+
+			"and the fixture is not in it", up, queued)
+	}
+
+	after := loadSnapshot().Hosts["bot"]
+	if after.Shells != len(after.ShellPlacements) {
+		t.Errorf("the record says %d terminals and gives %d places; whichever is right, a daemon "+
+			"reading it works from both", after.Shells, len(after.ShellPlacements))
+	}
+	if after.Shells != 3 {
+		t.Errorf("the record says %d terminals for a machine with two up and one coming back", after.Shells)
+	}
+
+	// What the record is for: a daemon starting from it brings all three back.
+	if err := os.Remove(os.Getenv(fakeHerdrState) + ".refuse"); err != nil {
+		t.Fatal(err)
+	}
+	next := New(machineConfig("bot"))
+	if reply := next.dispatch(Command{Cmd: "connect", Host: "bot"}); !reply.OK {
+		t.Fatalf("connect: %s", reply.Message)
+	}
+	for pass := 0; pass < 4; pass++ {
+		next.reconcileAll()
+	}
+	if got := panesFor(here(), "bot"); got != 3 {
+		t.Errorf("%d terminals came back for a machine that had three", got)
+	}
+}
+
+func TestARecordWithACountAndNoPlacesKeepsTheCount(t *testing.T) {
+	// The other half of counting the terminals off the list of places: a
+	// snapshot written before those places were recorded has a count and an
+	// empty list, and reading the count off the list would make it none on the
+	// first pass -- the machine's terminals gone because the record was older
+	// than the field.
+	//
+	// Written because the line that handles it survived being taken out: the
+	// test above has a record with places in it, so it answers the same either
+	// way, and nothing else went near this.
+	withFakeHerdr(t)
+	d := New(machineConfig("bot"))
+	// What an older daemon left: how many, and nothing about where.
+	d.mu.Lock()
+	d.snapshot = snapshot{Hosts: map[string]hostSnapshot{
+		"bot": {Shells: 2},
+	}}
+	d.mu.Unlock()
+
+	// Nothing can be put back yet, which is what leaves the count standing on
+	// its own with no places under it.
+	refuseOnMachine(t, os.Getenv(fakeHerdrState), "plugin pane open")
+	if reply := d.dispatch(Command{Cmd: "connect", Host: "bot"}); reply.OK {
+		t.Fatal("connecting reported success while Herdr was refusing to open a pane")
+	}
+	for pass := 0; pass < 3; pass++ {
+		d.reconcileAll()
+	}
+	d.persist()
+
+	// The control: the old count really is all there is to go on.
+	d.mu.Lock()
+	up, places := len(d.hosts["bot"].shellPanes), len(d.hosts["bot"].restoreShellsAs)
+	d.mu.Unlock()
+	if up != 0 || places != 0 {
+		t.Fatalf("%d terminals up and %d places queued; this is about a record with neither", up, places)
+	}
+
+	if got := loadSnapshot().Hosts["bot"].Shells; got != 2 {
+		t.Errorf("the record says %d terminals after a pass, want the two the older one recorded; "+
+			"a machine whose snapshot predates the places loses them on the first pass", got)
+	}
+}

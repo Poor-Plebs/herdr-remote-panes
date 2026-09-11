@@ -2554,11 +2554,18 @@ func (d *Daemon) persist() {
 		// Appended rather than maxed, because this one is CONSUMED as each
 		// terminal is placed: what is left in it is what has not been placed.
 		shellPlacements = append(shellPlacements, state.restoreShellsAs...)
-		// The count is the other way round, because restoreShells is the TOTAL
-		// the machine had rather than a remainder -- it stays put while the
-		// panes come back under it and is cleared in one go at the end, so
-		// adding the two would count the restored ones twice.
-		shells := len(state.shellPanes)
+		// Counted from the list above rather than worked out a second way,
+		// which is what made the two disagree: one place per terminal the
+		// machine has is exactly what that list is, whether the terminal is up
+		// or waiting. Deriving the count from anything else means two answers
+		// to one question, and a terminal queued by a DROP reached the places
+		// while the count -- read off restoreShells, which only a restart sets
+		// -- did not. The record then said two terminals and three places, and
+		// a daemon starting from it brought back two.
+		//
+		// restoreShells still has the last word when it is larger: a snapshot
+		// written before the places were recorded has the count and no list.
+		shells := len(shellPlacements)
 		if state.restoreShells > shells {
 			shells = state.restoreShells
 		}
