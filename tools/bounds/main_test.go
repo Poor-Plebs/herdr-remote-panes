@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"errors"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -748,25 +751,31 @@ func TestAnInterruptedRunPutsTheFileBack(t *testing.T) {
 // only the arm where the write works, and passed whether either message was
 // printed or not.
 func TestARestoreThatCannotBeMadeSaysWhichFileIsStillRaised(t *testing.T) {
-	// Self-check the fixture before building on it: a user who can write a
-	// read-only file cannot stage a failing restore at all, and the whole test
-	// would then be about nothing.
+	// Self-check the fixture before building on it: a user who can write into
+	// a directory that forbids it cannot stage a failing restore at all, and
+	// the whole test would then be about nothing.
 	guard := filepath.Join(t.TempDir(), "readonly")
-	if err := os.WriteFile(guard, []byte("x"), 0o400); err != nil {
+	if err := os.Mkdir(guard, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(guard, []byte("y"), 0o400); err == nil {
-		t.Skip("this user can write a read-only file, so a restore cannot be made to fail")
+	if err := os.WriteFile(filepath.Join(guard, "x"), []byte("x"), 0o600); err == nil {
+		t.Skip("this user can write into a directory that forbids it, so a restore cannot be made to fail")
 	}
 
 	run, probe, said, done := raisedRun(t)
 
-	// Read-only, so putBack's write fails. The mode goes back afterwards so
-	// what was left behind can be read like any other file.
-	if err := os.Chmod(probe, 0o400); err != nil {
+	// The DIRECTORY rather than the file, which it used to be. The restore
+	// puts a temporary beside the file and renames it over, so a read-only
+	// FILE is no obstacle at all -- a rename into a writable directory goes
+	// through, and that is the whole point of writing it that way. Nothing can
+	// be created in here, so there is nowhere to put the temporary. The mode
+	// goes back afterwards so what was left behind can be read, and so the
+	// directory can be removed.
+	dir := filepath.Dir(probe)
+	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(probe, 0o600) })
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
 	if err := run.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
@@ -1063,5 +1072,87 @@ func TestASweepWithNoCeilingSaysSoRatherThanLookingBounded(t *testing.T) {
 	// is told only "no ceiling" cannot tell whether it matters.
 	if !strings.Contains(said.String(), "take the machine down") {
 		t.Errorf("the warning does not say what the risk is:\n%s", said.String())
+	}
+}
+
+// TestTheFileIsNeverSeenHalfPutBack holds that a restore cannot be caught
+// half done.
+//
+// The restore runs in the signal handler's goroutine while the main one is
+// waiting on `go test`, which is a process READING the very file being put
+// back. os.WriteFile truncates and then fills, so that reader can land on a
+// file that is not there yet: measured at ten reads in two hundred, and the
+// answer it produces is "would not build" -- a verdict, from a tool whose
+// entire output is verdicts, about a bound that nothing was wrong with.
+// It went red in CI three times before the reason was legible, and the line
+// that finally named it was "probe.go:1:1: expected 'package', found 'EOF'".
+//
+// Two hundred rounds, because the window is small and this is the shape the
+// repository already uses for a torn write. Load only widens it, so a busy
+// machine makes this MORE likely to catch a bad write and no less likely to
+// pass a good one.
+func TestTheFileIsNeverSeenHalfPutBack(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "probe.go")
+	original := "package pkg\n\nfunc Loose(n int) bool {\n\treturn n > 3\n}\n"
+	// With some size to it, the way a swept file has.
+	for i := 0; i < 200; i++ {
+		original += "\n// a line of the file being worked on, which is not a small file\n"
+	}
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	torn, reads := 0, 0
+	for round := 0; round < 200; round++ {
+		inFlight.Lock()
+		inFlight.path, inFlight.original = path, original
+		inFlight.Unlock()
+		if err := os.WriteFile(path, []byte("package pkg\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if _, err := putBack(); err != nil {
+				t.Error(err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			reads++
+			if _, err := parser.ParseFile(token.NewFileSet(), path, raw, parser.PackageClauseOnly); err != nil {
+				torn++
+			}
+		}()
+		wg.Wait()
+	}
+
+	// The control, and it is about the fixture: every round really did read
+	// the file. Without it a reader that never ran reports no torn reads.
+	if reads != 200 {
+		t.Fatalf("%d of 200 rounds read the file; the rest say nothing either way", reads)
+	}
+	if torn > 0 {
+		t.Errorf("%d of %d reads landed on a file that will not parse; a build running beside the "+
+			"restore reports what it could not compile as a verdict", torn, reads)
+	}
+	// And the restore has to have actually restored, or the reads above were
+	// of a file nobody was writing.
+	back, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(back) != original {
+		t.Error("the file was not put back, so what the reads saw was not a restore")
 	}
 }

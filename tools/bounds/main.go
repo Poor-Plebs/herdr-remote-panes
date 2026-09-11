@@ -143,6 +143,42 @@ func restoreOnSignal() {
 	}()
 }
 
+// replaceFile writes contents over path without ever leaving it half written.
+//
+// os.WriteFile truncates and then fills, so anything reading the file in
+// between sees one that is not there yet -- and what reads this file is the
+// `go test` running beside the restore that fires when a run is interrupted.
+// Measured in tools/deletions, which had the same pair of writes: 10 reads in
+// 200 landed on a file that would not parse, and the CI failure it explains is
+// a verdict of would-not-build for a bound nothing was wrong with.
+//
+// A temporary beside it and a rename, which is what internal/config and
+// internal/syncd already do for the files they replace. No Sync: what this
+// guards against is another process reading mid-write, not a power cut, and
+// this file is a working copy of source that is about to be put back anyway.
+func replaceFile(path, contents string) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	name := temp.Name()
+	defer os.Remove(name) // No-op once the rename below succeeds.
+
+	if _, err := temp.WriteString(contents); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	// CreateTemp makes it private, and this is source in a tree somebody else
+	// is about to read.
+	if err := os.Chmod(name, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
+}
+
 // putBack restores the file a mutation is applied to, and says which it was.
 //
 // Nothing in flight is not an error: it is what a run between one bound and the
@@ -163,7 +199,7 @@ func putBack() (string, error) {
 	if path == "" {
 		return "", nil
 	}
-	if err := os.WriteFile(path, []byte(inFlight.original), 0o644); err != nil {
+	if err := replaceFile(path, inFlight.original); err != nil {
 		return path, err
 	}
 	inFlight.path, inFlight.original = "", ""
@@ -310,7 +346,7 @@ func check(path, original string, m []int, value, pkg string) (verdict string) {
 	for i, factor := range raises {
 		// Written from the original every time rather than from the last
 		// mutation, so a second attempt raises the bound once and not twice.
-		if err := os.WriteFile(path, []byte(raisedSourceBy(original, m, value, factor)), 0o644); err != nil {
+		if err := replaceFile(path, raisedSourceBy(original, m, value, factor)); err != nil {
 			return "could not write"
 		}
 		out, err := testCmd(pkg).CombinedOutput()

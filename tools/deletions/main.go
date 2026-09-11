@@ -126,6 +126,44 @@ var inFlight struct {
 	original string
 }
 
+// replaceFile writes contents over path without ever leaving it half written.
+//
+// os.WriteFile truncates and then fills, so anything reading the file in
+// between sees one that is not there yet -- and what reads this file is the
+// `go build` or `go test` running beside the restore that fires when a run is
+// interrupted. Measured over 200 rounds of a restore beside a read: 10 of the
+// reads landed on a file that would not parse. That is the CI failure this
+// explains, "probe.go:1:1: expected 'package', found 'EOF'" -- a verdict of
+// would-not-build for a statement nothing was wrong with, from a tool whose
+// whole output is verdicts.
+//
+// A temporary beside it and a rename, which is what internal/config and
+// internal/syncd already do for the files they replace. No Sync: what this
+// guards against is another process reading mid-write, not a power cut, and
+// this file is a working copy of source that is about to be put back anyway.
+func replaceFile(path, contents string) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	name := temp.Name()
+	defer os.Remove(name) // No-op once the rename below succeeds.
+
+	if _, err := temp.WriteString(contents); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	// CreateTemp makes it private, and this is source in a tree somebody else
+	// is about to read.
+	if err := os.Chmod(name, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
+}
+
 // putBack restores the file a deletion is applied to, and says which it was.
 //
 // Nothing in flight is not an error: it is what the moment between two
@@ -139,7 +177,7 @@ func putBack() (string, error) {
 	if path == "" {
 		return "", nil
 	}
-	if err := os.WriteFile(path, []byte(inFlight.original), 0o644); err != nil {
+	if err := replaceFile(path, inFlight.original); err != nil {
 		return path, err
 	}
 	inFlight.path, inFlight.original = "", ""
@@ -336,7 +374,7 @@ func sweep(path, original string, lines []string, i int, root, pkg string, limit
 		}
 	}()
 
-	if err := os.WriteFile(path, []byte(withoutLine(lines, i)), 0o644); err != nil {
+	if err := replaceFile(path, withoutLine(lines, i)); err != nil {
 		// Nothing was compiled, so calling this a build failure is the wrong
 		// word for it -- the count is the same and the reason is not.
 		return "would not build", "could not write the file: " + err.Error()
