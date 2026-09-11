@@ -292,9 +292,15 @@ const probeOriginal = "package probe\n\nvar Ran int\n\nfunc Do() {\n\tRan = 1\n}
 // probeDeleted is that file with the one statement taken out, which is exactly
 // what the sweep writes before it builds.
 //
-// Compared whole rather than by the line's absence: os.WriteFile truncates
-// before it writes, so a read landing mid-write also fails to contain the line
-// and would send the signal while there was nothing yet to put back.
+// Compared whole rather than by the line's absence. That used to be because
+// os.WriteFile truncates before it writes, so a read landing mid-write also
+// failed to contain the line and would have sent the signal while there was
+// nothing yet to put back. The sweep writes to a temporary and renames now, so
+// the file has exactly two states and neither of them is half of one.
+//
+// It stays whole anyway, for a reason that does not depend on that: waiting
+// for THIS content is also a check that the mutation is the one expected, and
+// waiting for a line to be missing is satisfied by any file that never had it.
 const probeDeleted = "package probe\n\nvar Ran int\n\nfunc Do() {\n}\n"
 
 // probeInTree is how the fixture's file is named in anything the command
