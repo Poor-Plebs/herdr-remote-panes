@@ -142,16 +142,24 @@ var holdOpen = 5 * time.Second
 // finds no mark, and a pane that went with no mark beside it is the description
 // of a terminal somebody shut; with close_propagates on, that closes the
 // terminal on the machine. When something is at the path and could not be
-// replaced -- a stale mark that cannot be written over, or a disk that took the
-// file and then would not take its contents, since os.WriteFile creates before
-// it writes and leaves what it made behind -- the daemon finds a mark after
-// all. It then reads a failure without the reason, which sends it by the count
-// of dropped terminals rather than by what went wrong.
+// replaced -- an older mark still there, with nowhere to put the replacement --
+// the daemon finds a mark after all. It then reads a failure without the
+// reason it was meant to have, which sends it by the count of dropped
+// terminals rather than by what went wrong.
+//
+// THE THIRD CASE THIS USED TO NAME IS GONE and the sentence went with it: a
+// disk that took the file and would not take its contents used to leave a mark
+// created and empty, because os.WriteFile creates before it writes. The mark is
+// written to a temporary and renamed over now, so a write that fails part way
+// leaves the temporary and never the mark -- either the whole reason is there
+// or the mark is untouched.
 //
 // Measured, because the two are a stat apart: with the marks directory blocked,
-// Failed is false; with a directory or an unwritable file at the mark's own
-// path, MarkFailed fails and Failed is true. Asking Failed here asks exactly
-// what the daemon will ask.
+// Failed is false; with an older mark in a directory that will not take a new
+// file, MarkFailed fails and Failed is true. NOT an unwritable file at the
+// mark's own path, which this used to say: a rename does not care about the
+// mode of what it replaces, and MarkFailed simply succeeds. Asking Failed here
+// asks exactly what the daemon will ask.
 func unrecordedFailure(paneID string, err error) string {
 	detail := text.Truncate(text.Sanitize(err.Error()), maxSaidWidth)
 	if Failed(paneID) {
